@@ -1,0 +1,67 @@
+flowchart TD
+    start(["Start"])
+    end_node(["End"])
+    activity_1["Capture (Accept request from channel)"]
+    activity_2["Validate (Check eligibility and serviceability)"]
+    activity_3["Create Order (Build commercial and service order records)"]
+    activity_4["Decompose (Split into fulfillment legs)"]
+    activity_5["Provision (Execute backend provisioning)"]
+    activity_6["Activate (Confirm live service)"]
+    activity_7["Complete (Finalize and emit events)"]
+    activity_8["TMFCallActivity (TMF API invocation)"]
+    activity_9["KafkaPublishActivity (Event publication)"]
+    activity_10["StatePersistActivity (Durable state update)"]
+    decision_1{"Handle HTTP Status Codes (e.g., 200, 400, 401, 409, 500) to determine workflow actions"}
+    exception_1(["Duplicate order (same idempotency key reused)"])
+    exception_2(["Qualification failure (no service available)"])
+    exception_3(["Inventory shortage (no resource available)"])
+    exception_4(["Provisioning timeout (external adapter delay)"])
+    exception_5(["Activation failure (service not live)"])
+    compensation_1["Compensate and retry for activation failure"]
+    event_1(["Order requested"])
+    event_2(["Order validated"])
+    event_3(["Order rejected"])
+    event_4(["Service order created"])
+    event_5(["Order decomposed"])
+    event_6(["Provisioning requested"])
+    event_7(["Provisioning completed"])
+    event_8(["Service activated"])
+    event_9(["Order completed"])
+    start --> activity_1
+    activity_1 --> decision_1
+    decision_1 -->|yes| activity_2
+    decision_1 -->|no| exception_1
+    activity_2 --> activity_3
+    activity_3 --> activity_4
+    activity_4 --> activity_5
+    activity_5 --> activity_6
+    activity_6 --> activity_7
+    activity_7 --> activity_8
+    activity_8 --> activity_9
+    activity_9 --> activity_10
+    activity_10 --> end_node
+    activity_1 -.->|on error| exception_1
+    exception_1 -.->|compensate| compensation_1
+    compensation_1 --> end_node
+    activity_2 -.->|on error| exception_2
+    exception_2 -.->|compensate| compensation_1
+    activity_3 -.->|on error| exception_3
+    exception_3 -.->|compensate| compensation_1
+    activity_4 -.->|on error| exception_4
+    exception_4 -.->|compensate| compensation_1
+    activity_5 -.->|on error| exception_5
+    exception_5 -.->|compensate| compensation_1
+    exception_1 -.->|retry| activity_1
+    exception_2 -.->|retry| activity_2
+    start -.->|event| event_1
+    event_1 -.->|triggers| activity_1
+    activity_10 -.->|emits| event_2
+    activity_10 -.->|emits| event_3
+    start -.->|event| event_4
+    event_4 -.->|triggers| activity_1
+    activity_10 -.->|emits| event_5
+    start -.->|event| event_6
+    event_6 -.->|triggers| activity_1
+    activity_10 -.->|emits| event_7
+    activity_10 -.->|emits| event_8
+    activity_10 -.->|emits| event_9

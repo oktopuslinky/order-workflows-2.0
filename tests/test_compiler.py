@@ -166,3 +166,27 @@ async def test_approve_without_graph_raises() -> None:
     await store.save(state)
     with pytest.raises(ApprovalError):
         await compiler.approve_graph(state.workflow_id)
+
+
+async def test_compile_emits_timed_progress_events(compiler: WorkflowCompiler) -> None:
+    events: list = []
+    state = await compiler.compile_document(
+        "A workflow document.", review_mode=False, persist=False, progress=events.append
+    )
+
+    # Every step emits a start immediately followed by its matching done.
+    assert events and len(events) % 2 == 0
+    for start, done in zip(events[0::2], events[1::2]):
+        assert start.status == "start"
+        assert done.status == "done"
+        assert start.name == done.name
+
+    dones = [e for e in events if e.status == "done"]
+    # 3 pre-approval agents + review + approve + 3 post-approval agents.
+    assert len(dones) == 8
+    # done events are timed; agent steps report the resulting stage.
+    assert all(e.seconds is not None and e.seconds >= 0 for e in dones)
+    assert all(e.stage for e in dones if e.phase == "agent")
+    # All three pipeline phases are observable.
+    assert {"agent", "review", "approve"} <= {e.phase for e in events}
+    assert state.stage is CompilationStage.COMPLETED

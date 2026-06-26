@@ -79,7 +79,7 @@ workflow-compiler compile examples/order_workflow.md
 # Inspect the review, then approve to produce CVPA + Temporal artifacts.
 workflow-compiler approve <workflow_id> --reviewer alice
 
-# Usage to regenerate a colored file for an existing workflow:
+# Usage to regenerate a colored file for an existing workflow (same as approve, but generates output)
 workflow-compiler approve <workflow_id> --out workflow.mmd
 
 # Or reject (halts the pipeline; no LLM required).

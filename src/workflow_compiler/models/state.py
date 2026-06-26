@@ -16,7 +16,7 @@ from workflow_compiler.models.graph import WorkflowGraph
 from workflow_compiler.models.mermaid import MermaidDiagram
 from workflow_compiler.models.metadata import WorkflowMetadata
 from workflow_compiler.models.review import ReviewReport
-from workflow_compiler.models.temporal import TemporalWorkflowDesign
+from workflow_compiler.models.temporal import TemporalCodeBundle, TemporalWorkflowDesign
 
 
 class WorkflowState(WorkflowBaseModel):
@@ -53,6 +53,9 @@ class WorkflowState(WorkflowBaseModel):
     )
     temporal_design: TemporalWorkflowDesign | None = Field(
         default=None, description="Temporal workflow blueprint."
+    )
+    temporal_code: TemporalCodeBundle | None = Field(
+        default=None, description="Executable Temporal SDK code rendered from the design."
     )
     mermaid_diagram: MermaidDiagram | None = Field(
         default=None, description="Mermaid diagram of the workflow."

@@ -3,13 +3,48 @@
 These describe a Temporal (temporal.io) workflow blueprint derived from the
 canonical workflow graph: activities, signals, queries, timers, and retry
 policies. They are design artifacts, not executable Temporal definitions.
+
+The blueprint has two layers:
+
+* **Declarations** — the activities, signals, queries, child workflows, timers,
+  and compensation activities that exist in the workflow (the "vocabulary").
+* **Plan (IR)** — an ordered, typed control-and-data-flow graph of
+  :class:`TemporalStep` nodes (the "categories of actions": activity calls,
+  signal gates, timers, parallel groups, branches, child workflows) that wires
+  the declarations together with explicit input bindings. The deterministic code
+  generator walks this plan to emit runnable code; when the plan is empty it
+  synthesizes a linear plan from the declarations + graph order for backward
+  compatibility.
+
+The LLM never writes code — it fills this specification; templates emit code.
 """
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pydantic import Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
+
+
+class StepKind(StrEnum):
+    """The category of an action in the workflow plan (IR)."""
+
+    ACTIVITY = "activity"
+    CHILD_WORKFLOW = "child_workflow"
+    SIGNAL_GATE = "signal_gate"
+    TIMER = "timer"
+    PARALLEL = "parallel"
+    BRANCH = "branch"
+
+
+class BindingSource(StrEnum):
+    """Where a single activity input value is sourced from."""
+
+    WORKFLOW_INPUT = "workflow_input"  # a field on the top-level WorkflowInput
+    STEP_OUTPUT = "step_output"  # the result of an earlier step
+    CONSTANT = "constant"  # a literal default (left as ``""`` / TODO)
 
 
 class RetryPolicyDesign(WorkflowBaseModel):
@@ -30,6 +65,30 @@ class RetryPolicyDesign(WorkflowBaseModel):
     )
 
 
+class TemporalParam(WorkflowBaseModel):
+    """A typed named parameter (an activity / workflow input field)."""
+
+    name: str = Field(..., description="Parameter name (snake_case recommended).")
+    type: str = Field(default="str", description="Python type annotation, e.g. 'str', 'int'.")
+
+
+class InputBinding(WorkflowBaseModel):
+    """How one activity input parameter is supplied at a call site."""
+
+    param: str = Field(..., description="The activity input parameter being bound.")
+    source: BindingSource = Field(
+        default=BindingSource.CONSTANT, description="Where the value comes from."
+    )
+    ref: str | None = Field(
+        default=None,
+        description=(
+            "For WORKFLOW_INPUT: the WorkflowInput field name. "
+            "For STEP_OUTPUT: the producing step id. "
+            "For CONSTANT: ignored (value left as a TODO default)."
+        ),
+    )
+
+
 class TemporalActivityDesign(WorkflowBaseModel):
     """A single Temporal activity derived from a workflow node."""
 
@@ -38,13 +97,67 @@ class TemporalActivityDesign(WorkflowBaseModel):
         default=None, description="Graph node this activity was derived from."
     )
     description: str | None = Field(default=None, description="What the activity does.")
-    inputs: list[str] = Field(default_factory=list, description="Named input parameters.")
+    inputs: list[str] = Field(
+        default_factory=list, description="Named input parameters (legacy; prefer `params`)."
+    )
+    params: list[TemporalParam] = Field(
+        default_factory=list, description="Typed input parameters; supersedes `inputs`."
+    )
     outputs: list[str] = Field(default_factory=list, description="Named outputs.")
+    result_type: str = Field(default="str", description="Python return type annotation.")
     timeout_seconds: float | None = Field(
         default=None, description="Start-to-close timeout in seconds."
     )
     retry_policy: RetryPolicyDesign | None = Field(
         default=None, description="Retry policy for the activity."
+    )
+
+    def effective_params(self) -> list[TemporalParam]:
+        """Typed params, falling back to legacy ``inputs`` as ``str`` params."""
+        if self.params:
+            return self.params
+        return [TemporalParam(name=name) for name in self.inputs]
+
+
+class TemporalStep(WorkflowBaseModel):
+    """One node in the workflow plan (IR) — a typed "category of action"."""
+
+    id: str = Field(..., description="Unique step id, used to reference its output.")
+    kind: StepKind = Field(..., description="The category of action this step performs.")
+    description: str | None = Field(default=None, description="Human-readable purpose.")
+
+    # ACTIVITY / CHILD_WORKFLOW
+    ref: str | None = Field(
+        default=None, description="Name of the activity or child workflow this step invokes."
+    )
+    bindings: list[InputBinding] = Field(
+        default_factory=list, description="How this step's inputs are supplied."
+    )
+    result_name: str | None = Field(
+        default=None, description="Variable name to bind this step's result to."
+    )
+
+    # SIGNAL_GATE
+    signal: str | None = Field(
+        default=None, description="For SIGNAL_GATE: the signal name to wait for."
+    )
+    condition: str | None = Field(
+        default=None, description="For SIGNAL_GATE: human-readable wait condition."
+    )
+
+    # TIMER
+    timer: str | None = Field(
+        default=None, description="For TIMER: the timer name (duration from `timers`)."
+    )
+
+    # BRANCH
+    predicate: str | None = Field(
+        default=None, description="For BRANCH: human-readable condition for the `then` lane."
+    )
+
+    # PARALLEL: each lane runs concurrently. BRANCH: lanes[0]=then, lanes[1]=else.
+    lanes: list[list[TemporalStep]] = Field(
+        default_factory=list, description="Nested step lanes for PARALLEL / BRANCH."
     )
 
 
@@ -62,6 +175,9 @@ class TemporalQueryDesign(WorkflowBaseModel):
     name: str = Field(..., description="Query name.")
     description: str | None = Field(default=None, description="What state the query returns.")
     returns: str | None = Field(default=None, description="Return type or shape description.")
+    state_field: str | None = Field(
+        default=None, description="Workflow state attribute this query returns (snake_case)."
+    )
 
 
 class TemporalTimerDesign(WorkflowBaseModel):
@@ -81,10 +197,19 @@ class TemporalChildWorkflowDesign(WorkflowBaseModel):
     )
     description: str | None = Field(default=None, description="What the child workflow does.")
     inputs: list[str] = Field(default_factory=list, description="Named input parameters.")
+    params: list[TemporalParam] = Field(
+        default_factory=list, description="Typed input parameters; supersedes `inputs`."
+    )
     outputs: list[str] = Field(default_factory=list, description="Named outputs.")
     task_queue: str | None = Field(
         default=None, description="Recommended task queue for the child workflow."
     )
+
+    def effective_params(self) -> list[TemporalParam]:
+        """Typed params, falling back to legacy ``inputs`` as ``str`` params."""
+        if self.params:
+            return self.params
+        return [TemporalParam(name=name) for name in self.inputs]
 
 
 class TemporalCompensationDesign(WorkflowBaseModel):
@@ -106,13 +231,17 @@ class TemporalCompensationDesign(WorkflowBaseModel):
 
 
 class TemporalWorkflowDesign(WorkflowBaseModel):
-    """A complete Temporal workflow blueprint."""
+    """A complete Temporal workflow blueprint (declarations + plan IR)."""
 
     workflow_name: str = Field(..., description="Temporal workflow type name.")
     task_queue: str | None = Field(default=None, description="Recommended task queue name.")
     description: str | None = Field(default=None, description="Workflow purpose.")
+    workflow_inputs: list[TemporalParam] = Field(
+        default_factory=list, description="Typed fields of the top-level WorkflowInput."
+    )
+    result_type: str = Field(default="str", description="Workflow run return type annotation.")
     activities: list[TemporalActivityDesign] = Field(
-        default_factory=list, description="Activity designs."
+        default_factory=list, description="Activity declarations."
     )
     signals: list[TemporalSignalDesign] = Field(
         default_factory=list, description="Signal handler designs."
@@ -130,3 +259,38 @@ class TemporalWorkflowDesign(WorkflowBaseModel):
     default_retry_policy: RetryPolicyDesign | None = Field(
         default=None, description="Workflow-wide default retry policy."
     )
+    plan: list[TemporalStep] = Field(
+        default_factory=list,
+        description=(
+            "Ordered control-and-data-flow plan (IR). When empty, the generator "
+            "synthesizes a linear plan from the declarations and the graph order."
+        ),
+    )
+
+
+class GeneratedFile(WorkflowBaseModel):
+    """A single generated source file in a Temporal code bundle."""
+
+    path: str = Field(..., description="Relative file path within the generated package.")
+    language: str = Field(default="python", description="Source language of the file.")
+    content: str = Field(..., description="Full file contents.")
+
+
+class TemporalCodeBundle(WorkflowBaseModel):
+    """Executable Temporal SDK source files rendered from a TemporalWorkflowDesign.
+
+    This is produced by a **deterministic** generator (no LLM) that mechanically
+    renders the approved :class:`TemporalWorkflowDesign` into runnable Temporal
+    code via templates — the design itself remains specification-only.
+    """
+
+    target: str = Field(default="python", description="Temporal SDK target language.")
+    package_name: str = Field(..., description="Generated package / module directory name.")
+    files: list[GeneratedFile] = Field(
+        default_factory=list, description="Generated source files, in write order."
+    )
+
+
+# ``TemporalStep`` is self-referential (lanes hold nested steps); rebuild so the
+# forward reference under ``from __future__ import annotations`` is resolved.
+TemporalStep.model_rebuild()

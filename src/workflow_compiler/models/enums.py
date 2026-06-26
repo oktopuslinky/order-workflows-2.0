@@ -15,6 +15,7 @@ class CompilationStage(StrEnum):
     REVIEWED = "reviewed"
     CLASSIFIED = "classified"
     TEMPORAL_DESIGNED = "temporal_designed"
+    CODE_GENERATED = "code_generated"
     DIAGRAMMED = "diagrammed"
     COMPLETED = "completed"
     FAILED = "failed"

@@ -23,7 +23,7 @@ artifacts:
 | Artifact | Plain-English meaning |
 |---|---|
 | **Workflow metadata** | The title card: name, purpose, who's involved, what systems, what triggers it, where it starts/ends. |
-| **Workflow facts** | Every atomic statement pulled out of the prose, sorted into 13 buckets (activities, decisions, exceptions, retries, …). |
+| **Workflow facts** | Every atomic statement pulled out of the prose, sorted into 13 buckets (activities, decisions, exceptions, retries, …), plus — when the document supports it — an **id-referenced relational structure** that says *how* those facts connect (which exception each activity raises, which compensation reverses which activity, which steps run in parallel). |
 | **Workflow graph** | A flowchart as data: nodes (steps) and edges (arrows), normalized and de-duplicated. |
 | **Mermaid diagram** | That graph rendered as text you can paste into a diagram tool to *see* it. |
 | **Review report** | An automatic QA pass: "this node is unreachable," "this decision has no 'no' branch," plus a health score. |
@@ -194,34 +194,68 @@ The CLI/compiler take the parser's `content.text` and put it into a fresh `Workf
 ### Stage 2 — Fact Extraction (LLM)
 
 - **In:** `state.document_text`.
-- **Out:** `state.workflow_facts` — a flat list of `WorkflowFact` objects, each with a `statement`,
-  a `category`, and a `confidence`. Stage → `FACTS_EXTRACTED`.
-- **Code:** `agents/fact_extraction.py` → `FactExtractionAgent`.
-- **How:** render `extract_facts.md`, call `llm.structured(..., FactExtraction)`. The LLM returns 13
-  parallel lists; the agent maps each list to a `FactCategory`:
-
-  `inputs, outputs, activities, decisions, rules, events, apis, systems, exceptions,
-  state_transitions, timers, retries, compensation_candidates`.
-
-- **Cleaning:** `_normalize` collapses whitespace and repeatedly strips quotes/trailing periods
-  until stable (so `"Validate payment".` → `Validate payment`). Duplicates (case-insensitive) are
-  removed and counted.
+- **Out:** `state.workflow_facts` — a flat list of `WorkflowFact` objects (each with a `statement`,
+  `category`, `confidence`) **plus an optional `structure`** (`WorkflowStructure`) holding the
+  relational layer. Stage → `FACTS_EXTRACTED`.
+- **Code:** `agents/fact_extraction.py` → `FactExtractionAgent`; structure models in
+  `models/structure.py`.
+- **How:** render `extract_facts.md`, call `llm.structured(..., FactExtraction)`. The model returns
+  **two layers** in one call:
+  1. **Flat scalar facts** — `inputs, outputs, rules, apis, systems, timers, retries` — short
+     statements with no inter-entity relations.
+  2. **Relational structure** — entities that each carry a short **id** and relations expressed by
+     *referencing those ids*: `activity_nodes {id, name, parallel_group}`,
+     `decision_nodes {id, question, after, yes_target, no_target}`,
+     `exception_nodes {id, reason, raised_by}`,
+     `compensation_nodes {id, name, compensates}`, `event_nodes {id, name, emitted_by}`,
+     `transition_edges {source, target, trigger}`.
+- **Referential-integrity validation (the anti-hallucination guard):** `WorkflowStructure.validated()`
+  drops any relation that points at an id the model never declared — the entity is kept, the dangling
+  link is nulled, and a warning is recorded. The model literally cannot wire an edge to a node that
+  doesn't exist; if it tries, the bad link is discarded. It also drops **state transitions whose
+  endpoints are actually entity ids** (e.g. `a1 -> a2`): a common failure mode where the model leaks
+  the *step flow* into the *state graph*, which would otherwise build a junk subgraph duplicating the
+  real flow. Real state-name transitions (`active -> upgrade_in_progress`) are kept. The count of
+  dropped references is surfaced in the confidence note.
+- **Backward compatibility:** if the relational layer is empty (a legacy/minimal extraction), the
+  agent falls back to the old flat-list path and `structure` stays `None`. Either way the flat
+  `WorkflowFacts.facts` are derived (from the structure when present), so every downstream consumer
+  (CVPA, Temporal, the CLI summary) keeps working unchanged.
+- **Cleaning:** `_normalize` collapses whitespace and repeatedly strips quotes/trailing periods until
+  stable (`"Validate payment".` → `Validate payment`); case-insensitive duplicates are removed.
 - **Confidence:** blends self-reported confidence with how many categories were populated →
-  `confidence_scores.facts`. A note records counts and duplicates removed.
+  `confidence_scores.facts`. The note records counts, duplicates removed, and dangling refs dropped.
 
 **Why facts before a graph?** The facts are the *typed building blocks*. The graph builder doesn't
-re-read the prose — it works purely from these categorized facts, which is what makes it
-deterministic.
+re-read the prose — it works purely from these facts. Capturing the **relations** here (not just the
+nouns) is what lets the builder wire edges *semantically* instead of guessing by position.
 
 ### Stage 3 — Graph Building (deterministic, no LLM) — *the cleverest part*
 
 - **In:** `state.workflow_facts`.
 - **Out:** `state.workflow_graph` (a `WorkflowGraph` of `WorkflowNode`s + `WorkflowEdge`s) **and** a
   Mermaid diagram. Stage → `GRAPH_BUILT`.
-- **Code:** `graph/builder.py` → `WorkflowGraphBuilder.build(facts)`. Returns both the canonical
-  `WorkflowGraph` and a backing NetworkX `MultiDiGraph` (used later for review).
+- **Code:** `graph/builder.py` → `WorkflowGraphBuilder`. Returns both the canonical `WorkflowGraph`
+  and a backing NetworkX `MultiDiGraph` (used later for review).
 
-This is a rules engine, not a model. Step by step (`build()`):
+This is a rules engine, not a model. There are **two wiring paths**, chosen by the agent based on
+what Fact Extraction produced:
+
+- **Semantic path — `build_from_structure(structure)` (preferred).** When the facts carry a relational
+  `structure`, edges are placed by *reading the explicit links*: a decision is inserted **after the
+  activity its `after` names** with its `yes_target`/`no_target` branches; an exception's error edge
+  comes from the activity that **`raised_by`** it; a compensation hangs off the exception of the
+  activity it **`compensates`** (never blanket-routed to the first one); an event emits from its
+  **`emitted_by`** activity; activities sharing a `parallel_group` become a real fork/join. An
+  exception with no compensation is routed to a terminal (reject/fail) so it ends the flow instead of
+  dangling as a dead-end. References were already validated in Stage 2, so the wiring is grounded — no
+  guessing.
+- **Positional path — `build(facts)` (fallback).** When only flat facts exist (no structure), the
+  builder can't know which decision gates which branch, so it pairs the *i-th* activity with the
+  *i-th* decision / exception / compensation. This is plausible but can mis-attribute relationships —
+  which is exactly why the relational path exists. It remains for legacy/minimal inputs.
+
+The positional `build()`, step by step:
 
 1. **Categorize** facts into activities/decisions/events/exceptions/retries/compensations/
    transitions (`_categorize`).
@@ -563,7 +597,10 @@ never run.
   persistence + reload across two compiler instances, GraphEditor round-trip, and CVPA exactly-once
   coverage.
 - **API tests** drive every endpoint with a mock-backed compiler via `dependency_overrides`.
-- No network is required for the suite. Run `pytest` (173 tests) and `ruff check src tests`.
+- **Relational extraction tests** (`tests/test_relational_structure.py`) cover the referential-
+  integrity guard (dangling ids are dropped) and the semantic wiring (relations attach to the right
+  nodes, parallel groups become gateways).
+- No network is required for the suite. Run `pytest` and `ruff check src tests`.
 
 Because the LLM is hidden behind `BaseLLMProvider`, the `MockProvider` returns *queued* structured
 responses in order — e.g. `[discovery, facts, cvpa, temporal]` — letting tests drive the exact path
@@ -598,7 +635,7 @@ src/workflow_compiler/
   models/              Pydantic artifacts:
     state.py           WorkflowState (the aggregate)
     enums.py           CompilationStage, NodeType, EdgeType, CVPAPhase, FactCategory, …
-    metadata.py facts.py graph.py review.py cvpa.py temporal.py mermaid.py confidence.py
+    metadata.py facts.py structure.py graph.py review.py cvpa.py temporal.py mermaid.py confidence.py
 
   interfaces/          Abstract contracts: BaseParser, BaseAgent, BaseLLMProvider,
                        StateStore, ReviewManager
@@ -649,7 +686,11 @@ tests/                 Unit + integration + API tests
 - **`end` in Mermaid** is reserved and silently breaks diagrams; node ids that collide are renamed
   (`end` → `end_node`). Edge labels must be unquoted. Both are handled automatically.
 - **The graph builder never calls the LLM** — by design, for determinism and testability. If a graph
-  looks wrong, the fix is in the *facts* or the *builder rules*, not a prompt.
+  looks wrong, the fix is in the *facts* or the *builder rules*, not a prompt. Note the distinction:
+  *wrong nodes* (missing/extra entities) is an extraction problem; *wrong wiring* (edges to the wrong
+  place) means either the relational `structure` was absent (so the positional fallback guessed) or
+  the LLM linked the wrong ids — the referential-integrity validator only drops links to *undeclared*
+  ids, it can't catch a link to the wrong *declared* id.
 - **CVPA always covers every node** even if the LLM is incomplete, thanks to the type-based fallback
   — so the "exactly one phase per node" rule can never be violated downstream.
 - **Temporal output is a design, not code** — intentionally. It's an architecture spec for engineers

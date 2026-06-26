@@ -17,6 +17,7 @@ from workflow_compiler.agents.temporal import (
     TemporalDesignOutput,
     TemporalGeneratorAgent,
 )
+from workflow_compiler.agents.temporal_code import TemporalCodeGeneratorAgent
 
 __all__ = [
     "CVPAClassifierAgent",
@@ -24,6 +25,7 @@ __all__ = [
     "FactExtraction",
     "FactExtractionAgent",
     "GraphBuilderAgent",
+    "TemporalCodeGeneratorAgent",
     "TemporalDesignOutput",
     "TemporalGeneratorAgent",
     "WorkflowDiscovery",

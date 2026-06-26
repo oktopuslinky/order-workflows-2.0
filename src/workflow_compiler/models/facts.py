@@ -6,6 +6,7 @@ from pydantic import Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
 from workflow_compiler.models.enums import FactCategory
+from workflow_compiler.models.structure import WorkflowStructure
 
 
 class SourceSpan(WorkflowBaseModel):
@@ -37,6 +38,10 @@ class WorkflowFacts(WorkflowBaseModel):
     """The collection of facts extracted from a workflow document."""
 
     facts: list[WorkflowFact] = Field(default_factory=list, description="Extracted facts.")
+    structure: WorkflowStructure | None = Field(
+        default=None,
+        description="Id-referenced relations between facts (None for legacy flat extraction).",
+    )
 
     def by_category(self, category: FactCategory) -> list[WorkflowFact]:
         """Return all facts matching a given category."""

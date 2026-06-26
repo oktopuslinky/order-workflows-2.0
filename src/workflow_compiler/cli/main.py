@@ -56,11 +56,16 @@ def compile(
     out: Path = typer.Option(
         None, "--out", help="Write the Mermaid diagram to this file (CVPA-colored if approved)."
     ),
+    out_dir: Path = typer.Option(
+        None, "--out-dir", help="Write generated Temporal code to this directory (auto-approve)."
+    ),
 ) -> None:
     """Compile a workflow document into a review-ready state."""
     import asyncio
 
-    asyncio.run(_run_compile(document, provider, model, timeout, auto_approve, persist, out))
+    asyncio.run(
+        _run_compile(document, provider, model, timeout, auto_approve, persist, out, out_dir)
+    )
 
 
 @app.command()
@@ -73,11 +78,14 @@ def approve(
     out: Path = typer.Option(
         None, "--out", help="Write the CVPA-colored Mermaid diagram to this file."
     ),
+    out_dir: Path = typer.Option(
+        None, "--out-dir", help="Write the generated Temporal code to this directory."
+    ),
 ) -> None:
     """Approve a graph and produce CVPA + Temporal artifacts."""
     import asyncio
 
-    asyncio.run(_run_approve(workflow_id, reviewer, provider, model, timeout, out))
+    asyncio.run(_run_approve(workflow_id, reviewer, provider, model, timeout, out, out_dir))
 
 
 @app.command()
@@ -123,6 +131,29 @@ def _file_store():
     return FileStateStore(get_settings().state_store_path)
 
 
+def _make_progress():
+    """Return a progress sink that prints each pipeline step with a timestamp.
+
+    Gives a live, timed view of what stage is running and how long each takes —
+    e.g. ``12:34:58 ✓ temporal-generator  1.42s → temporal_designed``.
+    """
+    from datetime import datetime
+
+    def on_event(event) -> None:  # type: ignore[no-untyped-def]
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        position = f"[dim]{event.index}/{event.total}[/]"
+        if event.status == "start":
+            console.print(f"  [dim]{timestamp}[/] [cyan]>>[/] {position} {event.name} [dim]...[/]")
+        else:
+            stage = f" [dim]-> {event.stage}[/]" if event.stage else ""
+            console.print(
+                f"  [dim]{timestamp}[/] [green]OK[/] {position} {event.name}  "
+                f"[bold]{event.seconds:.2f}s[/]{stage}"
+            )
+
+    return on_event
+
+
 async def _aclose(provider: object) -> None:
     aclose = getattr(provider, "aclose", None)
     if aclose is not None:
@@ -140,6 +171,27 @@ def _write_diagram(state: object, out: Path | None) -> None:
     console.print(f"[green]Mermaid diagram written to[/] {out}")
 
 
+def _write_code(state: object, out_dir: Path | None) -> None:
+    """Write the generated Temporal code bundle into ``out_dir`` if present."""
+    from workflow_compiler.models import WorkflowState
+
+    assert isinstance(state, WorkflowState)
+    if out_dir is None or state.temporal_code is None:
+        return
+    package_dir = out_dir / state.temporal_code.package_name
+    for generated in state.temporal_code.files:
+        path = package_dir / generated.path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = generated.content
+        if not content.endswith("\n"):
+            content += "\n"
+        path.write_text(content, encoding="utf-8")
+    console.print(
+        f"[green]Temporal code written to[/] {package_dir} "
+        f"({len(state.temporal_code.files)} files)"
+    )
+
+
 async def _run_compile(
     document: Path,
     provider_name: str | None,
@@ -148,6 +200,7 @@ async def _run_compile(
     auto_approve: bool,
     persist: bool,
     out: Path | None = None,
+    out_dir: Path | None = None,
 ) -> None:
     from workflow_compiler.compiler import WorkflowCompiler
     from workflow_compiler.ingestion import DocumentParserFactory
@@ -164,7 +217,10 @@ async def _run_compile(
     try:
         console.print("[bold]Compiling[/] (discover → facts → graph → review) ...")
         state = await compiler.compile_document(
-            content.text, review_mode=not auto_approve, persist=persist
+            content.text,
+            review_mode=not auto_approve,
+            persist=persist,
+            progress=_make_progress(),
         )
     finally:
         await _aclose(provider)
@@ -174,6 +230,7 @@ async def _run_compile(
     if auto_approve:
         _print_cvpa(state)
         _print_temporal(state)
+        _print_temporal_code(state)
     console.print(f"\n[bold green]workflow_id[/]: {state.workflow_id}")
     console.print(
         f"[bold]stage[/]: {state.stage.value}  "
@@ -185,6 +242,7 @@ async def _run_compile(
             f"[cyan]workflow-compiler approve {state.workflow_id}[/]"
         )
     _write_diagram(state, out)
+    _write_code(state, out_dir)
 
 
 async def _run_approve(
@@ -194,23 +252,28 @@ async def _run_approve(
     model: str | None,
     timeout: float,
     out: Path | None = None,
+    out_dir: Path | None = None,
 ) -> None:
     from workflow_compiler.compiler import WorkflowCompiler
 
     provider = _build_provider(provider_name, model, timeout)
     compiler = WorkflowCompiler(llm_provider=provider, state_store=_file_store())
     try:
-        console.print(f"[bold]Approving[/] {workflow_id} (CVPA → Temporal) ...")
-        state = await compiler.approve_graph(workflow_id, reviewer=reviewer)
+        console.print(f"[bold]Approving[/] {workflow_id} (CVPA → Temporal → code) ...")
+        state = await compiler.approve_graph(
+            workflow_id, reviewer=reviewer, progress=_make_progress()
+        )
     finally:
         await _aclose(provider)
 
     _print_cvpa(state)
     _print_temporal(state)
+    _print_temporal_code(state)
     console.print(
         f"\n[bold green]Approved[/] {state.workflow_id}  stage={state.stage.value}"
     )
     _write_diagram(state, out)
+    _write_code(state, out_dir)
 
 
 async def _run_reject(workflow_id: str, reviewer: str | None, reason: str | None) -> None:
@@ -235,6 +298,7 @@ async def _run_show(workflow_id: str) -> None:
     _print_review(state)
     _print_cvpa(state)
     _print_temporal(state)
+    _print_temporal_code(state)
     console.print(
         f"\n[bold]stage[/]: {state.stage.value}  "
         f"[bold]approval[/]: {state.approval_status.value}"
@@ -446,6 +510,27 @@ def _print_temporal(state: object) -> None:
     table.add_row(
         "Compensations", ", ".join(c.name for c in design.compensation_activities) or "-"
     )
+    console.print(table)
+
+
+def _print_temporal_code(state: object) -> None:
+    from rich.table import Table
+
+    from workflow_compiler.models import WorkflowState
+
+    assert isinstance(state, WorkflowState)
+    bundle = state.temporal_code
+    if bundle is None:
+        return
+    console.print(
+        f"[bold]Temporal code[/]: target=[cyan]{bundle.target}[/] "
+        f"package=[cyan]{bundle.package_name}[/]"
+    )
+    table = Table(title="Generated Files")
+    table.add_column("File")
+    table.add_column("Lines", justify="right")
+    for generated in bundle.files:
+        table.add_row(generated.path, str(generated.content.count("\n") + 1))
     console.print(table)
 
 

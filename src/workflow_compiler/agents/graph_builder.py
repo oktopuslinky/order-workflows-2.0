@@ -44,7 +44,13 @@ class GraphBuilderAgent(BaseAgent):
         if state.workflow_facts is None:
             raise CompilationError("GraphBuilderAgent requires extracted workflow_facts.")
 
-        graph, _nx = self._builder.build(state.workflow_facts)
+        structure = state.workflow_facts.structure
+        if structure is not None and not structure.is_empty():
+            # Relational extraction available: wire edges from explicit links.
+            graph, _nx = self._builder.build_from_structure(structure)
+        else:
+            # Legacy flat facts: fall back to positional inference.
+            graph, _nx = self._builder.build(state.workflow_facts)
         diagram = to_mermaid(
             graph,
             title=state.workflow_metadata.name if state.workflow_metadata else None,

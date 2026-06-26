@@ -8,12 +8,16 @@ stages of the project.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from workflow_compiler.agents import (
     CVPAClassifierAgent,
     FactExtractionAgent,
     GraphBuilderAgent,
+    TemporalCodeGeneratorAgent,
     TemporalGeneratorAgent,
     WorkflowDiscoveryAgent,
 )
@@ -37,6 +41,39 @@ from workflow_compiler.storage import FileStateStore
 
 if TYPE_CHECKING:
     from workflow_compiler.config import Settings
+
+
+@dataclass(frozen=True)
+class ProgressEvent:
+    """A single observable pipeline step, emitted as it starts and finishes.
+
+    The compiler emits one ``status="start"`` event before a step runs and one
+    ``status="done"`` event after, so callers can render a live, timed view of
+    what is happening at each moment without coupling to the compiler internals.
+    """
+
+    phase: str  # "agent" | "review" | "approve"
+    name: str  # step name (e.g. the agent name)
+    status: str  # "start" | "done"
+    index: int  # 1-based position within its sub-pipeline
+    total: int  # number of steps in its sub-pipeline
+    seconds: float | None = None  # wall time for the step (on "done")
+    stage: str | None = None  # resulting CompilationStage value (on "done")
+
+
+#: A progress sink: called with each :class:`ProgressEvent`. Never raises into
+#: the pipeline — the compiler guards every call.
+ProgressCallback = Callable[[ProgressEvent], None]
+
+
+def _emit(progress: ProgressCallback | None, event: ProgressEvent) -> None:
+    """Deliver ``event`` to ``progress`` if set, swallowing observer errors."""
+    if progress is None:
+        return
+    try:
+        progress(event)
+    except Exception:  # pragma: no cover - a progress sink must never break a run.
+        pass
 
 
 class WorkflowCompiler:
@@ -131,10 +168,11 @@ class WorkflowCompiler:
     def _default_post_approval_agents(
         llm: BaseLLMProvider | None, prompts: PromptManager
     ) -> list[BaseAgent]:
-        """Build the post-approval CVPA → Temporal design pipeline."""
+        """Build the post-approval CVPA → Temporal design → code pipeline."""
         return [
             CVPAClassifierAgent(llm, prompt_manager=prompts),
             TemporalGeneratorAgent(llm, prompt_manager=prompts),
+            TemporalCodeGeneratorAgent(),
         ]
 
     @property
@@ -147,6 +185,38 @@ class WorkflowCompiler:
         """The prompt manager used to render agent prompts."""
         return self._prompt_manager
 
+    @staticmethod
+    async def _run_agents(
+        agents: list[BaseAgent],
+        state: WorkflowState,
+        progress: ProgressCallback | None,
+        *,
+        phase: str = "agent",
+    ) -> WorkflowState:
+        """Run ``agents`` in order, emitting timed start/done progress events."""
+        total = len(agents)
+        for index, agent in enumerate(agents, start=1):
+            name = getattr(agent, "name", agent.__class__.__name__)
+            _emit(
+                progress,
+                ProgressEvent(phase=phase, name=name, status="start", index=index, total=total),
+            )
+            started = time.perf_counter()
+            state = await agent.run(state)
+            _emit(
+                progress,
+                ProgressEvent(
+                    phase=phase,
+                    name=name,
+                    status="done",
+                    index=index,
+                    total=total,
+                    seconds=time.perf_counter() - started,
+                    stage=state.stage.value,
+                ),
+            )
+        return state
+
     async def compile_document(
         self,
         document_text: str,
@@ -154,6 +224,7 @@ class WorkflowCompiler:
         review_mode: bool = True,
         persist: bool = True,
         workflow_id: str | None = None,
+        progress: ProgressCallback | None = None,
     ) -> WorkflowState:
         """Compile a raw workflow document into a review-ready WorkflowState.
 
@@ -173,14 +244,30 @@ class WorkflowCompiler:
         if workflow_id is not None:
             state.workflow_id = workflow_id
 
-        for agent in self._agents:
-            state = await agent.run(state)
+        state = await self._run_agents(self._agents, state, progress)
 
+        _emit(
+            progress,
+            ProgressEvent(phase="review", name="review", status="start", index=1, total=1),
+        )
+        started = time.perf_counter()
         report = await self._review_manager.review(state)
         state.review_report = report
         state.approval_status = ApprovalStatus.PENDING
         state.stage = CompilationStage.REVIEWED
         state.touch()
+        _emit(
+            progress,
+            ProgressEvent(
+                phase="review",
+                name="review",
+                status="done",
+                index=1,
+                total=1,
+                seconds=time.perf_counter() - started,
+                stage=state.stage.value,
+            ),
+        )
 
         if persist:
             await self._state_store.save(state)
@@ -190,20 +277,39 @@ class WorkflowCompiler:
 
         # Fully automated run: clear the gate and produce downstream artifacts
         # in-process (no reload), persisting once at the end if requested.
-        state = await self._finalize_approval(state, reviewer="auto")
+        state = await self._finalize_approval(state, reviewer="auto", progress=progress)
         if persist:
             await self._state_store.save(state)
         return state
 
     async def _finalize_approval(
-        self, state: WorkflowState, *, reviewer: str | None
+        self,
+        state: WorkflowState,
+        *,
+        reviewer: str | None,
+        progress: ProgressCallback | None = None,
     ) -> WorkflowState:
         """Approve the graph and run the downstream CVPA → Temporal pipeline."""
         if state.workflow_graph is None:
             raise ApprovalError(f"Workflow {state.workflow_id!r} has no graph to approve.")
+        _emit(
+            progress,
+            ProgressEvent(phase="approve", name="approve", status="start", index=1, total=1),
+        )
+        started = time.perf_counter()
         state = await self._review_manager.approve(state, reviewer=reviewer)
-        for agent in self._post_approval_agents:
-            state = await agent.run(state)
+        _emit(
+            progress,
+            ProgressEvent(
+                phase="approve",
+                name="approve",
+                status="done",
+                index=1,
+                total=1,
+                seconds=time.perf_counter() - started,
+            ),
+        )
+        state = await self._run_agents(self._post_approval_agents, state, progress)
         state.stage = CompilationStage.COMPLETED
         state.touch()
         return state
@@ -214,14 +320,15 @@ class WorkflowCompiler:
         *,
         reviewer: str | None = None,
         persist: bool = True,
+        progress: ProgressCallback | None = None,
     ) -> WorkflowState:
         """Approve a stored workflow graph and produce downstream artifacts.
 
         Clearing the gate runs the post-approval pipeline (CVPA classification →
-        Temporal design) and marks the run ``COMPLETED``.
+        Temporal design → code) and marks the run ``COMPLETED``.
         """
         state = await self._state_store.load(workflow_id)
-        state = await self._finalize_approval(state, reviewer=reviewer)
+        state = await self._finalize_approval(state, reviewer=reviewer, progress=progress)
         if persist:
             await self._state_store.save(state)
         return state

@@ -51,11 +51,10 @@ class CalculateprorationamountInput:
 
 
 @dataclass
-class ValidatepromotionaldiscountInput:
+class ValidatepromocodeInput:
     """Input to the matching activity / child workflow."""
 
     promo_code: str = ""
-    proration_amount: float = 0.0
 
 
 @dataclass
@@ -63,7 +62,7 @@ class PreauthoriseprorationchargeInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
-    amount: float = 0.0
+    proration_amount: float = 0.0
 
 
 @dataclass
@@ -71,7 +70,7 @@ class UpdateentitlementsInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
-    new_plan_id: str = ""
+    target_plan_id: str = ""
 
 
 @dataclass
@@ -79,7 +78,6 @@ class ReprovisionserviceInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
-    new_plan_id: str = ""
 
 
 @dataclass
@@ -87,7 +85,6 @@ class UpdateresourceinventoryInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
-    new_plan_id: str = ""
 
 
 @dataclass
@@ -102,7 +99,7 @@ class PublisheventsInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
-    new_plan_id: str = ""
+    status: str = ""
 
 
 @dataclass
@@ -110,15 +107,13 @@ class SendupgradeconfirmationInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
-    new_plan_id: str = ""
 
 
 @dataclass
-class RecordupgradeaudittrailInput:
+class RecordaudittrailInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
-    new_plan_id: str = ""
 
 
 @dataclass

@@ -61,6 +61,43 @@ threading data between activities, firing saga compensations in reverse on failu
 gating on signals. The LLM never writes code; the code is a pure function of the reviewed,
 approved design. See `TEMPORAL_CODEGEN_FINDINGS.md` for the standard it satisfies.
 
+## Consensus-merge ensemble (opt-in)
+
+An optional accuracy lever on the LLM stages where hallucinations originate (`discovery`,
+`facts`). When enabled (`--ensemble` / `WORKFLOW_COMPILER_ENSEMBLE_ENABLED`, default off),
+`ConsensusMergeAgent` wraps the stage's agent and runs **N temperature-diversified candidates
+concurrently** (via a `TemperatureProvider` decorator, since temperature-0 would make candidates
+identical), under a per-candidate timeout and overall budget. It then **merges the candidates'
+parts** rather than selecting one: *majority backbone + flagged singletons* — a part with ≥2 votes
+is accepted, a single-vote part is kept only if it grounds in the source document and is flagged
+low-confidence, and conflicting attributions are resolved by vote count. The merge uses only
+**reference-free** signals (no gold answer exists per document): cross-candidate agreement,
+referential integrity via `WorkflowStructure.validated()`, and evidence grounding (local
+substring/token-overlap, embeddings best-effort with graceful fallback). It raises
+grounding/consistency, not certified truth — the human gate remains the oracle, and provenance
+(accepted / flagged / dropped) is recorded in `confidence_scores.notes`. Deterministic stages are
+never ensembled. Lives in `agents/ensemble.py`, `agents/ensemble_merge.py`,
+`llm/ensemble_provider.py`.
+
+## Sequential review pipeline (default-on)
+
+The default quality lever on the same two LLM stages (`discovery`, `facts`). Instead of sampling
+N candidates, it follows a compiler-style discipline: **generate one canonical output, then run
+three sequential review passes** — *completeness* (add elements explicitly in the document but
+missing), *grounding* (remove/flag elements not supported by the document), *consistency* (merge
+duplicates, rename to a canonical label, fix relations). Each pass emits **minimal deterministic
+patches or `no_change`** (never a rewrite); a pure `PatchApplier` folds them in, dropping any
+addition that duplicates an existing element or is not grounded in the document — which makes the
+passes **idempotent** (re-running yields `no_change`). The facts applier re-runs
+`WorkflowStructure.validated()` after each pass, so a patched relation can only point at a declared
+entity. `ReviewPipelineAgent` wraps the stage's generator agent, configured by a `ReviewSpec`
+(extract / serialize / apply + the three prompts + the applier) — the same adapter shape as the
+ensemble's `StageSpec`, so a future stage adds a spec, not engine code. On by default
+(`--review` / `WORKFLOW_COMPILER_REVIEW_ENABLED`); the compiler's precedence is **ensemble → review
+→ plain** per stage (the ensemble wins on any stage it is enabled for). Patch vocabulary lives in
+`models/patch.py` (`PatchAction`, `Evidence`, `Patch`, `ReviewResult`); the engine, appliers, and
+specs in `agents/review_pipeline.py`; the six prompts in `prompts/templates/review_*.md`.
+
 ## Components
 
 ```mermaid
@@ -156,6 +193,9 @@ field and advances `stage`:
   invalid edits raise rather than corrupting state.
 - **Human-in-the-loop gate.** Downstream (CVPA, Temporal) artifacts are produced only after
   approval, keeping generated designs traceable to a reviewed graph.
+- **Agreement over single samples (opt-in).** The consensus-merge ensemble combines N candidates
+  of a stage by reference-free signals (votes, referential integrity, grounding); it suppresses
+  hallucinations but never certifies truth — the gate stays the oracle.
 - **The LLM specifies; templates emit code.** The LLM-backed Temporal stage emits
   specifications only (names, parameters, policies) — never executable code. Runnable Temporal
   Python SDK code is produced separately by a *deterministic* generator

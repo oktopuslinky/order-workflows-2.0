@@ -1,6 +1,6 @@
 # Subscriptionupgradeworkflow (generated Temporal workflow)
 
-Manages the upgrade of a subscription, including validation, provisioning, and billing updates.
+Manages the upgrade of a subscription, including validation, pre-authorisation, provisioning, and billing updates.
 
 This package was generated **deterministically** from a reviewed
 `TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,
@@ -47,4 +47,4 @@ http://localhost:8233 to watch the execution.
 - Populate the `WorkflowInput()` fields in `starter.py`.
 - Replace the default `str` input fields in `shared.py` with real types.
 - Review the generated retry policies and timeouts against your SLAs.
-- Send the workflow's signal(s) (UpgradeRejectedSignal, UpgradeCompletedSignal) to release any wait gates.
+- Send the workflow's signal(s) (oms.subscription.upgrade.rejected, oms.subscription.upgrade.started, oms.subscription.upgrade.completed, oms.subscription.upgrade.rolled_back) to release any wait gates.

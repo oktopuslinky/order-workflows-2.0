@@ -15,10 +15,16 @@ from workflow_compiler.agents import (
     TemporalDesignOutput,
     WorkflowDiscovery,
 )
+from workflow_compiler.compiler import ReviewConfig
 from workflow_compiler.exceptions import ApprovalError, StateNotFoundError
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import ApprovalStatus, CompilationStage, WorkflowState
 from workflow_compiler.storage import InMemoryStateStore
+
+# These tests drive an exact MockProvider queue; the sequential review pipeline
+# (default-on, covered in tests/test_review_pipeline.py) is disabled here so it
+# does not consume extra queued responses.
+_NO_REVIEW = ReviewConfig(enabled=False)
 
 
 def _discovery() -> WorkflowDiscovery:
@@ -71,6 +77,7 @@ def compiler() -> WorkflowCompiler:
     return WorkflowCompiler(
         llm_provider=_provider(),
         state_store=InMemoryStateStore(),
+        review=_NO_REVIEW,
     )
 
 
@@ -161,7 +168,9 @@ async def test_save_and_load_state_round_trip(compiler: WorkflowCompiler) -> Non
 
 async def test_approve_without_graph_raises() -> None:
     store = InMemoryStateStore()
-    compiler = WorkflowCompiler(llm_provider=_provider(), state_store=store)
+    compiler = WorkflowCompiler(
+        llm_provider=_provider(), state_store=store, review=_NO_REVIEW
+    )
     state = WorkflowState(document_text="no graph yet")
     await store.save(state)
     with pytest.raises(ApprovalError):
@@ -176,7 +185,7 @@ async def test_compile_emits_timed_progress_events(compiler: WorkflowCompiler) -
 
     # Every step emits a start immediately followed by its matching done.
     assert events and len(events) % 2 == 0
-    for start, done in zip(events[0::2], events[1::2]):
+    for start, done in zip(events[0::2], events[1::2], strict=False):
         assert start.status == "start"
         assert done.status == "done"
         assert start.name == done.name

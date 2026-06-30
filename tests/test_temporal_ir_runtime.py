@@ -225,7 +225,7 @@ async def test_runtime_happy_path(tmp_path) -> None:  # type: ignore[no-untyped-
 async def test_runtime_compensates_on_failure(tmp_path) -> None:  # type: ignore[no-untyped-def]
     CALLS.clear()
     try:
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017 - any workflow failure proves rollback ran
             await _run(tmp_path / "fail", fail_charge=True)
     except pytest.skip.Exception:  # pragma: no cover
         raise

@@ -1,69 +1,92 @@
 flowchart TD
     start(["Start"])
     end_node(["End"])
-    activity_1["Validate request payload"]
-    activity_2["Resolve target plan"]
-    activity_3["Check subscription eligibility"]
-    activity_4["Calculate proration amount"]
+    activity_1["Validate Request Payload"]
+    activity_2["Resolve Target Plan"]
+    activity_3["Check Subscription Eligibility"]
+    activity_4["Calculate Proration Amount"]
     activity_5["Validate and apply promotional discount"]
     activity_6["Pre-authorise proration charge"]
-    activity_7["Update entitlements"]
-    activity_8["Re-provision service"]
-    activity_9["Update resource inventory"]
+    activity_7["Update Entitlements"]
+    activity_8["Re-provision Service"]
+    activity_9["Update Resource Inventory"]
     activity_10["Capture pre-authorised charge"]
     activity_11["Publish events"]
     activity_12["Send upgrade confirmation"]
-    activity_13["Record upgrade audit trail"]
-    decision_1{"Is subscription eligible?"}
-    decision_2{"Is pre-authorisation successful?"}
-    decision_3{"Is provisioning successful?"}
-    decision_4{"Is charge capture successful?"}
-    decision_5{"Is promotional code valid?"}
+    activity_13["Record Audit Trail"]
+    activity_14["Validate & Apply Promo Code"]
+    activity_15["Pre-authorise Charge"]
+    activity_16["Capture Charge"]
+    activity_17["Publish Started Event"]
+    activity_18["Send Confirmation"]
+    activity_19["Apply Promotional Discount"]
+    decision_1{"Is Subscription Eligible?"}
+    decision_2{"Was pre-authorisation successful?"}
+    decision_3{"Was provisioning successful?"}
+    decision_4{"Was charge capture successful?"}
+    decision_5{"Compliance approval required?"}
+    decision_6{"Compliance approval outcome?"}
+    decision_7{"Is Pre-auth Successful?"}
+    decision_8{"Is Provisioning Successful?"}
+    decision_9{"Is Charge Capture Successful?"}
+    decision_10{"Is Promo Code Valid?"}
+    decision_11{"Is Pre-authorisation Successful?"}
     exception_1(["SUBSCRIPTIONNOTUPGRADEABLE"])
     exception_2(["PAYMENTPREAUTH_FAILED"])
-    exception_3(["Provisioning timeout"])
-    exception_4(["Charge capture failure"])
-    exception_5(["PLANNOTFOUND"])
-    exception_6(["PLANREGIONUNAVAILABLE"])
-    exception_7(["CONCURRENTCHANGEORDER_CONFLICT"])
-    exception_8(["Invalid promotional code"])
-    compensation_1["Restore old entitlements"]
+    exception_3(["PROVISIONING_TIMEOUT"])
+    exception_4(["CHARGE_CAPTURE_FAILURE"])
+    exception_5(["COMPLIANCE_HOLD"])
+    exception_6(["PLANNOTFOUND"])
+    exception_7(["PLANREGIONUNAVAILABLE"])
+    exception_8(["CONCURRENTCHANGEORDER_CONFLICT"])
+    exception_9(["INVALID_PROMO_CODE"])
+    exception_10(["ENTITLEMENT_UPDATE_FAILURE"])
+    exception_11(["CHARGE_CAPTURE_FAILED"])
+    exception_12(["Invalid Promotional Code"])
+    compensation_1["Restore Old Entitlements"]
     compensation_2["Re-provision with old plan"]
     compensation_3["Restore old resource reservation"]
     compensation_4["Release pre-authorisation"]
-    compensation_5["Reverse charge capture"]
-    compensation_6["Publish rollback event"]
+    compensation_5["Reverse Charge Capture"]
+    compensation_6["Publish Rollback Event"]
+    compensation_7["Re-provision Old Plan"]
+    compensation_8["Restore Resource Inventory"]
+    compensation_9["Release Pre-auth"]
     event_1(["oms.subscription.upgrade.rejected"])
     event_2(["oms.subscription.upgrade.started"])
     event_3(["oms.subscription.upgrade.completed"])
     event_4(["oms.subscription.upgrade.rolled_back"])
     gateway_fork_1{{"Parallel split"}}
     gateway_join_1{{"Parallel join"}}
-    gateway_fork_2{{"Parallel split"}}
-    gateway_join_2{{"Parallel join"}}
     state_1["Start"]
     state_2["Upgrade requested"]
-    state_3["Upgrade rejected"]
-    state_4["Upgrade in progress"]
+    state_3["upgrade_rejected"]
+    state_4["upgradeinprogress"]
     state_5["Upgrade completed"]
     state_6["Upgrade failed"]
+    state_7["rollback"]
+    state_8["Upgrade in progress"]
+    state_9["Upgrade rejected"]
+    state_10["Active"]
     start --> activity_1
     activity_1 --> activity_2
-    activity_2 --> activity_3
+    activity_2 --> decision_5
+    decision_5 -->|yes| activity_3
+    decision_5 -->|no| activity_3
     activity_3 --> decision_1
     decision_1 -->|yes| activity_4
     decision_1 -->|no| exception_1
     activity_4 --> activity_5
-    activity_5 --> decision_5
-    decision_5 -->|yes| activity_4
-    decision_5 -->|no| activity_4
+    activity_5 --> activity_6
     activity_6 --> decision_2
     decision_2 -->|yes| activity_7
     decision_2 -->|no| exception_2
     gateway_fork_1 -->|parallel| activity_7
     activity_7 -->|parallel| gateway_join_1
     gateway_fork_1 -->|parallel| activity_8
-    activity_8 --> decision_3
+    activity_8 --> decision_8
+    decision_8 -->|yes| activity_16
+    decision_8 -->|no| exception_3
     decision_3 -->|yes| activity_10
     decision_3 -->|no| exception_3
     gateway_fork_1 -->|parallel| activity_9
@@ -72,33 +95,55 @@ flowchart TD
     activity_10 --> decision_4
     decision_4 -->|yes| activity_11
     decision_4 -->|no| exception_4
-    gateway_fork_2 -->|parallel| activity_11
-    activity_11 -->|parallel| gateway_join_2
-    gateway_fork_2 -->|parallel| activity_12
-    activity_12 -->|parallel| gateway_join_2
-    gateway_fork_2 -->|parallel| activity_13
-    activity_13 -->|parallel| gateway_join_2
-    gateway_join_2 --> end_node
+    activity_11 --> activity_12
+    activity_12 --> activity_13
+    activity_13 --> activity_14
+    activity_14 --> decision_10
+    decision_10 -->|yes| activity_4
+    decision_10 -->|no| activity_4
+    activity_15 --> decision_11
+    decision_11 -->|yes| decision_7
+    decision_11 -->|no| exception_2
+    decision_7 -->|yes| activity_7
+    decision_7 -->|no| exception_2
+    activity_16 --> decision_9
+    decision_9 -->|yes| activity_18
+    decision_9 -->|no| exception_11
+    activity_17 --> activity_18
+    activity_18 --> activity_19
+    activity_19 --> decision_6
+    decision_6 -->|yes| activity_3
+    decision_6 -->|no| exception_5
     activity_3 -.->|on error| exception_1
-    activity_6 -.->|on error| exception_2
+    activity_15 -.->|on error| exception_2
     activity_8 -.->|on error| exception_3
-    activity_10 -.->|on error| exception_4
-    activity_2 -.->|on error| exception_5
+    activity_16 -.->|on error| exception_4
+    activity_7 -.->|on error| exception_5
     activity_2 -.->|on error| exception_6
-    activity_3 -.->|on error| exception_7
-    activity_5 -.->|on error| exception_8
-    activity_7 -.->|compensate| compensation_1
+    activity_2 -.->|on error| exception_7
+    activity_3 -.->|on error| exception_8
+    activity_5 -.->|on error| exception_9
+    activity_7 -.->|on error| exception_10
+    activity_16 -.->|on error| exception_11
+    activity_19 -.->|on error| exception_12
+    exception_5 -.->|compensate| compensation_1
     compensation_1 --> end_node
     exception_3 -.->|compensate| compensation_2
     compensation_2 --> end_node
     activity_9 -.->|compensate| compensation_3
     compensation_3 --> end_node
-    exception_2 -.->|compensate| compensation_4
+    activity_6 -.->|compensate| compensation_4
     compensation_4 --> end_node
     exception_4 -.->|compensate| compensation_5
     compensation_5 --> end_node
     activity_11 -.->|compensate| compensation_6
     compensation_6 --> end_node
+    exception_3 -.->|compensate| compensation_7
+    compensation_7 --> end_node
+    activity_9 -.->|compensate| compensation_8
+    compensation_8 --> end_node
+    exception_2 -.->|compensate| compensation_9
+    compensation_9 --> end_node
     activity_7 -.->|emits| event_2
     activity_11 -.->|emits| event_3
     state_1 -->|transition| state_2
@@ -106,17 +151,25 @@ flowchart TD
     state_2 -->|transition| state_4
     state_4 -->|transition| state_5
     state_4 -->|transition| state_6
-    state_4 -->|transition| state_3
-    exception_1 -->|terminates| end_node
-    exception_6 -->|terminates| end_node
+    state_6 -->|transition| state_7
+    state_2 -->|transition| state_8
+    state_8 -->|transition| state_5
+    state_8 -->|transition| state_6
+    state_8 -->|transition| state_9
+    state_2 -->|transition| state_10
     exception_8 -->|terminates| end_node
-    exception_5 -->|terminates| end_node
+    exception_11 -->|terminates| end_node
+    exception_12 -->|terminates| end_node
+    exception_9 -->|terminates| end_node
     exception_7 -->|terminates| end_node
+    exception_10 -->|terminates| end_node
+    exception_6 -->|terminates| end_node
+    exception_1 -->|terminates| end_node
     classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
     classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;
     classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
     classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;
-    class start,activity_1,state_1,state_2 capture;
-    class activity_3,activity_5,decision_1,decision_2,decision_3,decision_4,decision_5,exception_1,exception_2,exception_3,exception_4,exception_5,exception_6,exception_7,exception_8 validate;
-    class activity_2,activity_4,activity_6,activity_7,activity_8,activity_9,gateway_fork_1,gateway_join_1,gateway_fork_2,gateway_join_2,state_4 process;
-    class end_node,activity_10,activity_11,activity_12,activity_13,compensation_1,compensation_2,compensation_3,compensation_4,compensation_5,compensation_6,event_1,event_2,event_3,event_4,state_3,state_5,state_6 activate;
+    class start,exception_1,exception_2,exception_3,exception_4,exception_5,exception_6,exception_7,exception_8,exception_9,exception_10,exception_11,exception_12,event_1,event_4,state_1,state_2,state_7 capture;
+    class activity_1,activity_3,activity_14,decision_1,decision_2,decision_3,decision_4,decision_5,decision_6,decision_7,decision_8,decision_9,decision_10,decision_11 validate;
+    class activity_2,activity_4,activity_5,activity_7,activity_8,activity_9,activity_13,activity_19,compensation_1,compensation_2,compensation_3,compensation_7,compensation_8,gateway_fork_1,gateway_join_1,state_4,state_8,state_10 process;
+    class end_node,activity_6,activity_10,activity_11,activity_12,activity_15,activity_16,activity_17,activity_18,compensation_4,compensation_5,compensation_6,compensation_9,event_2,event_3,state_3,state_5,state_6,state_9 activate;

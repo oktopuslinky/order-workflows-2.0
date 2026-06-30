@@ -8,15 +8,24 @@ stages of the project.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from workflow_compiler.agents import (
+    DISCOVERY_SPEC,
+    FACTS_REVIEW_SPEC,
+    FACTS_SPEC,
+    METADATA_REVIEW_SPEC,
+    ConsensusMergeAgent,
     CVPAClassifierAgent,
     FactExtractionAgent,
     GraphBuilderAgent,
+    ReviewPipelineAgent,
+    ReviewSpec,
+    StageSpec,
     TemporalCodeGeneratorAgent,
     TemporalGeneratorAgent,
     WorkflowDiscoveryAgent,
@@ -70,10 +79,66 @@ def _emit(progress: ProgressCallback | None, event: ProgressEvent) -> None:
     """Deliver ``event`` to ``progress`` if set, swallowing observer errors."""
     if progress is None:
         return
-    try:
+    with contextlib.suppress(Exception):  # a progress sink must never break a run
         progress(event)
-    except Exception:  # pragma: no cover - a progress sink must never break a run.
-        pass
+
+
+@dataclass(frozen=True)
+class EnsembleConfig:
+    """Configuration for the consensus-merge ensemble on selected LLM stages."""
+
+    enabled: bool = False
+    n: int = 3
+    temperatures: tuple[float, ...] = (0.2, 0.5, 0.8)
+    stages: frozenset[str] = frozenset({"discovery", "facts"})
+    per_candidate_timeout: float = 300.0
+    overall_timeout: float = 480.0
+
+    def temperatures_for(self) -> list[float]:
+        """Return exactly ``n`` temperatures, spreading evenly if too few given."""
+        base = list(self.temperatures)
+        if len(base) >= self.n:
+            return base[: self.n]
+        if self.n == 1:
+            return [base[0] if base else 0.5]
+        return [round(0.2 + 0.6 * i / (self.n - 1), 3) for i in range(self.n)]
+
+    @classmethod
+    def from_settings(
+        cls, settings: Settings, *, enabled: bool | None = None, n: int | None = None
+    ) -> EnsembleConfig:
+        """Build from ``Settings`` with optional CLI overrides for enabled / n."""
+        return cls(
+            enabled=settings.ensemble_enabled if enabled is None else enabled,
+            n=settings.ensemble_n if n is None else n,
+            temperatures=tuple(settings.ensemble_temperatures),
+            stages=frozenset(settings.ensemble_stages),
+            per_candidate_timeout=settings.ensemble_per_candidate_timeout,
+            overall_timeout=settings.ensemble_overall_timeout,
+        )
+
+
+@dataclass(frozen=True)
+class ReviewConfig:
+    """Configuration for the sequential review pipeline on selected LLM stages.
+
+    The review pipeline generates one canonical output per stage and improves it
+    with three sequential review passes. It is **on by default**, but the ensemble
+    takes precedence on any stage it is enabled for (see ``WorkflowCompiler._maybe_wrap``).
+    """
+
+    enabled: bool = True
+    stages: frozenset[str] = frozenset({"discovery", "facts"})
+
+    @classmethod
+    def from_settings(
+        cls, settings: Settings, *, enabled: bool | None = None
+    ) -> ReviewConfig:
+        """Build from ``Settings`` with an optional CLI override for ``enabled``."""
+        return cls(
+            enabled=settings.review_enabled if enabled is None else enabled,
+            stages=frozenset(settings.review_stages),
+        )
 
 
 class WorkflowCompiler:
@@ -104,6 +169,8 @@ class WorkflowCompiler:
         review_manager: ReviewManager | None = None,
         state_store: StateStore | None = None,
         prompt_manager: PromptManager | None = None,
+        ensemble: EnsembleConfig | None = None,
+        review: ReviewConfig | None = None,
     ) -> None:
         """Wire the compiler to its collaborators, defaulting the rest.
 
@@ -117,10 +184,14 @@ class WorkflowCompiler:
         self._llm_provider = llm_provider
         self._parser = parser
         self._prompt_manager = prompt_manager or PromptManager()
+        self._ensemble = ensemble or EnsembleConfig()
+        self._review = review or ReviewConfig()
         self._agents = (
             list(agents)
             if agents is not None
-            else self._default_agents(llm_provider, self._prompt_manager)
+            else self._default_agents(
+                llm_provider, self._prompt_manager, self._ensemble, self._review
+            )
         )
         self._post_approval_agents = (
             list(post_approval_agents)
@@ -151,18 +222,94 @@ class WorkflowCompiler:
         resolved = settings or get_settings()
         provider = llm_provider or ProviderFactory().from_settings(resolved)
         store = state_store or FileStateStore(resolved.state_store_path)
-        return cls(llm_provider=provider, state_store=store, **kwargs)  # type: ignore[arg-type]
+        ensemble = kwargs.pop("ensemble", None) or EnsembleConfig.from_settings(resolved)
+        review = kwargs.pop("review", None) or ReviewConfig.from_settings(resolved)
+        return cls(  # type: ignore[arg-type]
+            llm_provider=provider,
+            state_store=store,
+            ensemble=ensemble,
+            review=review,
+            **kwargs,
+        )
 
     @staticmethod
     def _default_agents(
-        llm: BaseLLMProvider | None, prompts: PromptManager
+        llm: BaseLLMProvider | None,
+        prompts: PromptManager,
+        ensemble: EnsembleConfig,
+        review: ReviewConfig,
     ) -> list[BaseAgent]:
-        """Build the standard discovery → facts → graph agent pipeline."""
+        """Build the standard discovery → facts → graph agent pipeline.
+
+        Each LLM stage is wrapped per :meth:`_maybe_wrap`'s precedence: the
+        ensemble (if enabled for the stage), else the sequential review pipeline
+        (on by default), else the plain agent. Graph building is deterministic and
+        never wrapped.
+        """
+        discovery = WorkflowDiscoveryAgent(llm, prompt_manager=prompts)
+        facts = FactExtractionAgent(llm, prompt_manager=prompts)
         return [
-            WorkflowDiscoveryAgent(llm, prompt_manager=prompts),
-            FactExtractionAgent(llm, prompt_manager=prompts),
+            WorkflowCompiler._maybe_wrap(
+                "discovery",
+                discovery,
+                lambda p: WorkflowDiscoveryAgent(p, prompt_manager=prompts),
+                DISCOVERY_SPEC,
+                METADATA_REVIEW_SPEC,
+                llm,
+                prompts,
+                ensemble,
+                review,
+            ),
+            WorkflowCompiler._maybe_wrap(
+                "facts",
+                facts,
+                lambda p: FactExtractionAgent(p, prompt_manager=prompts),
+                FACTS_SPEC,
+                FACTS_REVIEW_SPEC,
+                llm,
+                prompts,
+                ensemble,
+                review,
+            ),
             GraphBuilderAgent(),
         ]
+
+    @staticmethod
+    def _maybe_wrap(
+        stage: str,
+        plain: BaseAgent,
+        inner_factory: Callable[[BaseLLMProvider], BaseAgent],
+        ensemble_spec: StageSpec,
+        review_spec: ReviewSpec,
+        llm: BaseLLMProvider | None,
+        prompts: PromptManager,
+        ensemble: EnsembleConfig,
+        review: ReviewConfig,
+    ) -> BaseAgent:
+        """Select the quality strategy for ``stage`` (ensemble > review > plain).
+
+        The ensemble wins on any stage it is explicitly enabled for; otherwise the
+        sequential review pipeline runs (default-on); otherwise the plain agent runs.
+        """
+        if llm is None:
+            return plain
+        if ensemble.enabled and stage in ensemble.stages:
+            return ConsensusMergeAgent(
+                inner_factory=inner_factory,
+                provider=llm,
+                temperatures=ensemble.temperatures_for(),
+                spec=ensemble_spec,
+                per_candidate_timeout=ensemble.per_candidate_timeout,
+                overall_timeout=ensemble.overall_timeout,
+            )
+        if review.enabled and stage in review.stages:
+            return ReviewPipelineAgent(
+                inner_factory=inner_factory,
+                provider=llm,
+                spec=review_spec,
+                prompt_manager=prompts,
+            )
+        return plain
 
     @staticmethod
     def _default_post_approval_agents(
@@ -193,7 +340,13 @@ class WorkflowCompiler:
         *,
         phase: str = "agent",
     ) -> WorkflowState:
-        """Run ``agents`` in order, emitting timed start/done progress events."""
+        """Run ``agents`` in order, emitting timed start/done progress events.
+
+        An agent that exposes ``set_progress`` (e.g. :class:`ReviewPipelineAgent`)
+        is handed a **nested** sub-reporter so its internal steps — the canonical
+        generation and each review pass — surface in the same live log, indented
+        under the agent's own start/done pair.
+        """
         total = len(agents)
         for index, agent in enumerate(agents, start=1):
             name = getattr(agent, "name", agent.__class__.__name__)
@@ -202,7 +355,14 @@ class WorkflowCompiler:
                 ProgressEvent(phase=phase, name=name, status="start", index=index, total=total),
             )
             started = time.perf_counter()
-            state = await agent.run(state)
+            setter = getattr(agent, "set_progress", None)
+            if callable(setter):
+                setter(WorkflowCompiler._sub_reporter(progress))
+            try:
+                state = await agent.run(state)
+            finally:
+                if callable(setter):
+                    setter(None)
             _emit(
                 progress,
                 ProgressEvent(
@@ -216,6 +376,39 @@ class WorkflowCompiler:
                 ),
             )
         return state
+
+    @staticmethod
+    def _sub_reporter(progress: ProgressCallback | None) -> Callable[..., None]:
+        """Return a callable an agent uses to emit nested ``review-pass`` events.
+
+        The agent stays decoupled from :class:`ProgressEvent` — it calls
+        ``report(name, status, index, total, seconds=?, stage=?)`` and this adapter
+        builds the event (phase ``"review-pass"``) and forwards it to ``progress``.
+        """
+
+        def report(
+            name: str,
+            status: str,
+            index: int,
+            total: int,
+            *,
+            seconds: float | None = None,
+            stage: str | None = None,
+        ) -> None:
+            _emit(
+                progress,
+                ProgressEvent(
+                    phase="review-pass",
+                    name=name,
+                    status=status,
+                    index=index,
+                    total=total,
+                    seconds=seconds,
+                    stage=stage,
+                ),
+            )
+
+        return report
 
     async def compile_document(
         self,

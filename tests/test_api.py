@@ -14,8 +14,13 @@ from workflow_compiler.agents import (
 )
 from workflow_compiler.api.app import app
 from workflow_compiler.api.dependencies import get_compiler
+from workflow_compiler.compiler import ReviewConfig
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.storage import InMemoryStateStore
+
+# Exact MockProvider queue → run with the default-on review pipeline disabled
+# (review behavior is covered in tests/test_review_pipeline.py).
+_NO_REVIEW = ReviewConfig(enabled=False)
 
 
 def _structured() -> list[object]:
@@ -32,6 +37,7 @@ def client() -> TestClient:
     compiler = WorkflowCompiler(
         llm_provider=MockProvider(structured=_structured()),
         state_store=InMemoryStateStore(),
+        review=_NO_REVIEW,
     )
     app.dependency_overrides[get_compiler] = lambda: compiler
     with TestClient(app) as test_client:

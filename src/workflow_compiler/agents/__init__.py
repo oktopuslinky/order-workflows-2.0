@@ -7,12 +7,28 @@ from workflow_compiler.agents.discovery import (
     WorkflowDiscovery,
     WorkflowDiscoveryAgent,
 )
+from workflow_compiler.agents.ensemble import (
+    DISCOVERY_SPEC,
+    FACTS_SPEC,
+    ConsensusMergeAgent,
+    StageSpec,
+)
 from workflow_compiler.agents.fact_extraction import (
     FactExtraction,
     FactExtractionAgent,
 )
 from workflow_compiler.agents.graph_builder import GraphBuilderAgent
 from workflow_compiler.agents.review import WorkflowReviewAgent
+from workflow_compiler.agents.review_pipeline import (
+    FACTS_REVIEW_SPEC,
+    METADATA_REVIEW_SPEC,
+    FactsPatchApplier,
+    MetadataPatchApplier,
+    ReviewPass,
+    ReviewPipelineAgent,
+    ReviewSpec,
+    rebuild_facts,
+)
 from workflow_compiler.agents.temporal import (
     TemporalDesignOutput,
     TemporalGeneratorAgent,
@@ -20,15 +36,27 @@ from workflow_compiler.agents.temporal import (
 from workflow_compiler.agents.temporal_code import TemporalCodeGeneratorAgent
 
 __all__ = [
+    "DISCOVERY_SPEC",
+    "FACTS_REVIEW_SPEC",
+    "FACTS_SPEC",
+    "METADATA_REVIEW_SPEC",
     "CVPAClassifierAgent",
     "CVPAOutput",
+    "ConsensusMergeAgent",
     "FactExtraction",
     "FactExtractionAgent",
+    "FactsPatchApplier",
     "GraphBuilderAgent",
+    "MetadataPatchApplier",
+    "ReviewPass",
+    "ReviewPipelineAgent",
+    "ReviewSpec",
+    "StageSpec",
     "TemporalCodeGeneratorAgent",
     "TemporalDesignOutput",
     "TemporalGeneratorAgent",
     "WorkflowDiscovery",
     "WorkflowDiscoveryAgent",
     "WorkflowReviewAgent",
+    "rebuild_facts",
 ]

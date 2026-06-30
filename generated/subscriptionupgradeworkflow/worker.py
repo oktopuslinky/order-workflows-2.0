@@ -26,7 +26,7 @@ with workflow.unsafe.imports_passed_through():
         resolvetargetplan,
         checksubscriptioneligibility,
         calculateprorationamount,
-        validatepromotionaldiscount,
+        validatepromocode,
         preauthoriseprorationcharge,
         updateentitlements,
         reprovisionservice,
@@ -34,7 +34,7 @@ with workflow.unsafe.imports_passed_through():
         capturepreauthorisedcharge,
         publishevents,
         sendupgradeconfirmation,
-        recordupgradeaudittrail,
+        recordaudittrail,
         restoreoldentitlements,
         reprovisionwitholdplan,
         restoreoldresourcereservation,
@@ -53,7 +53,7 @@ async def main() -> None:
         client,
         task_queue=TASK_QUEUE,
         workflows=[Subscriptionupgradeworkflow],
-        activities=[validaterequestpayload, resolvetargetplan, checksubscriptioneligibility, calculateprorationamount, validatepromotionaldiscount, preauthoriseprorationcharge, updateentitlements, reprovisionservice, updateresourceinventory, capturepreauthorisedcharge, publishevents, sendupgradeconfirmation, recordupgradeaudittrail, restoreoldentitlements, reprovisionwitholdplan, restoreoldresourcereservation, releasepreauthorisation, reversechargecapture, publishrollbackevent],
+        activities=[validaterequestpayload, resolvetargetplan, checksubscriptioneligibility, calculateprorationamount, validatepromocode, preauthoriseprorationcharge, updateentitlements, reprovisionservice, updateresourceinventory, capturepreauthorisedcharge, publishevents, sendupgradeconfirmation, recordaudittrail, restoreoldentitlements, reprovisionwitholdplan, restoreoldresourcereservation, releasepreauthorisation, reversechargecapture, publishrollbackevent],
     )
     print(f"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.")
     await worker.run()

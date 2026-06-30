@@ -27,7 +27,7 @@ skeletons and the simple signal/query/timer/child declarations.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import networkx as nx
@@ -39,8 +39,6 @@ from workflow_compiler.models import (
     GeneratedFile,
     RetryPolicyDesign,
     StepKind,
-    TemporalActivityDesign,
-    TemporalChildWorkflowDesign,
     TemporalCompensationDesign,
     TemporalParam,
     TemporalStep,
@@ -184,7 +182,7 @@ class TemporalPythonCodeGenerator:
         design: TemporalWorkflowDesign,
         *,
         graph: WorkflowGraph | None = None,
-    ) -> "TemporalCodeBundle":  # noqa: F821 (imported lazily below)
+    ) -> TemporalCodeBundle:  # noqa: F821 (imported lazily below)
         """Render ``design`` (ordered by ``graph`` when available) into files."""
         from workflow_compiler.models import TemporalCodeBundle
 
@@ -291,7 +289,9 @@ class TemporalPythonCodeGenerator:
                 continue
             seen.add(name)
             annotation = (param.type or "str").strip() or "str"
-            fields.append(_Field(name=name, annotation=annotation, default=_default_for(annotation)))
+            fields.append(
+                _Field(name=name, annotation=annotation, default=_default_for(annotation))
+            )
         return fields
 
     def _input_classes(self, design: TemporalWorkflowDesign) -> list[_InputClass]:
@@ -575,7 +575,9 @@ class _RunBodyEmitter:
             attr = f"_{_snake(signal.name)}_received"
             lines.append(f"{pad}await workflow.wait_condition(lambda: self.{attr})")
         else:
-            lines.append(f"{pad}await workflow.wait_condition(lambda: True)  # TODO: real condition")
+            lines.append(
+                f"{pad}await workflow.wait_condition(lambda: True)  # TODO: real condition"
+            )
         return lines
 
     def _emit_timer(self, step: TemporalStep, *, depth: int) -> list[str]:
@@ -698,6 +700,6 @@ def _pascal_key(name: str) -> str:
 
 def to_temporal_python(
     design: TemporalWorkflowDesign, *, graph: WorkflowGraph | None = None
-) -> "TemporalCodeBundle":  # noqa: F821
+) -> TemporalCodeBundle:  # noqa: F821
     """Convenience wrapper around :class:`TemporalPythonCodeGenerator`."""
     return TemporalPythonCodeGenerator().generate(design, graph=graph)

@@ -13,7 +13,7 @@ from shared import (
     ResolvetargetplanInput,
     ChecksubscriptioneligibilityInput,
     CalculateprorationamountInput,
-    ValidatepromotionaldiscountInput,
+    ValidatepromocodeInput,
     PreauthoriseprorationchargeInput,
     UpdateentitlementsInput,
     ReprovisionserviceInput,
@@ -21,7 +21,7 @@ from shared import (
     CapturepreauthorisedchargeInput,
     PublisheventsInput,
     SendupgradeconfirmationInput,
-    RecordupgradeaudittrailInput,
+    RecordaudittrailInput,
     RestoreoldentitlementsInput,
     ReprovisionwitholdplanInput,
     RestoreoldresourcereservationInput,
@@ -33,7 +33,7 @@ from shared import (
 
 @activity.defn(name="Validaterequestpayload")
 async def validaterequestpayload(arg: ValidaterequestpayloadInput) -> str:
-    """Validate incoming request data."""
+    """Validate incoming request payload integrity."""
     activity.logger.info("Running validaterequestpayload", extra={"input": arg})
     raise NotImplementedError("validaterequestpayload is not implemented yet.")
 
@@ -51,15 +51,15 @@ async def checksubscriptioneligibility(arg: ChecksubscriptioneligibilityInput) -
 
 @activity.defn(name="Calculateprorationamount")
 async def calculateprorationamount(arg: CalculateprorationamountInput) -> str:
-    """Calculate prorated charges for the upgrade."""
+    """Calculate prorated charge for the upgrade."""
     activity.logger.info("Running calculateprorationamount", extra={"input": arg})
     raise NotImplementedError("calculateprorationamount is not implemented yet.")
 
-@activity.defn(name="Validatepromotionaldiscount")
-async def validatepromotionaldiscount(arg: ValidatepromotionaldiscountInput) -> str:
-    """Validate and apply promotional discount if applicable."""
-    activity.logger.info("Running validatepromotionaldiscount", extra={"input": arg})
-    raise NotImplementedError("validatepromotionaldiscount is not implemented yet.")
+@activity.defn(name="Validatepromocode")
+async def validatepromocode(arg: ValidatepromocodeInput) -> str:
+    """Validate promotional code if provided."""
+    activity.logger.info("Running validatepromocode", extra={"input": arg})
+    raise NotImplementedError("validatepromocode is not implemented yet.")
 
 @activity.defn(name="Preauthoriseprorationcharge")
 async def preauthoriseprorationcharge(arg: PreauthoriseprorationchargeInput) -> str:
@@ -69,61 +69,61 @@ async def preauthoriseprorationcharge(arg: PreauthoriseprorationchargeInput) -> 
 
 @activity.defn(name="Updateentitlements")
 async def updateentitlements(arg: UpdateentitlementsInput) -> str:
-    """Update user entitlements to reflect the new plan."""
+    """Update entitlements for the subscription."""
     activity.logger.info("Running updateentitlements", extra={"input": arg})
     raise NotImplementedError("updateentitlements is not implemented yet.")
 
 @activity.defn(name="Reprovisionservice")
 async def reprovisionservice(arg: ReprovisionserviceInput) -> str:
-    """Re-provision the service with the new plan configuration."""
+    """Re-provision the service according to the new plan."""
     activity.logger.info("Running reprovisionservice", extra={"input": arg})
     raise NotImplementedError("reprovisionservice is not implemented yet.")
 
 @activity.defn(name="Updateresourceinventory")
 async def updateresourceinventory(arg: UpdateresourceinventoryInput) -> str:
-    """Update resource allocations in the inventory system."""
+    """Update resource inventory reflecting the plan change."""
     activity.logger.info("Running updateresourceinventory", extra={"input": arg})
     raise NotImplementedError("updateresourceinventory is not implemented yet.")
 
 @activity.defn(name="Capturepreauthorisedcharge")
 async def capturepreauthorisedcharge(arg: CapturepreauthorisedchargeInput) -> str:
-    """Capture the pre-authorised payment."""
+    """Capture the pre-authorised charge."""
     activity.logger.info("Running capturepreauthorisedcharge", extra={"input": arg})
     raise NotImplementedError("capturepreauthorisedcharge is not implemented yet.")
 
 @activity.defn(name="Publishevents")
 async def publishevents(arg: PublisheventsInput) -> str:
-    """Publish upgrade events to the Kafka Event Bus."""
+    """Publish upgrade events (started, completed, rolled_back)."""
     activity.logger.info("Running publishevents", extra={"input": arg})
     raise NotImplementedError("publishevents is not implemented yet.")
 
 @activity.defn(name="Sendupgradeconfirmation")
 async def sendupgradeconfirmation(arg: SendupgradeconfirmationInput) -> str:
-    """Notify the user of the successful upgrade via email."""
+    """Notify the customer of the upgrade completion."""
     activity.logger.info("Running sendupgradeconfirmation", extra={"input": arg})
     raise NotImplementedError("sendupgradeconfirmation is not implemented yet.")
 
-@activity.defn(name="Recordupgradeaudittrail")
-async def recordupgradeaudittrail(arg: RecordupgradeaudittrailInput) -> str:
-    """Log the upgrade in the audit and compliance archive."""
-    activity.logger.info("Running recordupgradeaudittrail", extra={"input": arg})
-    raise NotImplementedError("recordupgradeaudittrail is not implemented yet.")
+@activity.defn(name="Recordaudittrail")
+async def recordaudittrail(arg: RecordaudittrailInput) -> str:
+    """Log the upgrade transaction for audit purposes."""
+    activity.logger.info("Running recordaudittrail", extra={"input": arg})
+    raise NotImplementedError("recordaudittrail is not implemented yet.")
 
 @activity.defn(name="Restoreoldentitlements")
 async def restoreoldentitlements(arg: RestoreoldentitlementsInput) -> str:
-    """Restore entitlements to their previous state."""
+    """Revert entitlements to their previous state."""
     activity.logger.info("Running restoreoldentitlements", extra={"input": arg})
     raise NotImplementedError("restoreoldentitlements is not implemented yet.")
 
 @activity.defn(name="Reprovisionwitholdplan")
 async def reprovisionwitholdplan(arg: ReprovisionwitholdplanInput) -> str:
-    """Re-provision with the original plan configuration."""
+    """Re-provision using the original plan."""
     activity.logger.info("Running reprovisionwitholdplan", extra={"input": arg})
     raise NotImplementedError("reprovisionwitholdplan is not implemented yet.")
 
 @activity.defn(name="Restoreoldresourcereservation")
 async def restoreoldresourcereservation(arg: RestoreoldresourcereservationInput) -> str:
-    """Restore resource reservations to their previous state."""
+    """Revert resource inventory changes."""
     activity.logger.info("Running restoreoldresourcereservation", extra={"input": arg})
     raise NotImplementedError("restoreoldresourcereservation is not implemented yet.")
 
@@ -141,6 +141,6 @@ async def reversechargecapture(arg: ReversechargecaptureInput) -> str:
 
 @activity.defn(name="Publishrollbackevent")
 async def publishrollbackevent(arg: PublishrollbackeventInput) -> str:
-    """Publish an event indicating the upgrade rollback."""
+    """Publish a rollback event."""
     activity.logger.info("Running publishrollbackevent", extra={"input": arg})
     raise NotImplementedError("publishrollbackevent is not implemented yet.")

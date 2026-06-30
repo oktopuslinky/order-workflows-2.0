@@ -59,12 +59,29 @@ def compile(
     out_dir: Path = typer.Option(
         None, "--out-dir", help="Write generated Temporal code to this directory (auto-approve)."
     ),
+    ensemble: bool = typer.Option(
+        False,
+        "--ensemble",
+        help="Run discovery + fact extraction N times and consensus-merge the candidates.",
+    ),
+    ensemble_n: int = typer.Option(
+        0, "--ensemble-n", help="Number of ensemble candidates (0 = use the configured default)."
+    ),
+    review: bool = typer.Option(
+        True,
+        "--review/--no-review",
+        help="Sequential review passes on discovery + facts (on by default; "
+        "ignored on any stage where --ensemble is active).",
+    ),
 ) -> None:
     """Compile a workflow document into a review-ready state."""
     import asyncio
 
     asyncio.run(
-        _run_compile(document, provider, model, timeout, auto_approve, persist, out, out_dir)
+        _run_compile(
+            document, provider, model, timeout, auto_approve, persist, out, out_dir,
+            ensemble, ensemble_n, review,
+        )
     )
 
 
@@ -142,12 +159,20 @@ def _make_progress():
     def on_event(event) -> None:  # type: ignore[no-untyped-def]
         timestamp = datetime.now().strftime("%H:%M:%S")
         position = f"[dim]{event.index}/{event.total}[/]"
+        # Nested sub-steps (e.g. the review pipeline's generate + 3 passes) are
+        # indented under their parent agent and use a quieter marker.
+        nested = getattr(event, "phase", None) == "review-pass"
+        indent = "       " if nested else "  "
         if event.status == "start":
-            console.print(f"  [dim]{timestamp}[/] [cyan]>>[/] {position} {event.name} [dim]...[/]")
+            marker = "[dim]>[/]" if nested else "[cyan]>>[/]"
+            console.print(
+                f"{indent}[dim]{timestamp}[/] {marker} {position} {event.name} [dim]...[/]"
+            )
         else:
+            marker = "[dim]ok[/]" if nested else "[green]OK[/]"
             stage = f" [dim]-> {event.stage}[/]" if event.stage else ""
             console.print(
-                f"  [dim]{timestamp}[/] [green]OK[/] {position} {event.name}  "
+                f"{indent}[dim]{timestamp}[/] {marker} {position} {event.name}  "
                 f"[bold]{event.seconds:.2f}s[/]{stage}"
             )
 
@@ -192,6 +217,26 @@ def _write_code(state: object, out_dir: Path | None) -> None:
     )
 
 
+def _ensemble_config(enabled_flag: bool, n: int):
+    """Build an EnsembleConfig from settings, applying CLI overrides."""
+    from workflow_compiler.compiler import EnsembleConfig
+    from workflow_compiler.config import get_settings
+
+    return EnsembleConfig.from_settings(
+        get_settings(),
+        enabled=True if enabled_flag else None,
+        n=n or None,
+    )
+
+
+def _review_config(enabled_flag: bool):
+    """Build a ReviewConfig from settings, applying the CLI --review/--no-review override."""
+    from workflow_compiler.compiler import ReviewConfig
+    from workflow_compiler.config import get_settings
+
+    return ReviewConfig.from_settings(get_settings(), enabled=enabled_flag)
+
+
 async def _run_compile(
     document: Path,
     provider_name: str | None,
@@ -201,6 +246,9 @@ async def _run_compile(
     persist: bool,
     out: Path | None = None,
     out_dir: Path | None = None,
+    ensemble: bool = False,
+    ensemble_n: int = 0,
+    review: bool = True,
 ) -> None:
     from workflow_compiler.compiler import WorkflowCompiler
     from workflow_compiler.ingestion import DocumentParserFactory
@@ -213,7 +261,26 @@ async def _run_compile(
 
     provider = _build_provider(provider_name, model, timeout)
     console.print(f"[bold]Provider[/]: {provider.name}")
-    compiler = WorkflowCompiler(llm_provider=provider, state_store=_file_store())
+    ensemble_cfg = _ensemble_config(ensemble, ensemble_n)
+    review_cfg = _review_config(review)
+    if ensemble_cfg.enabled:
+        console.print(
+            f"[bold]Ensemble[/]: on (n={ensemble_cfg.n}, stages={sorted(ensemble_cfg.stages)})"
+        )
+    if review_cfg.enabled:
+        ensembled = ensemble_cfg.stages if ensemble_cfg.enabled else set()
+        active = sorted(review_cfg.stages - ensembled)
+        console.print(
+            f"[bold]Review[/]: on (completeness->grounding->consistency, stages={active})"
+        )
+    else:
+        console.print("[bold]Review[/]: off")
+    compiler = WorkflowCompiler(
+        llm_provider=provider,
+        state_store=_file_store(),
+        ensemble=ensemble_cfg,
+        review=review_cfg,
+    )
     try:
         console.print("[bold]Compiling[/] (discover → facts → graph → review) ...")
         state = await compiler.compile_document(
@@ -422,6 +489,8 @@ def _print_summary(state: object) -> None:
             fact_table.add_row(category, str(count))
         console.print(fact_table)
 
+    _print_structure(state)
+
     graph = state.workflow_graph
     if graph is not None:
         console.print(f"[bold]Graph[/]: {len(graph.nodes)} nodes, {len(graph.edges)} edges")
@@ -437,6 +506,89 @@ def _print_summary(state: object) -> None:
         console.print(
             Panel(state.mermaid_diagram.source, title="Mermaid (paste into mermaid.live)")
         )
+
+
+def _print_structure(state: object) -> None:
+    """Render the structural IR (relational fact structure) if one was extracted.
+
+    This is the *first* of the two IRs — the id-referenced control/relation graph
+    produced before the mermaid diagram, from which the diagram is wired.
+    """
+    from rich.table import Table
+
+    from workflow_compiler.models import WorkflowState
+
+    assert isinstance(state, WorkflowState)
+    facts = state.workflow_facts
+    structure = facts.structure if facts is not None else None
+    if structure is None or structure.is_empty():
+        return
+
+    table = Table(title="Structural IR (relational fact structure, pre-diagram)")
+    table.add_column("Kind")
+    table.add_column("Id")
+    table.add_column("Detail")
+    table.add_column("Links")
+    for a in structure.activities:
+        group = f"parallel_group={a.parallel_group}" if a.parallel_group else "-"
+        table.add_row("activity", a.id, a.name, group)
+    for d in structure.decisions:
+        table.add_row(
+            "decision", d.id, d.question, f"after={d.after} yes={d.yes_target} no={d.no_target}"
+        )
+    for e in structure.exceptions:
+        table.add_row("exception", e.id, e.reason, f"raised_by={e.raised_by}")
+    for c in structure.compensations:
+        table.add_row("compensation", c.id, c.name, f"compensates={c.compensates}")
+    for ev in structure.events:
+        table.add_row("event", ev.id, ev.name, f"emitted_by={ev.emitted_by}")
+    for t in structure.transitions:
+        table.add_row("transition", "-", f"{t.source} -> {t.target}", f"trigger={t.trigger or '-'}")
+    console.print(table)
+
+
+def _print_plan(design: object) -> None:
+    """Render the execution IR (the Temporal plan) as an indented step tree.
+
+    This is the *second* IR — the ordered control/data-flow plan the code
+    generator walks. ASCII-only markers keep output safe when piped on Windows.
+    """
+    from workflow_compiler.models import BindingSource, TemporalStep, TemporalWorkflowDesign
+
+    assert isinstance(design, TemporalWorkflowDesign)
+    if not design.plan:
+        console.print(
+            "[dim]Execution IR (plan): none provided — the generator will "
+            "synthesize a linear plan from declarations + graph order.[/]"
+        )
+        return
+
+    console.print("[bold]Execution IR[/] (Temporal plan, drives code generation):")
+
+    def render(steps: list[TemporalStep], depth: int) -> None:
+        pad = "  " * depth
+        for step in steps:
+            detail = step.ref or step.signal or step.timer or step.predicate or ""
+            line = f"{pad}- [{step.kind.value}] {step.id}"
+            if detail:
+                line += f" -> {detail}"
+            if step.result_name:
+                line += f"  (=> {step.result_name})"
+            console.print(f"  {line}")
+            for binding in step.bindings:
+                src = (
+                    binding.source.value
+                    if isinstance(binding.source, BindingSource)
+                    else binding.source
+                )
+                console.print(
+                    f"  {pad}    input {binding.param} <= {src}:{binding.ref or '-'}"
+                )
+            for i, lane in enumerate(step.lanes):
+                console.print(f"  {pad}    lane[{i}]:")
+                render(lane, depth + 3)
+
+    render(design.plan, 0)
 
 
 def _print_review(state: object) -> None:
@@ -511,6 +663,7 @@ def _print_temporal(state: object) -> None:
         "Compensations", ", ".join(c.name for c in design.compensation_activities) or "-"
     )
     console.print(table)
+    _print_plan(design)
 
 
 def _print_temporal_code(state: object) -> None:

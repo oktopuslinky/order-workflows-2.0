@@ -38,6 +38,10 @@ Document ─▶ Parser ─▶ Workflow Discovery ─▶ Fact Extraction ─▶ G
                                                                   Temporal Design ─▶ COMPLETED
 ```
 
+By default the **Workflow Discovery** and **Fact Extraction** stages each generate one canonical
+output and then run three sequential **review passes** (completeness → grounding → consistency) that
+patch it in place; this is on by default and toggled with `--review` / `--no-review` (see below).
+
 See [`docs/architecture.md`](docs/architecture.md) for component and sequence diagrams.
 
 ## Stack
@@ -72,28 +76,117 @@ State is persisted as JSON under `WORKFLOW_COMPILER_STATE_STORE_PATH` (default `
 
 ## Use — CLI
 
+Five commands. `compile`, `approve`, and `inspect` use the LLM (set `NVIDIA_API_KEY`, or pass
+`--provider mock`); `reject` and `show` need no LLM. `--version` prints the version, and
+`workflow-compiler <command> --help` is always the authoritative reference.
+
+### `compile <document>` — run discovery → facts → graph → review, stop at the gate
+
+| Flag | Default | Description |
+|---|---|---|
+| `--provider NAME` | from `.env` | Override the LLM provider (e.g. `mock`). |
+| `--model ID` | from `.env` | Override the model id. |
+| `--timeout SECONDS` | `120` | Per-request timeout. |
+| `--auto-approve` | off | Skip the human gate and run the **whole** pipeline (CVPA → Temporal design → Temporal code) in one call. |
+| `--persist` / `--no-persist` | persist | Whether to save the resulting state to the store. |
+| `--out PATH` | — | Write the Mermaid diagram to a file (CVPA-colored when `--auto-approve`). |
+| `--out-dir DIR` | — | Write the generated Temporal code bundle (only produced with `--auto-approve`). |
+| `--ensemble` | off | Run discovery + fact extraction N times and consensus-merge the candidates (see below). |
+| `--ensemble-n N` | `0` | Number of ensemble candidates (`0` = configured default of 3). |
+| `--review` / `--no-review` | review | Sequential review passes (completeness → grounding → consistency) over discovery + facts (see below). On any stage where `--ensemble` is active, the ensemble takes precedence. |
+
 ```bash
-# Compile a document up to the review gate; prints a workflow_id.
-workflow-compiler compile examples/order_workflow.md
+workflow-compiler compile examples/order_workflow.md                       # → prints a workflow_id, stops at gate
+workflow-compiler compile examples/order_workflow.md --provider mock       # → offline, no API key
+workflow-compiler compile examples/order_workflow.md --auto-approve \
+    --out workflow.mmd --out-dir ./generated                               # → full pipeline + colored diagram + code
+workflow-compiler compile examples/order_workflow.md --ensemble --ensemble-n 3   # → 3-way consensus on discovery+facts
+workflow-compiler compile examples/order_workflow.md --no-review                 # → skip the default review passes
+```
 
-# Inspect the review, then approve to produce CVPA + Temporal artifacts.
+### `approve <workflow_id>` — clear the gate, produce CVPA + Temporal design + Temporal code
+
+| Flag | Default | Description |
+|---|---|---|
+| `--reviewer NAME` | — | Reviewer identity recorded on the approval. |
+| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
+| `--out PATH` | — | Write the CVPA-colored Mermaid diagram to a file. |
+| `--out-dir DIR` | — | Write the generated Temporal Python code bundle to a directory. |
+
+```bash
 workflow-compiler approve <workflow_id> --reviewer alice
+workflow-compiler approve <workflow_id> --out workflow.mmd --out-dir ./generated
+```
 
-# Usage to regenerate a colored file for an existing workflow (same as approve, but generates output)
-workflow-compiler approve <workflow_id> --out workflow.mmd
+### `reject <workflow_id>` — halt the pipeline (no LLM)
 
-# Or reject (halts the pipeline; no LLM required).
+| Flag | Default | Description |
+|---|---|---|
+| `--reviewer NAME` | — | Reviewer identity. |
+| `--reason TEXT` | — | Why the graph was rejected (recorded in the report). |
+
+```bash
 workflow-compiler reject <workflow_id> --reason "missing cancellation branch"
+```
 
-# Display any stored workflow (no LLM required).
+### `show <workflow_id>` — display a stored workflow (no LLM, no flags)
+
+```bash
 workflow-compiler show <workflow_id>
+```
 
-# Run the whole pipeline in one shot (skips the human gate).
-workflow-compiler compile examples/order_workflow.md --auto-approve
+### `inspect <document>` — preview discovery → facts → graph without saving
 
-# Preview discovery → facts → graph and dump the Mermaid diagram, no persistence.
+| Flag | Default | Description |
+|---|---|---|
+| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
+| `--out PATH` | — | Write the generated Mermaid diagram to a file. |
+
+```bash
 workflow-compiler inspect examples/order_workflow.md --out workflow.mmd
 ```
+
+### Sequential review pipeline (default-on)
+
+The **default** quality lever on the **discovery** and **fact-extraction** stages. Rather than
+trusting a single sample, it follows a compiler discipline: **generate one canonical output, then
+improve it with three sequential review passes** — *completeness* (add elements explicitly in the
+document but missing), *grounding* (remove/flag elements not supported by the document), and
+*consistency* (merge duplicates, rename to a canonical label, fix relations). Each pass emits
+**minimal deterministic patches or `no_change`** (never a rewrite), and a pure applier folds them in
+— dropping any addition that duplicates an existing element or isn't grounded in the document, which
+makes the passes **idempotent**. It raises grounding/consistency, not certified truth (the human gate
+stays the oracle). See [§7.11 of `docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md). On by default; toggle
+with `--review` / `--no-review` or via `.env`:
+
+```dotenv
+WORKFLOW_COMPILER_REVIEW_ENABLED=true                  # default; --no-review overrides to off
+WORKFLOW_COMPILER_REVIEW_STAGES=["discovery","facts"]  # which stages get the review pipeline
+```
+
+> Precedence per stage is **ensemble → review → plain**: if `--ensemble` is enabled for a stage the
+> ensemble runs there; otherwise the review pipeline runs; otherwise the plain agent runs.
+
+### Consensus-merge ensemble (`--ensemble`)
+
+Opt-in accuracy mode: runs the **discovery** and **fact-extraction** stages N times at varied
+temperatures and **merges the candidates' parts** instead of trusting one sample — a part that
+appears in most candidates is kept, a single-candidate part is kept only if it grounds in the
+document (and is flagged low-confidence), and conflicts are resolved by vote. It suppresses
+hallucinations but never certifies truth (the human gate stays the oracle). See
+[§7.10 of `docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md). Defaults are configurable via `.env`:
+
+```dotenv
+WORKFLOW_COMPILER_ENSEMBLE_ENABLED=true            # same as passing --ensemble
+WORKFLOW_COMPILER_ENSEMBLE_N=3                      # candidates per stage
+WORKFLOW_COMPILER_ENSEMBLE_TEMPERATURES=[0.2,0.5,0.8]
+WORKFLOW_COMPILER_ENSEMBLE_STAGES=["discovery","facts"]
+WORKFLOW_COMPILER_ENSEMBLE_PER_CANDIDATE_TIMEOUT=300
+WORKFLOW_COMPILER_ENSEMBLE_OVERALL_TIMEOUT=480
+```
+
+> Cost note: the ensemble multiplies the discovery + facts LLM calls by N (run in parallel), which
+> is why it is opt-in and off by default.
 
 ## Use — HTTP API
 
@@ -154,6 +247,7 @@ src/workflow_compiler/
   llm/           Provider-agnostic LLM layer (ProviderFactory, Nemotron, mock)
   prompts/       Markdown prompt templates + PromptManager
   agents/        Discovery, FactExtraction, GraphBuilder, Review, CVPAClassifier, TemporalGenerator
+                 (+ review_pipeline: default-on sequential review; ensemble: opt-in consensus merge)
   graph/         Deterministic NetworkX graph builder, Mermaid renderer, structural reviewer
   review/        DefaultReviewManager (approval gate) + GraphEditor (validated edits)
   storage/       FileStateStore (JSON on disk) + InMemoryStateStore

@@ -20,6 +20,17 @@ from workflow_compiler.models.enums import (
     ReviewSeverity,
 )
 from workflow_compiler.models.facts import SourceSpan, WorkflowFact, WorkflowFacts
+from workflow_compiler.models.graph import WorkflowEdge, WorkflowGraph, WorkflowNode
+from workflow_compiler.models.mermaid import MermaidDiagram
+from workflow_compiler.models.metadata import WorkflowMetadata
+from workflow_compiler.models.patch import (
+    Evidence,
+    Patch,
+    PatchAction,
+    ReviewResult,
+)
+from workflow_compiler.models.review import ReviewIssue, ReviewReport
+from workflow_compiler.models.state import WorkflowState
 from workflow_compiler.models.structure import (
     ActivityNode,
     CompensationNode,
@@ -29,11 +40,6 @@ from workflow_compiler.models.structure import (
     TransitionEdge,
     WorkflowStructure,
 )
-from workflow_compiler.models.graph import WorkflowEdge, WorkflowGraph, WorkflowNode
-from workflow_compiler.models.mermaid import MermaidDiagram
-from workflow_compiler.models.metadata import WorkflowMetadata
-from workflow_compiler.models.review import ReviewIssue, ReviewReport
-from workflow_compiler.models.state import WorkflowState
 from workflow_compiler.models.temporal import (
     BindingSource,
     GeneratedFile,
@@ -76,6 +82,11 @@ __all__ = [
     # review
     "ReviewIssue",
     "ReviewReport",
+    # patch (review-pipeline vocabulary)
+    "Evidence",
+    "Patch",
+    "PatchAction",
+    "ReviewResult",
     # cvpa
     "CVPAClassification",
     "CVPANodeAssignment",

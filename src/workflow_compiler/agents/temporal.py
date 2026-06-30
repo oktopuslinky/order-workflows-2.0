@@ -107,7 +107,7 @@ class _StepOut(BaseModel):
     condition: str | None = Field(default=None)
     timer: str | None = Field(default=None)
     predicate: str | None = Field(default=None)
-    lanes: list[list["_StepOut"]] = Field(default_factory=list)
+    lanes: list[list[_StepOut]] = Field(default_factory=list)
 
 
 class _SignalOut(BaseModel):

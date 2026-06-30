@@ -11,6 +11,7 @@ from __future__ import annotations
 from workflow_compiler.interfaces.llm import BaseLLMProvider
 from workflow_compiler.llm.base import HttpChatProvider
 from workflow_compiler.llm.config import ProviderConfig
+from workflow_compiler.llm.ensemble_provider import TemperatureProvider
 from workflow_compiler.llm.factory import ProviderFactory
 from workflow_compiler.llm.json_utils import extract_json
 from workflow_compiler.llm.providers import (
@@ -39,5 +40,6 @@ __all__ = [
     "ProviderFactory",
     "RetryConfig",
     "Role",
+    "TemperatureProvider",
     "extract_json",
 ]

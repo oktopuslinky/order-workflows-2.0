@@ -19,10 +19,16 @@ from workflow_compiler.agents import (
     TemporalDesignOutput,
     WorkflowDiscovery,
 )
+from workflow_compiler.compiler import ReviewConfig
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import ApprovalStatus, CompilationStage, CVPAPhase
 from workflow_compiler.review import GraphEditor
 from workflow_compiler.storage import FileStateStore, InMemoryStateStore
+
+# These end-to-end tests drive an exact MockProvider response queue, so they run
+# with the sequential review pipeline disabled (it is covered in
+# tests/test_review_pipeline.py). Review-on would consume extra queued responses.
+_NO_REVIEW = ReviewConfig(enabled=False)
 
 _DOCUMENT = """
 # Order Fulfillment
@@ -91,7 +97,9 @@ def _provider() -> MockProvider:
 
 
 async def test_full_pipeline_with_human_gate() -> None:
-    compiler = WorkflowCompiler(llm_provider=_provider(), state_store=InMemoryStateStore())
+    compiler = WorkflowCompiler(
+        llm_provider=_provider(), state_store=InMemoryStateStore(), review=_NO_REVIEW
+    )
 
     # Compile stops at the approval gate.
     state = await compiler.compile_document(_DOCUMENT)
@@ -133,7 +141,9 @@ async def test_full_pipeline_with_human_gate() -> None:
 
 
 async def test_full_pipeline_auto_approve() -> None:
-    compiler = WorkflowCompiler(llm_provider=_provider(), state_store=InMemoryStateStore())
+    compiler = WorkflowCompiler(
+        llm_provider=_provider(), state_store=InMemoryStateStore(), review=_NO_REVIEW
+    )
     state = await compiler.compile_document(_DOCUMENT, review_mode=False)
     assert state.stage is CompilationStage.COMPLETED
     assert state.approval_status is ApprovalStatus.APPROVED
@@ -142,7 +152,9 @@ async def test_full_pipeline_auto_approve() -> None:
 
 
 async def test_reject_halts_pipeline() -> None:
-    compiler = WorkflowCompiler(llm_provider=_provider(), state_store=InMemoryStateStore())
+    compiler = WorkflowCompiler(
+        llm_provider=_provider(), state_store=InMemoryStateStore(), review=_NO_REVIEW
+    )
     state = await compiler.compile_document(_DOCUMENT)
     rejected = await compiler.reject_graph(state.workflow_id, reason="incomplete")
     assert rejected.approval_status is ApprovalStatus.REJECTED
@@ -152,7 +164,9 @@ async def test_reject_halts_pipeline() -> None:
 
 async def test_pipeline_persists_to_disk(tmp_path: Path) -> None:
     store = FileStateStore(tmp_path / "states")
-    compiler = WorkflowCompiler(llm_provider=_provider(), state_store=store)
+    compiler = WorkflowCompiler(
+        llm_provider=_provider(), state_store=store, review=_NO_REVIEW
+    )
     state = await compiler.compile_document(_DOCUMENT)
 
     # A brand-new compiler instance can load and approve the persisted state.
@@ -168,7 +182,9 @@ async def test_pipeline_persists_to_disk(tmp_path: Path) -> None:
 
 async def test_graph_editor_round_trips_through_store() -> None:
     """A reviewer edits the graph, saves, and the edit survives a reload."""
-    compiler = WorkflowCompiler(llm_provider=_provider(), state_store=InMemoryStateStore())
+    compiler = WorkflowCompiler(
+        llm_provider=_provider(), state_store=InMemoryStateStore(), review=_NO_REVIEW
+    )
     state = await compiler.compile_document(_DOCUMENT)
 
     edited = GraphEditor.add_node(state.workflow_graph, node_id="manual", label="Manual review")
@@ -181,7 +197,9 @@ async def test_graph_editor_round_trips_through_store() -> None:
 
 @pytest.mark.parametrize("review_mode", [True, False])
 async def test_compile_is_deterministic_across_modes(review_mode: bool) -> None:
-    compiler = WorkflowCompiler(llm_provider=_provider(), state_store=InMemoryStateStore())
+    compiler = WorkflowCompiler(
+        llm_provider=_provider(), state_store=InMemoryStateStore(), review=_NO_REVIEW
+    )
     state = await compiler.compile_document(_DOCUMENT, review_mode=review_mode)
     assert state.workflow_graph is not None
     assert len(state.workflow_graph.nodes) >= 2

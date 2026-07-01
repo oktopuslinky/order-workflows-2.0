@@ -108,6 +108,22 @@ ensemble's `StageSpec`, so a future stage adds a spec, not engine code. On by de
 `models/patch.py` (`PatchAction`, `Evidence`, `Patch`, `ReviewResult`); the engine, appliers, and
 specs in `agents/review_pipeline.py`; the six prompts in `prompts/templates/review_*.md`.
 
+## Multi-workflow front-end (author → edit → compile-authored)
+
+A separate, additive layer that lifts the **one-workflow-per-document** assumption without
+touching the single-workflow pipeline. `DocumentCompiler` (`document_compiler.py`) composes over
+`WorkflowCompiler`: **`author_document`** segments the document (`WorkflowSegmenterAgent`,
+`agents/segmenter.py`), runs the existing discovery + facts on each slice, and renders each into an
+ideal-format section **deterministically** (`authoring/ideal_render.py`) — assembling one editable
+**master document** (`authoring/master_assemble.py`) that is the human gate. **`compile_authored`**
+splits the edited master on `# ` headings (`authoring/split.py`) and runs each workflow through the
+ordinary pipeline, **gated independently** (`enforce_checklist=True` per workflow). The outer
+aggregate is `DocumentCompilation` (`models/compilation.py`, `DocumentStage` enum), persisted by
+`DocumentStore` (`storage/document_store.py`) as `doc-<id>.json`; per-workflow `WorkflowState`s are
+unchanged and still stored one-per-file. Cross-workflow `invokes` links are authored as Process
+prose and picked up as Temporal child workflows by the existing design stage — names match because
+the segment's canonical name (`canonical_name`) drives both the heading and the reference.
+
 ## Components
 
 ```mermaid

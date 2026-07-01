@@ -112,6 +112,54 @@ workflow-compiler compile examples/order_workflow.md --ensemble --ensemble-n 3  
 workflow-compiler compile examples/order_workflow.md --no-review                 # → skip the default review passes
 ```
 
+> `--auto-approve` now bypasses the readiness-checklist gate as well as the approval
+> gate (it means "run end-to-end without a human gate"). The checklist is still
+> computed and printed; it just no longer halts the run. Omit `--auto-approve` to
+> keep the checklist gate active.
+
+#### Multi-workflow documents (author → edit → compile-authored)
+
+`compile` assumes **one workflow per document**. A document that describes several
+workflows compiles best when each is first normalized into the ideal single-workflow
+format (`examples/ideal_temporal_workflow.md`). The `author` / `compile-authored`
+commands do exactly that:
+
+```bash
+# 1. Segment the document into N workflows and author an editable master document.
+workflow-compiler author examples/multi_workflow.docx --out master.md
+
+# 2. Edit master.md: fix facts/steps, answer the "Open questions", add/remove
+#    `# Workflow` sections. Cross-workflow calls are a Process line:
+#    "The workflow invokes `Other Workflow` as a child workflow."
+#    Talk to the compiler in "## Notes to the compiler" (global) and each
+#    "### Guidance" block (per workflow) — list flows you saw, corrections, priorities.
+
+# 3. (optional, repeatable) Refine: re-extract each workflow GUIDED by your notes and
+#    regenerate master.md for another review round. Loop until it looks right.
+workflow-compiler reauthor master.md --out master.md
+
+# 4. Split the master into one ideal-format doc per workflow and compile each.
+workflow-compiler compile-authored master.md --auto-approve --out-dir generated/
+```
+
+`author` runs segmentation + per-workflow discovery/facts, renders each workflow into
+an ideal-format section (deterministically, from the extracted facts) and writes a
+single master document with a "Workflows detected" index, per-workflow "Open questions",
+and "Readiness gaps", plus a `## Notes to the compiler` channel and per-workflow
+`### Guidance` blocks for talking to the compiler. `reauthor` reads those notes, re-extracts
+each workflow with them as guidance (the original document is **not** re-consulted — the
+edited master is the source of truth), and regenerates the master for another review round,
+preserving your notes and open questions; it never compiles to code. When the document looks
+right, `compile-authored` splits it (dropping the notes/guidance blocks) and runs the backend.
+By default `author` also runs a **grounding-checked prose polish**
+(`--polish`, on by default; `--no-polish` for purely deterministic output): each activity
+is rewritten into one natural sentence, but any rewrite not supported by the source
+document is discarded in favour of the deterministic wording, and the bolded canonical
+activity name is always preserved. `compile-authored` splits the (edited) master on its `# ` headings
+and runs each workflow through the normal pipeline **independently** — a workflow that
+trips its readiness checklist halts on its own without blocking the others. `invokes`
+links are authored as prose and modelled as Temporal child workflows by the design stage.
+
 #### Regenerating the example bundles
 
 To regenerate a Temporal code bundle end-to-end (e.g. the subscription-upgrade example):

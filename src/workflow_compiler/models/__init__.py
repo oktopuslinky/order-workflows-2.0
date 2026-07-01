@@ -8,6 +8,7 @@ from workflow_compiler.models.checklist import (
     ChecklistStatus,
     WorkflowChecklist,
 )
+from workflow_compiler.models.compilation import DocumentCompilation, WorkflowSegment
 from workflow_compiler.models.confidence import ConfidenceScores
 from workflow_compiler.models.cvpa import (
     CVPAClassification,
@@ -18,6 +19,7 @@ from workflow_compiler.models.enums import (
     ApprovalStatus,
     CompilationStage,
     CVPAPhase,
+    DocumentStage,
     EdgeType,
     FactCategory,
     MermaidDiagramType,
@@ -67,6 +69,9 @@ from workflow_compiler.models.temporal import (
 __all__ = [
     # state
     "WorkflowState",
+    # document compilation (outer, multi-workflow aggregate)
+    "DocumentCompilation",
+    "WorkflowSegment",
     # checklist (pre-generation readiness gate)
     "ChecklistItem",
     "ChecklistSeverity",
@@ -127,6 +132,7 @@ __all__ = [
     "ApprovalStatus",
     "CVPAPhase",
     "CompilationStage",
+    "DocumentStage",
     "EdgeType",
     "FactCategory",
     "MermaidDiagramType",

@@ -18,6 +18,7 @@ from workflow_compiler.agents.fact_extraction import (
     FactExtractionAgent,
 )
 from workflow_compiler.agents.graph_builder import GraphBuilderAgent
+from workflow_compiler.agents.ideal_prose import IdealProseAgent, IdealProseOutput
 from workflow_compiler.agents.review import WorkflowReviewAgent
 from workflow_compiler.agents.review_pipeline import (
     FACTS_REVIEW_SPEC,
@@ -28,6 +29,11 @@ from workflow_compiler.agents.review_pipeline import (
     ReviewPipelineAgent,
     ReviewSpec,
     rebuild_facts,
+)
+from workflow_compiler.agents.segmenter import (
+    DocumentSegmentation,
+    WorkflowSegmenterAgent,
+    canonical_name,
 )
 from workflow_compiler.agents.temporal import (
     TemporalDesignOutput,
@@ -43,10 +49,13 @@ __all__ = [
     "CVPAClassifierAgent",
     "CVPAOutput",
     "ConsensusMergeAgent",
+    "DocumentSegmentation",
     "FactExtraction",
     "FactExtractionAgent",
     "FactsPatchApplier",
     "GraphBuilderAgent",
+    "IdealProseAgent",
+    "IdealProseOutput",
     "MetadataPatchApplier",
     "ReviewPass",
     "ReviewPipelineAgent",
@@ -58,5 +67,7 @@ __all__ = [
     "WorkflowDiscovery",
     "WorkflowDiscoveryAgent",
     "WorkflowReviewAgent",
+    "WorkflowSegmenterAgent",
+    "canonical_name",
     "rebuild_facts",
 ]

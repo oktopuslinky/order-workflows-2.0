@@ -789,6 +789,68 @@ per `GeneratedFile` under `<out-dir>/<package_name>/`. `reject`/`show` build a c
 LLM** because they don't need one. `compile`/`approve` stream a timestamped step log via the progress
 callback.
 
+### 9.2b Multi-workflow front-end (`author` / `compile-authored`)
+
+Everything above assumes **one workflow per document** — the load-bearing assumption of
+`WorkflowState`, discovery, facts, and CVPA. A document that describes *several* workflows
+compiles poorly because the stages flatten them together. The **document-centric front-end**
+solves this by normalizing an arbitrary document into per-workflow documents shaped like
+`examples/ideal_temporal_workflow.md` (the proven "perfect input"), then reusing the entire
+single-workflow pipeline unchanged on each.
+
+It is a thin layer, composed *over* `WorkflowCompiler`, not a change to it:
+
+- **`DocumentCompilation` (`models/compilation.py`)** is the outer aggregate — the
+  document's `source_text`, the authored `master_document`, the `WorkflowSegment`s, and the
+  ids of the per-workflow `WorkflowState`s. `WorkflowState` stays single-workflow. Persisted
+  by `DocumentStore` (`storage/document_store.py`) as `doc-<id>.json` alongside the
+  per-workflow state files.
+- **`DocumentCompiler` (`document_compiler.py`)** exposes three methods:
+  - **`author_document(text)`** — runs `WorkflowSegmenterAgent` (LLM, `agents/segmenter.py`)
+    to split the document into workflows (each with a verbatim `source_text`, `invokes`
+    links, and open `questions`), then runs the **existing discovery + fact extraction** on
+    each slice concurrently (`asyncio.gather`, `enforce_checklist=False`, `persist=False`),
+    renders each into an ideal-format section deterministically
+    (`authoring/ideal_render.py`), and assembles one editable **master document**
+    (`authoring/master_assemble.py`) with a "Workflows detected" index, per-workflow
+    "Open questions", and "Readiness gaps" (from the existing `ChecklistValidator`). It then
+    **halts for human editing** — the master document is the gate.
+  - **`compile_authored(master_text)`** — splits the edited master on its `# ` headings
+    (`authoring/split.py`, stripping the `### Open questions` / `### Readiness gaps` helper
+    blocks) into clean ideal-format documents and runs each through the ordinary
+    `compile_document` with `enforce_checklist=True`. Gating is **independent per workflow**:
+    one that trips its checklist halts at `CHECKLISTED` and writes its own form while the
+    others proceed.
+  - **`reauthor(master_text)`** — the "run again and verify" round. It parses the *edited*
+    master (`authoring/parse_master.py`), skips segmentation (the workflows are the `# `
+    headings), and re-extracts each workflow from the edited section **plus the human's
+    `## Notes to the compiler` and per-workflow `### Guidance`**, which are appended to the
+    extraction text so they steer the result. The original document is not re-consulted — the
+    edited master is the source of truth. It regenerates the master (preserving notes,
+    guidance, and open questions) for another editing round; it never compiles to code. The
+    author/reauthor extraction is a shared `_build_sections` helper.
+- **The master document is a two-way channel.** `## Notes to the compiler` (global) and
+  per-workflow `### Guidance` are where the human writes flows they noticed, corrections, and
+  priorities; `reauthor` consumes them and carries them forward. `split_master` strips them
+  (along with `### Open questions` / `### Readiness gaps`) so they never pollute the compiled
+  per-workflow document.
+- **Cross-workflow calls** are captured at segmentation as `invokes` links and authored as a
+  Process line (*"The workflow invokes `X` as a child workflow."*). The existing Temporal
+  design stage then models `X` as a child workflow — no new cross-compilation plumbing. The
+  workflow's authoritative name comes from the **segment** (a shared canonical-naming pass,
+  `canonical_name`), so the heading and the `invokes` reference match by name.
+
+The renderer is **deterministic** — it only re-expresses already-extracted facts/structure
+into the ideal section layout, so it introduces no new hallucination (the "LLM specifies,
+deterministic code emits" rule again). An optional **prose polish** (`IdealProseAgent`,
+`agents/ideal_prose.py`; `--polish`, on by default) rewrites each activity into one natural
+sentence, but every rewrite must **ground** in the source document (`local_grounder` from
+`agents/ensemble_merge.py`) or it is discarded in favour of the deterministic wording — and
+only activity descriptions are touched, so decision branches, parallelism, compensation
+phrasing, and the verbatim bolded activity names are never altered. Answering an LLM question
+is simply an edit to the master document that is re-extracted on the next `compile-authored`,
+so there is no separate free-form-answer fold-back path.
+
 ### 9.3 HTTP API (`api/app.py`, FastAPI)
 
 | Method | Path | Body | Does |

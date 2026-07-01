@@ -22,6 +22,17 @@ class CompilationStage(StrEnum):
     FAILED = "failed"
 
 
+class DocumentStage(StrEnum):
+    """Ordered stages of the outer (multi-workflow) document pipeline."""
+
+    SEGMENTED = "segmented"
+    AUTHORED = "authored"
+    EDITING = "editing"
+    COMPILING = "compiling"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ApprovalStatus(StrEnum):
     """Human-in-the-loop approval state for a generated workflow graph."""
 
@@ -124,6 +135,7 @@ __all__ = [
     "ApprovalStatus",
     "CVPAPhase",
     "CompilationStage",
+    "DocumentStage",
     "EdgeType",
     "FactCategory",
     "MermaidDiagramType",

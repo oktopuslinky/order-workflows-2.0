@@ -96,6 +96,70 @@ def compile(
     )
 
 
+@app.command()
+def author(
+    document: Path = typer.Argument(..., exists=True, readable=True, help="Path to the document."),
+    provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
+    model: str = typer.Option(None, "--model", help="Override the model id."),
+    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+    out: Path = typer.Option(
+        None, "--out", help="Where to write the master document (default: <document>.master.md)."
+    ),
+    polish: bool = typer.Option(
+        True,
+        "--polish/--no-polish",
+        help="Rewrite each activity into a grounded natural sentence (ungrounded "
+        "rewrites are discarded). --no-polish keeps purely deterministic wording.",
+    ),
+) -> None:
+    """Segment a (multi-workflow) document and author an editable master document."""
+    import asyncio
+
+    asyncio.run(_run_author(document, provider, model, timeout, out, polish))
+
+
+@app.command()
+def reauthor(
+    master: Path = typer.Argument(
+        ..., exists=True, readable=True, help="Path to the edited master document."
+    ),
+    provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
+    model: str = typer.Option(None, "--model", help="Override the model id."),
+    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+    out: Path = typer.Option(
+        None, "--out", help="Where to write the refined master (default: overwrite input)."
+    ),
+    polish: bool = typer.Option(
+        True, "--polish/--no-polish", help="Grounding-checked prose polish (on by default)."
+    ),
+) -> None:
+    """Refine an edited master document (reads your notes) into an updated master."""
+    import asyncio
+
+    asyncio.run(_run_reauthor(master, provider, model, timeout, out, polish))
+
+
+@app.command(name="compile-authored")
+def compile_authored(
+    master: Path = typer.Argument(
+        ..., exists=True, readable=True, help="Path to the edited master document."
+    ),
+    provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
+    model: str = typer.Option(None, "--model", help="Override the model id."),
+    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+    auto_approve: bool = typer.Option(
+        False, "--auto-approve", help="Run each workflow end-to-end without the human gate."
+    ),
+    out_dir: Path = typer.Option(
+        None, "--out-dir", help="Write per-workflow diagrams + code under <out-dir>/<slug>/."
+    ),
+) -> None:
+    """Split an edited master document and compile each workflow independently."""
+    import asyncio
+
+    asyncio.run(_run_compile_authored(master, provider, model, timeout, auto_approve, out_dir))
+
+
 @app.command(name="checklist")
 def checklist_cmd(
     workflow_id: str = typer.Argument(..., help="Workflow id halted at the checklist gate."),
@@ -191,6 +255,150 @@ def _file_store():
     from workflow_compiler.storage import FileStateStore
 
     return FileStateStore(get_settings().state_store_path)
+
+
+def _document_store():
+    """Build the file-backed document-compilation store rooted at the configured path."""
+    from workflow_compiler.config import get_settings
+    from workflow_compiler.storage import DocumentStore
+
+    return DocumentStore(get_settings().state_store_path)
+
+
+def _build_document_compiler(provider):  # type: ignore[no-untyped-def]
+    """Wire a DocumentCompiler around a provider, reusing the file stores."""
+    from workflow_compiler.agents.ideal_prose import IdealProseAgent
+    from workflow_compiler.agents.segmenter import WorkflowSegmenterAgent
+    from workflow_compiler.compiler import WorkflowCompiler
+    from workflow_compiler.document_compiler import DocumentCompiler
+
+    inner = WorkflowCompiler(llm_provider=provider, state_store=_file_store())
+    return DocumentCompiler(
+        compiler=inner,
+        segmenter=WorkflowSegmenterAgent(provider),
+        document_store=_document_store(),
+        prose=IdealProseAgent(provider),
+    )
+
+
+async def _run_author(
+    document: Path,
+    provider_name: str | None,
+    model: str | None,
+    timeout: float,
+    out: Path | None,
+    polish: bool = True,
+) -> None:
+    from workflow_compiler.ingestion import DocumentParserFactory
+
+    console.print(f"[bold]Ingesting[/] {document} ...")
+    content = DocumentParserFactory().parse(document)
+    provider = _build_provider(provider_name, model, timeout)
+    console.print(f"[bold]Provider[/]: {provider.name}  [dim]polish={'on' if polish else 'off'}[/]")
+    dc = _build_document_compiler(provider)
+    try:
+        console.print("[bold]Authoring[/] (segment → per-workflow discover + facts) ...")
+        doc = await dc.author_document(content.text, polish=polish)
+    finally:
+        await _aclose(provider)
+
+    from rich.table import Table
+
+    table = Table(title="Workflows detected")
+    table.add_column("Name")
+    table.add_column("Invokes")
+    table.add_column("Open questions", justify="right")
+    for seg in doc.segments:
+        table.add_row(seg.name, ", ".join(seg.invokes) or "-", str(len(seg.questions)))
+    console.print(table)
+
+    report_path = out or document.with_suffix(document.suffix + ".master.md")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(doc.master_document or "", encoding="utf-8")
+    console.print(f"[green]Master document written to[/] {report_path}")
+    console.print(
+        f"\nEdit [cyan]{report_path}[/], then run: "
+        f"[cyan]workflow-compiler compile-authored {report_path} --out-dir generated/[/]"
+    )
+
+
+async def _run_reauthor(
+    master: Path,
+    provider_name: str | None,
+    model: str | None,
+    timeout: float,
+    out: Path | None,
+    polish: bool = True,
+) -> None:
+    master_text = master.read_text(encoding="utf-8")
+    provider = _build_provider(provider_name, model, timeout)
+    console.print(f"[bold]Provider[/]: {provider.name}  [dim]polish={'on' if polish else 'off'}[/]")
+    dc = _build_document_compiler(provider)
+    try:
+        console.print("[bold]Re-authoring[/] (read notes → re-extract → regenerate) ...")
+        doc = await dc.reauthor(master_text, polish=polish)
+    finally:
+        await _aclose(provider)
+
+    from rich.table import Table
+
+    table = Table(title="Workflows")
+    table.add_column("Name")
+    table.add_column("Invokes")
+    for seg in doc.segments:
+        table.add_row(seg.name, ", ".join(seg.invokes) or "-")
+    console.print(table)
+
+    target = out or master
+    target.write_text(doc.master_document or "", encoding="utf-8")
+    console.print(f"[green]Refined master document written to[/] {target}")
+    console.print(
+        f"\nReview it again (edit + [cyan]reauthor[/]), or compile: "
+        f"[cyan]workflow-compiler compile-authored {target} --out-dir generated/[/]"
+    )
+
+
+async def _run_compile_authored(
+    master: Path,
+    provider_name: str | None,
+    model: str | None,
+    timeout: float,
+    auto_approve: bool,
+    out_dir: Path | None,
+) -> None:
+    from workflow_compiler.models import CompilationStage
+
+    master_text = master.read_text(encoding="utf-8")
+    provider = _build_provider(provider_name, model, timeout)
+    console.print(f"[bold]Provider[/]: {provider.name}")
+    dc = _build_document_compiler(provider)
+    try:
+        console.print("[bold]Compiling authored document[/] (split → compile each) ...")
+        _compilation, results = await dc.compile_authored(
+            master_text, auto_approve=auto_approve, persist=True
+        )
+    finally:
+        await _aclose(provider)
+
+    if not results:
+        console.print("[yellow]No workflows found[/] — the master document has no '# ' sections.")
+        return
+
+    for slug, state in results:
+        console.print(f"\n[bold]· {slug}[/] ({state.workflow_id})")
+        if state.stage == CompilationStage.CHECKLISTED:
+            base = (out_dir / slug) if out_dir else Path(slug)
+            report_path = base / f"{slug}.checklist.md"
+            _write_checklist_report(state, report_path)
+            console.print(
+                f"  [yellow]halted at the readiness checklist[/] — fill in {report_path}"
+            )
+            continue
+        console.print(f"  [green]stage[/]: {state.stage.value}")
+        if out_dir is not None:
+            (out_dir / slug).mkdir(parents=True, exist_ok=True)
+            _write_diagram(state, out_dir / slug / f"{slug}.mmd")
+            _write_code(state, out_dir / slug)
 
 
 def _make_progress():
@@ -363,13 +571,21 @@ async def _run_compile(
         ensemble=ensemble_cfg,
         review=review_cfg,
     )
+    # --auto-approve means "run end-to-end without the human gate"; the checklist
+    # is a human gate too, so auto-approve bypasses it rather than halting silently.
+    enforce = enforce_checklist and not auto_approve
+    if auto_approve and enforce_checklist:
+        console.print(
+            "[dim]--auto-approve set: skipping the checklist gate "
+            "(the checklist is still computed and shown).[/]"
+        )
     try:
         console.print("[bold]Compiling[/] (discover → facts → checklist → graph → review) ...")
         state = await compiler.compile_document(
             content.text,
             review_mode=not auto_approve,
             persist=persist,
-            enforce_checklist=enforce_checklist,
+            enforce_checklist=enforce,
             progress=_make_progress(),
         )
     finally:

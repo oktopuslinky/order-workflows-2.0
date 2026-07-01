@@ -1,4 +1,4 @@
-"""Start a Subscriptionupgradeworkflow workflow execution.
+"""Start a Cancelrequestworkflow workflow execution.
 
 Start the Temporal dev server and the worker first::
 
@@ -17,10 +17,10 @@ import uuid
 
 from temporalio.client import Client
 
-from workflow import Subscriptionupgradeworkflow
+from workflow import Cancelrequestworkflow
 from shared import WorkflowInput
 
-TASK_QUEUE = "subscription-upgrade-queue"
+TASK_QUEUE = "cancel-requests"
 
 
 async def main() -> None:
@@ -28,9 +28,9 @@ async def main() -> None:
     client = await Client.connect("localhost:7233")
 
     handle = await client.start_workflow(
-        Subscriptionupgradeworkflow.run,
+        Cancelrequestworkflow.run,
         WorkflowInput(),  # TODO: populate the workflow input fields.
-        id=f"subscriptionupgradeworkflow-{uuid.uuid4()}",
+        id=f"cancelrequestworkflow-{uuid.uuid4()}",
         task_queue=TASK_QUEUE,
     )
     print(f"Started workflow {handle.id}")

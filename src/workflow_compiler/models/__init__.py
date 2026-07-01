@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from workflow_compiler.models.checklist import (
+    ChecklistItem,
+    ChecklistSeverity,
+    ChecklistStatus,
+    WorkflowChecklist,
+)
 from workflow_compiler.models.confidence import ConfidenceScores
 from workflow_compiler.models.cvpa import (
     CVPAClassification,
@@ -61,6 +67,11 @@ from workflow_compiler.models.temporal import (
 __all__ = [
     # state
     "WorkflowState",
+    # checklist (pre-generation readiness gate)
+    "ChecklistItem",
+    "ChecklistSeverity",
+    "ChecklistStatus",
+    "WorkflowChecklist",
     # metadata
     "WorkflowMetadata",
     # facts

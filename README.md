@@ -76,11 +76,17 @@ State is persisted as JSON under `WORKFLOW_COMPILER_STATE_STORE_PATH` (default `
 
 ## Use — CLI
 
-Five commands. `compile`, `approve`, and `inspect` use the LLM (set `NVIDIA_API_KEY`, or pass
-`--provider mock`); `reject` and `show` need no LLM. `--version` prints the version, and
+Six commands. `compile`, `checklist`, `approve`, and `inspect` use the LLM (set `NVIDIA_API_KEY`,
+or pass `--provider mock`); `reject` and `show` need no LLM. `--version` prints the version, and
 `workflow-compiler <command> --help` is always the authoritative reference.
 
-### `compile <document>` — run discovery → facts → graph → review, stop at the gate
+### `compile <document>` — run discovery → facts → **checklist** → graph → review, stop at the gate
+
+After fact extraction the compiler validates the document against a **pre-generation readiness
+checklist** (derived from `examples/ideal_temporal_workflow.md`). If a *required* item is unmet it
+**halts before building the graph**, writes a fill-in form (`<document>.checklist.md`), and prints
+how to resume. Documents that already satisfy the checklist flow straight through unchanged. Pass
+`--no-checklist` to disable the gate.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -91,6 +97,8 @@ Five commands. `compile`, `approve`, and `inspect` use the LLM (set `NVIDIA_API_
 | `--persist` / `--no-persist` | persist | Whether to save the resulting state to the store. |
 | `--out PATH` | — | Write the Mermaid diagram to a file (CVPA-colored when `--auto-approve`). |
 | `--out-dir DIR` | — | Write the generated Temporal code bundle (only produced with `--auto-approve`). |
+| `--checklist` / `--no-checklist` | checklist | Enforce the readiness gate; halt and write a form if a required item is unmet. |
+| `--checklist-out PATH` | `<document>.checklist.md` | Where to write the checklist form. |
 | `--ensemble` | off | Run discovery + fact extraction N times and consensus-merge the candidates (see below). |
 | `--ensemble-n N` | `0` | Number of ensemble candidates (`0` = configured default of 3). |
 | `--review` / `--no-review` | review | Sequential review passes (completeness → grounding → consistency) over discovery + facts (see below). On any stage where `--ensemble` is active, the ensemble takes precedence. |
@@ -102,6 +110,57 @@ workflow-compiler compile examples/order_workflow.md --auto-approve \
     --out workflow.mmd --out-dir ./generated                               # → full pipeline + colored diagram + code
 workflow-compiler compile examples/order_workflow.md --ensemble --ensemble-n 3   # → 3-way consensus on discovery+facts
 workflow-compiler compile examples/order_workflow.md --no-review                 # → skip the default review passes
+```
+
+#### Regenerating the example bundles
+
+To regenerate a Temporal code bundle end-to-end (e.g. the subscription-upgrade example):
+
+```bash
+workflow-compiler compile examples/subscription_upgrade_workflow.md \
+    --review --timeout 300.0 --auto-approve \
+    --out example_workflow_04.mmd --out-dir ./generated
+```
+
+Two gotchas worth knowing:
+
+- **Windows console encoding.** The progress/table output contains Unicode (e.g. `→`).
+  On a legacy `cp1252` console this raises `UnicodeEncodeError`. Run with UTF-8 mode:
+  `set PYTHONUTF8=1` (PowerShell: `$env:PYTHONUTF8=1`), or prefix `PYTHONUTF8=1` on a
+  POSIX-style shell. This is a console-rendering issue only — it does not affect the
+  generated code.
+- **Nemotron latency.** The reasoning model can be slow; bump `--timeout` (e.g. `300.0`)
+  to avoid `ProviderTimeoutError` on a slow request. `--no-review` also cuts the call count.
+
+The generated `workflow.py`, `activities.py`, and `shared.py` always use **consistent
+identifiers**: activity/child names are normalized once (PascalCase, word boundaries
+preserved) and every call site resolves back to the declared symbol, so the run body never
+references an undefined `snake_case`/`PascalCase` variant. The run body also logs each step
+(`workflow.logger.info("Running step: …")`) so a live run shows what is executing.
+
+### `checklist <workflow_id>` — answer the readiness form and resume a halted run
+
+When `compile` halts at the checklist gate, edit the generated form (fill in the `ANSWER:` lines)
+and pass it back here. Answers are folded in as **deterministic local amendments** (no re-extraction,
+no extra LLM cost); the checklist is re-validated and, once every required item is satisfied, the
+run continues to graph + review (and to code with `--auto-approve`). The form is also the place to
+**confirm or correct** the discovered workflow and facts — it lists what was found.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--answers PATH` | — | The filled-in checklist form to read answers from. |
+| `--accept-as-is` | off | Proceed while accepting any remaining unmet items (the explicit override). |
+| `--auto-approve` | off | Run end-to-end through code generation once the gate clears. |
+| `--out PATH` / `--out-dir DIR` | — | Same outputs as `compile`. |
+| `--checklist-out PATH` | `<id>.checklist.md` | Where to re-write the form if items still remain. |
+
+```bash
+# 1. compile halts and writes examples/my_workflow.md.checklist.md
+workflow-compiler compile examples/my_workflow.md
+# 2. edit that file's ANSWER: lines, then resume (loop until satisfied):
+workflow-compiler checklist <workflow_id> --answers examples/my_workflow.md.checklist.md
+# or force past remaining gaps:
+workflow-compiler checklist <workflow_id> --answers <form> --accept-as-is --auto-approve --out-dir ./generated
 ```
 
 ### `approve <workflow_id>` — clear the gate, produce CVPA + Temporal design + Temporal code

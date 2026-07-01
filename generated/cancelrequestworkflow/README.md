@@ -1,6 +1,6 @@
-# Subscriptionupgradeworkflow (generated Temporal workflow)
+# Cancelrequestworkflow (generated Temporal workflow)
 
-Manages the upgrade of a subscription, including validation, pre-authorisation, provisioning, and billing updates.
+Manages the cancellation of orders based on eligibility and inventory.
 
 This package was generated **deterministically** from a reviewed
 `TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,
@@ -17,8 +17,8 @@ inside this directory — no package installation or `PYTHONPATH` needed.
 |------|---------|
 | `shared.py` | Dataclasses for workflow / activity inputs |
 | `activities.py` | `@activity.defn` units of work (implement these) |
-| `workflow.py` | `@workflow.defn` orchestration: `Subscriptionupgradeworkflow` |
-| `worker.py` | Worker registering the workflow + activities on `subscription-upgrade-queue` |
+| `workflow.py` | `@workflow.defn` orchestration: `Cancelrequestworkflow` |
+| `worker.py` | Worker registering the workflow + activities on `cancel-requests` |
 | `starter.py` | Client that starts one workflow execution |
 
 ## Run it
@@ -37,8 +37,8 @@ python worker.py                   # terminal 2, leave running
 python starter.py                  # terminal 3
 ```
 
-The worker polls the `subscription-upgrade-queue` task queue; the starter submits a single
-`Subscriptionupgradeworkflow` execution and prints its result. Open the Web UI at
+The worker polls the `cancel-requests` task queue; the starter submits a single
+`Cancelrequestworkflow` execution and prints its result. Open the Web UI at
 http://localhost:8233 to watch the execution.
 
 ## Next steps
@@ -47,4 +47,4 @@ http://localhost:8233 to watch the execution.
 - Populate the `WorkflowInput()` fields in `starter.py`.
 - Replace the default `str` input fields in `shared.py` with real types.
 - Review the generated retry policies and timeouts against your SLAs.
-- Send the workflow's signal(s) (oms.subscription.upgrade.rejected, oms.subscription.upgrade.started, oms.subscription.upgrade.completed, oms.subscription.upgrade.rolled_back) to release any wait gates.
+- Send the workflow's signal(s) (CancelRequested, DeprovisionRequested) to release any wait gates.

@@ -8,6 +8,8 @@ executable Temporal SDK code.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from workflow_compiler.agents.serialization import cvpa_to_text, facts_to_text, graph_to_text
@@ -47,9 +49,17 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
 
 
 def _slug(text: str, *, fallback: str) -> str:
-    """Make a PascalCase-ish identifier from free text, or use ``fallback``."""
-    words = "".join(c if c.isalnum() else " " for c in text).split()
-    return "".join(word.capitalize() for word in words) or fallback
+    """Make a PascalCase identifier from free text, or use ``fallback``.
+
+    Word boundaries are preserved — including existing camelCase/PascalCase humps
+    — so ``"ValidateRequestPayload"`` stays ``"ValidateRequestPayload"`` (and
+    snake-cases cleanly to ``validate_request_payload``) instead of collapsing to
+    a single word. This must agree with the code generator's ``_pascal`` so a
+    declared activity name and a plan-step ref render to the *same* identifier.
+    """
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+    words = "".join(c if c.isalnum() else " " for c in spaced).split()
+    return "".join(word[:1].upper() + word[1:] for word in words) or fallback
 
 
 # --- Permissive LLM output schemas -----------------------------------------
@@ -154,6 +164,9 @@ class _CompensationOut(BaseModel):
     compensates: str | None = Field(default=None)
     source_node_id: str | None = Field(default=None)
     description: str = Field(default="")
+    inputs: list[str] = Field(default_factory=list)
+    params: list[_ParamOut] = Field(default_factory=list)
+    bindings: list[_BindingOut] = Field(default_factory=list)
     retry_policy: _RetryOut | None = Field(default=None)
 
 
@@ -441,6 +454,9 @@ class TemporalGeneratorAgent(BaseAgent):
                     compensates=(item.compensates or "").strip() or None,
                     source_node_id=item.source_node_id,
                     description=item.description.strip() or None,
+                    inputs=[s.strip() for s in item.inputs if s.strip()],
+                    params=self._params(item.params),
+                    bindings=self._bindings(item.bindings),
                     retry_policy=self._retry(item.retry_policy),
                 )
             )

@@ -29,7 +29,11 @@ DECLARATIONS:
 - timers: model durable waits / SLAs / deadlines (name + duration_seconds).
 - compensation_activities: for each side-effecting activity that the COMPENSATION
   facts say must be undone, add one and set `compensates` to the EXACT activity
-  name it reverses.
+  name it reverses. Give each typed `params` for the values it needs to undo the
+  effect (e.g. the id returned by the activity it reverses), and `bindings` — one
+  per param — sourcing each value from "workflow_input" (ref = WorkflowInput
+  field) or "step_output" (ref = the compensated activity's step id). A
+  compensation that releases/reverses something MUST receive the id it acts on.
 - default_retry_policy: a sensible workflow-wide default.
 
 PLAN (the ordered control-and-data flow; this is what becomes runnable code):
@@ -40,7 +44,10 @@ PLAN (the ordered control-and-data flow; this is what becomes runnable code):
     "step_output" (ref = an earlier step id), or "constant".
   - "signal_gate": set `signal` (the signal to await) and `condition`. Place it
     where the workflow must pause (e.g. a compliance approval before provisioning).
-  - "timer": set `timer` to a declared timer name for a durable sleep.
+  - "timer": set `timer` to a declared timer name for a *deliberate mid-workflow*
+    durable sleep (e.g. a grace period before retrying). Do NOT add a timer step
+    for an overall workflow timeout / total SLA — that is enforced by Temporal's
+    execution timeout, not an in-workflow `sleep`, and would just stall the run.
   - "parallel": set `lanes` (a list of step-lists) to run concurrently.
   - "branch": set `predicate` and `lanes` ([then_steps, else_steps]) for
     conditional paths (e.g. eligibility/payment rejection).

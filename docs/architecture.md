@@ -13,6 +13,7 @@ flowchart TD
     parser["DocumentParserFactory<br/>(ingestion)"]
     discovery["WorkflowDiscoveryAgent<br/>→ WorkflowMetadata"]
     facts["FactExtractionAgent<br/>→ WorkflowFacts + WorkflowStructure<br/>(flat facts + id-linked relations)"]
+    checklist{"Readiness checklist gate<br/>(deterministic)"}
     graph["GraphBuilderAgent<br/>→ WorkflowGraph + Mermaid<br/>(deterministic, NetworkX)"]
     review["GraphReviewer / DefaultReviewManager<br/>→ ReviewReport"]
     gate{"Approval gate"}
@@ -21,15 +22,22 @@ flowchart TD
     codegen["TemporalCodeGeneratorAgent<br/>→ TemporalCodeBundle<br/>(deterministic, Jinja2)"]
     done(["COMPLETED"])
     halt(["REJECTED — pipeline halts"])
+    form(["CHECKLISTED — write form, await answers"])
 
-    doc --> parser --> discovery --> facts --> graph --> review --> gate
+    doc --> parser --> discovery --> facts --> checklist
+    checklist -->|cleared| graph --> review --> gate
+    checklist -->|required item unmet| form
+    form -->|checklist cmd: answers + amend| checklist
     gate -->|approve| cvpa --> temporal --> codegen --> done
     gate -->|reject| halt
 ```
 
 LLM-backed stages: discovery, fact extraction, CVPA classification, Temporal design.
 Deterministic (no LLM) stages: graph building, Mermaid rendering, structural review,
-**Temporal code generation**.
+**the readiness checklist gate** (`checklist/validator.py` + `report.py` + `amend.py`), and
+**Temporal code generation**. The checklist halts before any graph/code is produced when a required
+item is unmet; the user's report answers are folded back in as deterministic amendments (no LLM
+re-run) until the gate clears or `--accept-as-is` overrides it.
 
 ## Relational fact extraction → semantic graph wiring
 
@@ -57,9 +65,11 @@ workflow input or earlier step outputs. The design stage is fed the extracted
 `workflow_facts` (retries, timeouts, compensations, I/O), so policies are *derived from*
 the document rather than guessed. `TemporalCodeGeneratorAgent` (deterministic) then walks
 that plan to render a runnable `TemporalCodeBundle` of Temporal Python SDK source files —
-threading data between activities, firing saga compensations in reverse on failure, and
-gating on signals. The LLM never writes code; the code is a pure function of the reviewed,
-approved design. See `TEMPORAL_CODEGEN_FINDINGS.md` for the standard it satisfies.
+threading data between activities (capturing parallel-`gather` results positionally), firing
+saga compensations in reverse on failure (with their inputs bound and retried, including
+compensations for parallelized activities), and gating on signals. The LLM never writes code;
+the code is a pure function of the reviewed, approved design. See `TEMPORAL_CODEGEN_FINDINGS.md`
+for the standard it satisfies.
 
 ## Consensus-merge ensemble (opt-in)
 

@@ -39,6 +39,8 @@ from workflow_compiler.models import (
     GeneratedFile,
     RetryPolicyDesign,
     StepKind,
+    TemporalActivityDesign,
+    TemporalChildWorkflowDesign,
     TemporalCompensationDesign,
     TemporalParam,
     TemporalStep,
@@ -68,6 +70,16 @@ def _snake(name: str) -> str:
     if not cleaned or cleaned[0].isdigit():
         cleaned = f"x_{cleaned}" if cleaned else "item"
     return cleaned
+
+
+def _squash(name: str) -> str:
+    """A word-boundary-insensitive key: lowercase alphanumerics only.
+
+    Lets a plan ref (``ValidateRequestPayload``) match a declared activity name
+    even if the two used different word boundaries (``Validaterequestpayload``),
+    so the emitted call symbol can always be aligned to a declared one.
+    """
+    return _snake(name).replace("_", "")
 
 
 def _pascal(name: str) -> str:
@@ -107,6 +119,22 @@ def _default_for(type_str: str) -> str:
     }.get(type_str.strip(), "None")
 
 
+def _return_placeholder(type_str: str) -> str:
+    """A literal return value for an activity stub, so the bundle runs as-is.
+
+    ``bool`` defaults to ``True`` so any caller that gates on the result proceeds
+    down the main path; other types use a benign empty value.
+    """
+    return {
+        "str": '""',
+        "int": "0",
+        "float": "0.0",
+        "bool": "True",
+        "dict": "{}",
+        "list": "[]",
+    }.get(type_str.strip(), "None")
+
+
 # --- Template context dataclasses ------------------------------------------
 
 
@@ -130,6 +158,7 @@ class _Activity:
     input_class: str
     description: str | None
     return_type: str = "str"
+    placeholder: str = '""'
 
 
 @dataclass(frozen=True)
@@ -243,13 +272,15 @@ class TemporalPythonCodeGenerator:
         """Activity functions emitted into ``activities.py`` (incl. compensations)."""
         out: list[_Activity] = []
         for activity in design.activities:
+            return_type = activity.result_type or "str"
             out.append(
                 _Activity(
                     activity_name=activity.name,
                     fn_name=_snake(activity.name),
                     input_class=f"{_pascal(activity.name)}Input",
                     description=activity.description,
-                    return_type=activity.result_type or "str",
+                    return_type=return_type,
+                    placeholder=_return_placeholder(return_type),
                 )
             )
         for comp in design.compensation_activities:
@@ -260,6 +291,7 @@ class TemporalPythonCodeGenerator:
                     input_class=f"{_pascal(comp.name)}Input",
                     description=comp.description
                     or (f"Compensates {comp.compensates}." if comp.compensates else None),
+                    placeholder=_return_placeholder("str"),
                 )
             )
         return out
@@ -308,7 +340,7 @@ class TemporalPythonCodeGenerator:
         for activity in design.activities:
             add(activity.name, activity.effective_params())
         for comp in design.compensation_activities:
-            add(comp.name, [])
+            add(comp.name, comp.effective_params())
         for child in design.child_workflows:
             add(child.name, child.effective_params())
         return list(classes.values())
@@ -456,11 +488,28 @@ class _RunBodyEmitter:
         self._design = design
         self._activities = {a.name: a for a in design.activities}
         self._children = {c.name: c for c in design.child_workflows}
+        # Indexes so a plan-step ``ref`` resolves to the *declared* activity/child
+        # name regardless of the casing or word boundaries the model used — this
+        # is what keeps the emitted call symbols identical to the imports and
+        # dataclasses. Keyed by snake form first, then a word-boundary-insensitive
+        # "squash" form so e.g. ``ValidateRequestPayload`` still matches a declared
+        # ``Validaterequestpayload``.
+        self._activity_by_key: dict[str, TemporalActivityDesign] = {}
+        for a in design.activities:
+            self._activity_by_key[_snake(a.name)] = a
+            self._activity_by_key.setdefault(_squash(a.name), a)
+        self._child_by_key: dict[str, TemporalChildWorkflowDesign] = {}
+        for c in design.child_workflows:
+            self._child_by_key[_snake(c.name)] = c
+            self._child_by_key.setdefault(_squash(c.name), c)
         self._signals = {_snake(s.name): s for s in design.signals}
         self._timers = {_snake(t.name): t for t in design.timers}
         self._comps_by_activity = self._compensations_by_activity(design)
         # step id -> variable name holding its result.
         self._result_vars: dict[str, str] = {}
+        # activity/child ref (snake & squash forms) -> the same result variable, so
+        # a binding that references a step by its *name* (not its step id) resolves.
+        self._result_by_ref: dict[str, str] = {}
         self._uses_asyncio = False
 
     def emit(self, plan: list[TemporalStep]) -> _Body:
@@ -482,6 +531,9 @@ class _RunBodyEmitter:
             _INDENT * 3
             + f"start_to_close_timeout={_timeout_expr(_COMPENSATION_TIMEOUT_SECONDS)},"
         )
+        comp_retry = _retry_expr(self._design.default_retry_policy)
+        if comp_retry:
+            lines.append(_INDENT * 3 + f"retry_policy={comp_retry},")
         lines.append(_INDENT * 2 + ")")
         lines.append(_INDENT + 'self._status = "compensated"')
         lines.append(_INDENT + "raise")
@@ -496,9 +548,15 @@ class _RunBodyEmitter:
     def _index_result_vars(self, steps: list[TemporalStep]) -> None:
         for step in steps:
             if step.kind in (StepKind.ACTIVITY, StepKind.CHILD_WORKFLOW):
-                self._result_vars[step.id] = (
+                var = (
                     _snake(step.result_name) if step.result_name else f"{_snake(step.id)}_result"
                 )
+                self._result_vars[step.id] = var
+                if step.ref:
+                    # Index by the step's ref so a binding that names the activity
+                    # (rather than the step id) still resolves to its result var.
+                    self._result_by_ref.setdefault(_snake(step.ref), var)
+                    self._result_by_ref.setdefault(_squash(step.ref), var)
             for lane in step.lanes:
                 self._index_result_vars(lane)
 
@@ -525,17 +583,30 @@ class _RunBodyEmitter:
             return self._emit_branch(step, depth=depth)
         return []
 
+    def _ref_name(self, ref: str | None, step_id: str) -> str:
+        """Resolve a plan ref to the declared activity/child name (canonical casing)."""
+        for key in (_snake(ref or step_id), _squash(ref or step_id)):
+            activity = self._activity_by_key.get(key)
+            if activity is not None:
+                return activity.name
+            child = self._child_by_key.get(key)
+            if child is not None:
+                return child.name
+        return ref or step_id
+
     def _emit_activity(self, step: TemporalStep, *, depth: int) -> list[str]:
         pad = _INDENT * depth
-        activity = self._activities.get(step.ref or "")
-        fn = _snake(step.ref or step.id)
-        input_class = f"{_pascal(step.ref or step.id)}Input"
+        name = self._ref_name(step.ref, step.id)
+        activity = self._activities.get(name)
+        fn = _snake(name)
+        input_class = f"{_pascal(name)}Input"
         var = self._result_vars.get(step.id)
         timeout = _timeout_expr(activity.timeout_seconds if activity else None)
         retry = _retry_expr(
             (activity.retry_policy if activity else None) or self._design.default_retry_policy
         )
         lines: list[str] = []
+        lines.append(f'{pad}workflow.logger.info("Running step: {_pascal(name)}")')
         assign = f"{var} = " if var else ""
         lines.append(f"{pad}{assign}await workflow.execute_activity(")
         lines.append(f"{pad}{_INDENT}{fn},")
@@ -544,17 +615,19 @@ class _RunBodyEmitter:
         if retry:
             lines.append(f"{pad}{_INDENT}retry_policy={retry},")
         lines.append(f"{pad})")
-        lines.extend(self._emit_compensation_registrations(step.ref or "", depth=depth))
+        lines.extend(self._emit_compensation_registrations(name, depth=depth))
         return lines
 
     def _emit_child(self, step: TemporalStep, *, depth: int) -> list[str]:
         pad = _INDENT * depth
-        child = self._children.get(step.ref or "")
-        class_name = _pascal(step.ref or step.id)
+        name = self._ref_name(step.ref, step.id)
+        child = self._children.get(name)
+        class_name = _pascal(name)
         input_class = f"{class_name}Input"
         var = self._result_vars.get(step.id)
-        slug = _snake(step.ref or step.id)
+        slug = _snake(name)
         lines: list[str] = []
+        lines.append(f'{pad}workflow.logger.info("Running child workflow: {class_name}")')
         assign = f"{var} = " if var else ""
         lines.append(f"{pad}{assign}await workflow.execute_child_workflow(")
         lines.append(f"{pad}{_INDENT}{class_name}.run,")
@@ -573,6 +646,11 @@ class _RunBodyEmitter:
             lines.append(f"{pad}# Wait until: {step.condition}")
         if signal:
             attr = f"_{_snake(signal.name)}_received"
+            lines.append(f'{pad}workflow.logger.info("Waiting for signal: {signal.name}")')
+            lines.append(
+                f"{pad}# TODO: pass timeout= to wait_condition so a signal that never"
+                f" arrives can't block the workflow forever."
+            )
             lines.append(f"{pad}await workflow.wait_condition(lambda: self.{attr})")
         else:
             lines.append(
@@ -585,8 +663,14 @@ class _RunBodyEmitter:
         timer = self._timers.get(_snake(step.timer or ""))
         if timer:
             const = _snake(timer.name).upper()
-            return [f"{pad}await workflow.sleep({const})"]
-        return [f"{pad}await workflow.sleep(timedelta(seconds=60))  # TODO: timer duration"]
+            return [
+                f'{pad}workflow.logger.info("Sleeping on timer: {timer.name}")',
+                f"{pad}await workflow.sleep({const})",
+            ]
+        return [
+            f'{pad}workflow.logger.info("Sleeping on timer")',
+            f"{pad}await workflow.sleep(timedelta(seconds=60))  # TODO: timer duration",
+        ]
 
     def _emit_parallel(self, step: TemporalStep, *, depth: int) -> list[str]:
         pad = _INDENT * depth
@@ -600,18 +684,40 @@ class _RunBodyEmitter:
         if not calls:
             return [f"{pad}pass  # TODO: empty parallel group"]
         self._uses_asyncio = True
-        lines = [f"{pad}await asyncio.gather("]
+        # Capture each lane's result so a later step can bind to it (gather
+        # returns results positionally); ``_`` for lanes whose output is unused.
+        targets = [self._result_vars.get(call.id) or "_" for call in calls]
+        assign = ""
+        if any(target != "_" for target in targets):
+            lhs = ", ".join(targets)
+            if len(targets) == 1:
+                lhs += ","  # single-element unpack of the gather list
+            assign = f"{lhs} = "
+        lines = [
+            f'{pad}workflow.logger.info("Running {len(calls)} steps in parallel")',
+            f"{pad}{assign}await asyncio.gather(",
+        ]
         for call in calls:
             lines.extend(self._gather_call_expr(call, depth=depth + 1))
         lines.append(f"{pad})")
+        # Register saga compensations for the parallel activities *after* the
+        # gather succeeds (so they only fire once the work actually happened).
+        for call in calls:
+            if call.kind is StepKind.ACTIVITY:
+                lines.extend(
+                    self._emit_compensation_registrations(
+                        self._ref_name(call.ref, call.id), depth=depth
+                    )
+                )
         return lines
 
     def _gather_call_expr(self, step: TemporalStep, *, depth: int) -> list[str]:
         """A single ``workflow.execute_*`` expression (no ``await``) for gather()."""
         pad = _INDENT * depth
         if step.kind is StepKind.CHILD_WORKFLOW:
-            class_name = _pascal(step.ref or step.id)
-            slug = _snake(step.ref or step.id)
+            name = self._ref_name(step.ref, step.id)
+            class_name = _pascal(name)
+            slug = _snake(name)
             return [
                 f"{pad}workflow.execute_child_workflow(",
                 f"{pad}{_INDENT}{class_name}.run,",
@@ -619,9 +725,10 @@ class _RunBodyEmitter:
                 f'{pad}{_INDENT}id=f"{{workflow.info().workflow_id}}-{slug}",',
                 f"{pad}),",
             ]
-        activity = self._activities.get(step.ref or "")
-        fn = _snake(step.ref or step.id)
-        input_class = f"{_pascal(step.ref or step.id)}Input"
+        name = self._ref_name(step.ref, step.id)
+        activity = self._activities.get(name)
+        fn = _snake(name)
+        input_class = f"{_pascal(name)}Input"
         timeout = _timeout_expr(activity.timeout_seconds if activity else None)
         retry = _retry_expr(
             (activity.retry_policy if activity else None) or self._design.default_retry_policy
@@ -642,7 +749,20 @@ class _RunBodyEmitter:
         then_lane = step.lanes[0] if len(step.lanes) >= 1 else []
         else_lane = step.lanes[1] if len(step.lanes) >= 2 else []
         predicate = step.predicate or "condition"
-        lines = [f"{pad}if True:  # TODO: replace with real condition: {predicate}"]
+        lines: list[str] = []
+        bound = self._branch_bound_expr(step)
+        if bound is not None:
+            # The design tied this branch to a real data dependency (e.g. an
+            # earlier activity's result) — branch on it directly.
+            condition = bound
+            lines.append(f"{pad}if {condition}:  # branch: {predicate}")
+        else:
+            # No grounded condition — emit an explicit, named placeholder flag the
+            # implementer must set. It defaults to ``True`` so the bundle runs the
+            # main (then) path out of the box; it is never a silent literal `if True`.
+            flag = f"should_{_snake(predicate)}"
+            lines.append(f"{pad}{flag} = True  # TODO: set from a real condition: {predicate}")
+            lines.append(f"{pad}if {flag}:")
         then_body = self._emit_steps(then_lane, depth=depth + 1)
         lines.extend(then_body or [f"{pad}{_INDENT}pass"])
         if else_lane:
@@ -650,12 +770,24 @@ class _RunBodyEmitter:
             lines.extend(self._emit_steps(else_lane, depth=depth + 1))
         return lines
 
+    def _branch_bound_expr(self, step: TemporalStep) -> str | None:
+        """A condition expression when the design bound the branch to real data."""
+        for binding in step.bindings:
+            expr = self._binding_expr(binding)
+            if expr is not None:
+                return f"bool({expr})"
+        return None
+
     # -- helpers ------------------------------------------------------------
 
     def _input_expr(self, input_class: str, step: TemporalStep) -> str:
         """Construct the input dataclass, binding params that have a source."""
+        return self._input_expr_from_bindings(input_class, step.bindings)
+
+    def _input_expr_from_bindings(self, input_class: str, bindings) -> str:  # type: ignore[no-untyped-def]
+        """Construct ``input_class(...)`` binding each param that has a source."""
         kwargs: list[str] = []
-        for binding in step.bindings:
+        for binding in bindings:
             expr = self._binding_expr(binding)
             if expr is None:
                 continue
@@ -666,8 +798,15 @@ class _RunBodyEmitter:
         if binding.source is BindingSource.WORKFLOW_INPUT and binding.ref:
             return f"arg.{_snake(binding.ref)}"
         if binding.source is BindingSource.STEP_OUTPUT and binding.ref:
-            var = self._result_vars.get(binding.ref) or self._result_vars.get(_snake(binding.ref))
-            return var or f"{_snake(binding.ref)}_result"
+            # Resolve by step id, then by the producing step's name. If nothing
+            # matches, return None so the binding is *dropped* (the field keeps its
+            # default) — never emit a fabricated ``<ref>_result`` that is undefined.
+            return (
+                self._result_vars.get(binding.ref)
+                or self._result_vars.get(_snake(binding.ref))
+                or self._result_by_ref.get(_snake(binding.ref))
+                or self._result_by_ref.get(_squash(binding.ref))
+            )
         return None  # CONSTANT: rely on the dataclass default.
 
     def _emit_compensation_registrations(self, activity_name: str, *, depth: int) -> list[str]:
@@ -676,7 +815,8 @@ class _RunBodyEmitter:
         for comp in self._comps_by_activity.get(_pascal_key(activity_name), []):
             fn = _snake(comp.name)
             input_class = f"{_pascal(comp.name)}Input"
-            out.append(f"{pad}compensations.append(({fn}, {input_class}()))")
+            input_expr = self._input_expr_from_bindings(input_class, comp.bindings)
+            out.append(f"{pad}compensations.append(({fn}, {input_expr}))")
         return out
 
     @staticmethod

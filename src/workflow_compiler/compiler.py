@@ -30,6 +30,8 @@ from workflow_compiler.agents import (
     TemporalGeneratorAgent,
     WorkflowDiscoveryAgent,
 )
+from workflow_compiler.checklist import ChecklistValidator
+from workflow_compiler.checklist import amend as checklist_amend
 from workflow_compiler.exceptions import ApprovalError, CompilationError
 from workflow_compiler.interfaces import (
     BaseAgent,
@@ -410,6 +412,23 @@ class WorkflowCompiler:
 
         return report
 
+    @staticmethod
+    def _split_on_graph(agents: list[BaseAgent]) -> tuple[list[BaseAgent], list[BaseAgent]]:
+        """Partition agents into those before the graph builder and from it onward.
+
+        The readiness checklist is computed between fact extraction and graph
+        building, so the graph builder (and anything after it) runs only once the
+        gate is cleared.
+        """
+        pre: list[BaseAgent] = []
+        post: list[BaseAgent] = []
+        seen_graph = False
+        for agent in agents:
+            if isinstance(agent, GraphBuilderAgent):
+                seen_graph = True
+            (post if seen_graph else pre).append(agent)
+        return pre, post
+
     async def compile_document(
         self,
         document_text: str,
@@ -417,18 +436,24 @@ class WorkflowCompiler:
         review_mode: bool = True,
         persist: bool = True,
         workflow_id: str | None = None,
+        enforce_checklist: bool = False,
         progress: ProgressCallback | None = None,
     ) -> WorkflowState:
         """Compile a raw workflow document into a review-ready WorkflowState.
 
-        Runs the configured agent pipeline (discovery → facts → graph), then
-        reviews the generated graph and sets ``approval_status`` to ``PENDING``.
+        Runs discovery → facts, computes the pre-generation readiness checklist,
+        then (if cleared) builds the graph, reviews it, and sets ``approval_status``
+        to ``PENDING``.
 
-        When ``review_mode`` is ``True`` (the default) compilation **stops** at
-        the approval gate and returns the reviewed state; downstream artifacts
-        (CVPA, Temporal) are only produced once the graph is approved via
-        :meth:`approve_graph`. When ``review_mode`` is ``False`` the graph is
-        auto-approved and the full pipeline runs end-to-end in one call.
+        When ``enforce_checklist`` is ``True`` and a **required** checklist item is
+        unmet, compilation **halts at the checklist gate** (stage ``CHECKLISTED``)
+        and returns before any graph/code is produced; the caller resumes via
+        :meth:`resume_from_checklist` after the user fills in the report. The
+        checklist is always computed and attached to ``state.checklist`` regardless.
+
+        When ``review_mode`` is ``True`` (the default) compilation otherwise stops
+        at the approval gate; when ``False`` the graph is auto-approved and the full
+        pipeline runs end-to-end in one call.
         """
         if not document_text or not document_text.strip():
             raise CompilationError("Cannot compile an empty document.")
@@ -437,7 +462,63 @@ class WorkflowCompiler:
         if workflow_id is not None:
             state.workflow_id = workflow_id
 
-        state = await self._run_agents(self._agents, state, progress)
+        pre_agents, post_agents = self._split_on_graph(self._agents)
+        state = await self._run_agents(pre_agents, state, progress)
+
+        # Pre-generation readiness gate: always compute, optionally enforce.
+        state.checklist = ChecklistValidator().validate(state)
+        if enforce_checklist and not state.checklist.is_satisfied():
+            state.stage = CompilationStage.CHECKLISTED
+            state.touch()
+            if persist:
+                await self._state_store.save(state)
+            return state
+
+        return await self._continue_after_checklist(
+            state, post_agents, progress, review_mode=review_mode, persist=persist
+        )
+
+    async def resume_from_checklist(
+        self,
+        workflow_id: str,
+        answers: dict[str, str],
+        *,
+        accept_as_is: bool = False,
+        review_mode: bool = True,
+        persist: bool = True,
+        progress: ProgressCallback | None = None,
+    ) -> WorkflowState:
+        """Apply checklist answers to a halted run and continue if the gate clears.
+
+        Loads the state saved at the checklist gate, folds ``answers`` in as
+        deterministic local amendments (no LLM), and re-validates. If required
+        items remain unmet the run stays halted (the refreshed checklist is
+        persisted so a new report can be written); otherwise the graph is built and
+        the pipeline continues exactly as :meth:`compile_document` would have.
+        """
+        state = await self._state_store.load(workflow_id)
+        state = checklist_amend.apply(state, answers, accept_as_is=accept_as_is)
+        if state.checklist is not None and not state.checklist.is_satisfied():
+            if persist:
+                await self._state_store.save(state)
+            return state
+
+        _pre, post_agents = self._split_on_graph(self._agents)
+        return await self._continue_after_checklist(
+            state, post_agents, progress, review_mode=review_mode, persist=persist
+        )
+
+    async def _continue_after_checklist(
+        self,
+        state: WorkflowState,
+        post_agents: list[BaseAgent],
+        progress: ProgressCallback | None,
+        *,
+        review_mode: bool,
+        persist: bool,
+    ) -> WorkflowState:
+        """Build the graph, review it, and (optionally) run the full pipeline."""
+        state = await self._run_agents(post_agents, state, progress)
 
         _emit(
             progress,

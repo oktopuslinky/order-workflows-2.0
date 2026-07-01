@@ -197,6 +197,17 @@ class WorkflowGraphBuilder:
             target = self._get_or_create_state(transition.target)
             specs.append(_EdgeSpec(source, target, EdgeType.SEQUENCE, label="transition"))
 
+        # Reconnect any activity left with no inbound edge — e.g. a decision
+        # replaced its only spine edge and neither branch leads back to it — so it
+        # isn't an unreachable orphan. Wire it from its predecessor in declaration
+        # order (or start) to preserve the intended sequence.
+        order_nodes = [node_id for node_id, _group in ordered]
+        have_incoming = {spec.target for spec in specs}
+        for index, node_id in enumerate(order_nodes):
+            if node_id not in have_incoming:
+                predecessor = order_nodes[index - 1] if index > 0 else _START
+                specs.append(_EdgeSpec(predecessor, node_id, EdgeType.SEQUENCE))
+
         # Terminate any exception with no outgoing edge (no compensation) so it
         # ends the flow (reject/fail) instead of dangling as a dead-end.
         exception_nodes = set(xmap.values())

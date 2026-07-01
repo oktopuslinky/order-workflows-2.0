@@ -22,5 +22,6 @@ from shared import (
 async def {{ a.fn_name }}(arg: {{ a.input_class }}) -> {{ a.return_type }}:
     """{{ a.description or 'TODO: implement this activity.' }}"""
     activity.logger.info("Running {{ a.fn_name }}", extra={"input": arg})
-    raise NotImplementedError("{{ a.fn_name }} is not implemented yet.")
+    # TODO: implement {{ a.fn_name }}. Returns a placeholder so the bundle runs as-is.
+    return {{ a.placeholder }}
 {% endfor %}

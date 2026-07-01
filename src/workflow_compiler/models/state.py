@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pydantic import Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
+from workflow_compiler.models.checklist import WorkflowChecklist
 from workflow_compiler.models.confidence import ConfidenceScores
 from workflow_compiler.models.cvpa import CVPAClassification
 from workflow_compiler.models.enums import ApprovalStatus, CompilationStage
@@ -38,6 +39,9 @@ class WorkflowState(WorkflowBaseModel):
     )
     workflow_facts: WorkflowFacts | None = Field(
         default=None, description="Extracted workflow facts."
+    )
+    checklist: WorkflowChecklist | None = Field(
+        default=None, description="Pre-generation readiness checklist (the form gate)."
     )
     workflow_graph: WorkflowGraph | None = Field(
         default=None, description="Canonical workflow graph."

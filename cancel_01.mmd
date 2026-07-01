@@ -1,0 +1,56 @@
+flowchart TD
+    start(["Start"])
+    end_node(["End"])
+    activity_1["Cancel Request Intake"]
+    activity_2["Eligibility Check"]
+    activity_3["Deprovisioning"]
+    activity_4["Inventory Release"]
+    decision_1{"Is Eligible?"}
+    exception_1(["Cancel window expired"])
+    exception_2(["Legal hold"])
+    exception_3(["Partial bundle cancel"])
+    exception_4(["Deprovision failure"])
+    exception_5(["Billing reversal failure"])
+    compensation_1["Compensate Remaining Legs"]
+    event_1(["Cancel requested"])
+    event_2(["Cancel eligible"])
+    event_3(["Cancel ineligible"])
+    event_4(["In-flight stopped"])
+    event_5(["Deprovision requested"])
+    event_6(["Deprovision completed"])
+    event_7(["Inventory released"])
+    event_8(["Cancel completed"])
+    state_1["received"]
+    state_2["rejected"]
+    state_3["completed"]
+    start --> activity_1
+    activity_1 --> activity_2
+    activity_2 --> decision_1
+    decision_1 -->|yes| activity_3
+    decision_1 -->|no| end_node
+    activity_3 --> activity_4
+    activity_4 --> end_node
+    activity_2 -.->|on error| exception_1
+    activity_2 -.->|on error| exception_2
+    activity_3 -.->|on error| exception_3
+    activity_3 -.->|on error| exception_4
+    activity_4 -.->|on error| exception_5
+    exception_3 -.->|compensate| compensation_1
+    compensation_1 --> end_node
+    activity_1 -.->|emits| event_1
+    activity_2 -.->|emits| event_2
+    activity_2 -.->|emits| event_3
+    activity_3 -.->|emits| event_4
+    activity_3 -.->|emits| event_5
+    activity_3 -.->|emits| event_6
+    activity_4 -.->|emits| event_7
+    activity_4 -.->|emits| event_8
+    state_1 -->|transition| activity_2
+    activity_2 -->|transition| activity_3
+    activity_2 -->|transition| state_2
+    activity_3 -->|transition| activity_4
+    activity_4 -->|transition| state_3
+    exception_5 -->|terminates| end_node
+    exception_2 -->|terminates| end_node
+    exception_4 -->|terminates| end_node
+    exception_1 -->|terminates| end_node

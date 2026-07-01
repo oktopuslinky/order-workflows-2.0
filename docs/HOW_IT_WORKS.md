@@ -120,12 +120,23 @@ separate CLI commands or HTTP requests).
 The ordered stages (`models/enums.py` → `CompilationStage`):
 
 ```
-INGESTED → METADATA_EXTRACTED → FACTS_EXTRACTED → GRAPH_BUILT → REVIEWED
+INGESTED → METADATA_EXTRACTED → FACTS_EXTRACTED → [CHECKLISTED] → GRAPH_BUILT → REVIEWED
          → CLASSIFIED → TEMPORAL_DESIGNED → CODE_GENERATED → COMPLETED   (FAILED on error)
 ```
 
 (The enum also declares a `DIAGRAMMED` value reserved for a future diagram-export stage; the current
 pipeline advances `CODE_GENERATED → COMPLETED` directly.)
+
+**The readiness checklist gate** (`CHECKLISTED`) sits between fact extraction and graph building.
+After facts are extracted, a deterministic `ChecklistValidator` (`checklist/validator.py`) scores the
+document against the requirements that `examples/ideal_temporal_workflow.md` satisfies — a trigger,
+named inputs, decisions with both branches, bound compensations, and so on. When `compile` runs with
+the gate enforced (CLI default) and a **required** item is unmet, the run halts at `CHECKLISTED`, a
+fill-in markdown form is written (`checklist/report.py`), and the user resumes via the `checklist`
+command. Their answers are folded back in as **deterministic local amendments** (`checklist/amend.py`)
+— no LLM re-run — and the gate re-validates in a loop until satisfied (or `--accept-as-is` overrides).
+The checklist is always *computed* and attached to `state.checklist`; enforcement (halting) is opt-in
+via `compile_document(enforce_checklist=...)`, so library/test callers keep the straight-through flow.
 
 ---
 
@@ -449,15 +460,25 @@ requests, even separate processes.
   - **signal_gate** → `await workflow.wait_condition(lambda: self._<signal>_received)`.
   - **timer** → `await workflow.sleep(<TIMER_CONST>)` using the declared duration.
   - **parallel** → concurrent calls via `asyncio.gather(...)` (the workflow template only imports
-    `asyncio` when a parallel step is actually present).
-  - **branch** → a real `if/else` over a TODO predicate, with nested lanes.
+    `asyncio` when a parallel step is actually present). Each lane's result is **captured
+    positionally** from the gather so a later step can bind to it (no discarded results → no
+    `NameError`).
+  - **branch** → a real `if/else`. When the design bound the branch to a data dependency it
+    branches on that expression (`if bool(<expr>):`); otherwise it emits an explicit placeholder
+    flag (`should_<predicate> = False  # TODO`) and branches on it — **never** a silent `if True`
+    that would always take one lane.
   - **Saga compensation** — every activity that has a registered compensation appends
-    `(comp_fn, comp_input)` to a `compensations` list; on any exception the `@workflow.run` body
-    fires them **in reverse** before re-raising, setting `self._status = "compensated"`. Compensations
-    are matched to their activity by normalized (PascalCase) name, so casing differences don't break
-    the link.
+    `(comp_fn, comp_input)` to a `compensations` list — including activities **inside a parallel
+    group** (registered after the gather succeeds). The compensation input is built from the
+    compensation's own `bindings` (so a `release`/`reverse` receives the id it must undo), not an
+    empty dataclass. On any exception the `@workflow.run` body fires the compensations **in
+    reverse** before re-raising, retrying each with the workflow's default retry policy and setting
+    `self._status = "compensated"`. Compensations are matched to their activity by normalized
+    (PascalCase) name, so casing differences don't break the link.
 - **The emitted bundle** is six files written in order: `shared.py` (input dataclasses),
-  `activities.py` (`@activity.defn` stubs raising `NotImplementedError`), `workflow.py`
+  `activities.py` (`@activity.defn` stubs that log and **return a typed placeholder** with a
+  `# TODO`, so `python worker.py` + `python starter.py` run the workflow end-to-end out of the
+  box — replace the placeholder with real logic), `workflow.py`
   (`@workflow.defn` with the generated run body, signals, queries), `worker.py` (registers the
   workflow + activities on the task queue), `starter.py` (a client that starts one execution), and
   `README.md` (run instructions). They use **flat, absolute imports** (`from activities import ...`)

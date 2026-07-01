@@ -225,9 +225,28 @@ class TemporalCompensationDesign(WorkflowBaseModel):
     description: str | None = Field(
         default=None, description="What the compensation undoes and when it runs."
     )
+    inputs: list[str] = Field(
+        default_factory=list, description="Named input parameters (legacy; prefer `params`)."
+    )
+    params: list[TemporalParam] = Field(
+        default_factory=list, description="Typed input parameters; supersedes `inputs`."
+    )
+    bindings: list[InputBinding] = Field(
+        default_factory=list,
+        description=(
+            "How this compensation's inputs are supplied when it is registered "
+            "(typically bound to the workflow input or the compensated activity's output)."
+        ),
+    )
     retry_policy: RetryPolicyDesign | None = Field(
         default=None, description="Retry policy for the compensation activity."
     )
+
+    def effective_params(self) -> list[TemporalParam]:
+        """Typed params, falling back to legacy ``inputs`` as ``str`` params."""
+        if self.params:
+            return self.params
+        return [TemporalParam(name=name) for name in self.inputs]
 
 
 class TemporalWorkflowDesign(WorkflowBaseModel):

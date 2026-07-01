@@ -154,16 +154,33 @@ class WorkflowStructure(WorkflowBaseModel):
                 return None
             return ref
 
-        decisions = [
-            d.model_copy(
-                update={
-                    "after": keep_activity(d.after, f"decision {d.id}"),
-                    "yes_target": keep_target(d.yes_target, f"decision {d.id} (yes)"),
-                    "no_target": keep_target(d.no_target, f"decision {d.id} (no)"),
-                }
+        # The first exception each activity can raise — used to repair a
+        # degenerate decision whose 'no' branch was never wired distinctly.
+        exc_by_activity: dict[str, str] = {}
+        for x in self.exceptions:
+            if x.raised_by and x.raised_by not in exc_by_activity:
+                exc_by_activity[x.raised_by] = x.id
+
+        decisions: list[DecisionNode] = []
+        for d in self.decisions:
+            after = keep_activity(d.after, f"decision {d.id}")
+            yes_target = keep_target(d.yes_target, f"decision {d.id} (yes)")
+            no_target = keep_target(d.no_target, f"decision {d.id} (no)")
+            if yes_target is not None and yes_target == no_target:
+                # Identical branches mean the 'no' path was never modeled; route it
+                # to the exception the gated activity raises, else null it so the
+                # builder can terminate the branch instead of looping back.
+                alt = exc_by_activity.get(after or "")
+                warnings.append(
+                    f"decision {d.id} has identical yes/no targets — "
+                    + (f"re-routing 'no' to {alt}." if alt else "dropping 'no'.")
+                )
+                no_target = alt
+            decisions.append(
+                d.model_copy(
+                    update={"after": after, "yes_target": yes_target, "no_target": no_target}
+                )
             )
-            for d in self.decisions
-        ]
         exceptions = [
             x.model_copy(update={"raised_by": keep_activity(x.raised_by, f"exception {x.id}")})
             for x in self.exceptions
@@ -178,6 +195,25 @@ class WorkflowStructure(WorkflowBaseModel):
             v.model_copy(update={"emitted_by": keep_target(v.emitted_by, f"event {v.id}")})
             for v in self.events
         ]
+
+        # Strip parallel-group membership from activities whose control flow is
+        # gated by a decision (its anchor or a branch target). Such activities
+        # have ordering/data dependencies and must not be folded into a fork —
+        # this is what stops dependent steps being mis-parallelized.
+        gated: set[str] = set()
+        for d in decisions:
+            for ref in (d.after, d.yes_target, d.no_target):
+                if ref in activities:
+                    gated.add(ref)
+        normalized_activities: list[ActivityNode] = []
+        for a in self.activities:
+            if a.parallel_group is not None and a.id in gated:
+                warnings.append(
+                    f"activity {a.id} is gated by a decision — removed from parallel group."
+                )
+                normalized_activities.append(a.model_copy(update={"parallel_group": None}))
+            else:
+                normalized_activities.append(a)
 
         # Drop "state transitions" whose endpoints are actually entity ids — the
         # model leaking the control flow (a1 -> a2 -> d1 …) into the state graph,
@@ -194,6 +230,7 @@ class WorkflowStructure(WorkflowBaseModel):
 
         clean = self.model_copy(
             update={
+                "activities": normalized_activities,
                 "decisions": decisions,
                 "exceptions": exceptions,
                 "compensations": compensations,

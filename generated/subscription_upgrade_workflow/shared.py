@@ -1,4 +1,4 @@
-"""Shared dataclasses for the Subscriptionupgradeworkflow workflow.
+"""Shared dataclasses for the SubscriptionUpgradeWorkflow workflow.
 
 Temporal passes a single dataclass argument to workflows and activities so that
 inputs evolve compatibly. Refine the field types to match your real domain types.
@@ -12,7 +12,7 @@ from typing import Any
 
 @dataclass
 class WorkflowInput:
-    """Input to the Subscriptionupgradeworkflow workflow."""
+    """Input to the SubscriptionUpgradeWorkflow workflow."""
 
     subscription_id: str = ""
     target_plan_id: str = ""
@@ -22,28 +22,28 @@ class WorkflowInput:
 
 
 @dataclass
-class ValidaterequestpayloadInput:
+class ValidateRequestPayloadInput:
     """Input to the matching activity / child workflow."""
 
     pass
 
 
 @dataclass
-class ResolvetargetplanInput:
+class ResolveTargetPlanInput:
     """Input to the matching activity / child workflow."""
 
     plan_id: str = ""
 
 
 @dataclass
-class ChecksubscriptioneligibilityInput:
+class CheckSubscriptionEligibilityInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
 
 
 @dataclass
-class CalculateprorationamountInput:
+class CalculateProrationAmountInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
@@ -51,108 +51,108 @@ class CalculateprorationamountInput:
 
 
 @dataclass
-class ValidatepromocodeInput:
+class ValidateAndApplyPromotionalDiscountInput:
     """Input to the matching activity / child workflow."""
 
     promo_code: str = ""
 
 
 @dataclass
-class PreauthoriseprorationchargeInput:
+class PreAuthoriseProrationChargeInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
-    proration_amount: float = 0.0
+    amount: float = 0.0
 
 
 @dataclass
-class UpdateentitlementsInput:
+class UpdateEntitlementsInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
-    target_plan_id: str = ""
+    new_plan_id: str = ""
 
 
 @dataclass
-class ReprovisionserviceInput:
-    """Input to the matching activity / child workflow."""
-
-    subscription_id: str = ""
-
-
-@dataclass
-class UpdateresourceinventoryInput:
+class ReProvisionServiceInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
 
 
 @dataclass
-class CapturepreauthorisedchargeInput:
+class UpdateResourceInventoryInput:
+    """Input to the matching activity / child workflow."""
+
+    subscription_id: str = ""
+
+
+@dataclass
+class CapturePreAuthorisedChargeInput:
     """Input to the matching activity / child workflow."""
 
     pre_auth_id: str = ""
 
 
 @dataclass
-class PublisheventsInput:
-    """Input to the matching activity / child workflow."""
-
-    subscription_id: str = ""
-    status: str = ""
-
-
-@dataclass
-class SendupgradeconfirmationInput:
+class PublishEventsInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
 
 
 @dataclass
-class RecordaudittrailInput:
+class SendUpgradeConfirmationInput:
     """Input to the matching activity / child workflow."""
 
     subscription_id: str = ""
 
 
 @dataclass
-class RestoreoldentitlementsInput:
+class RecordAuditTrailInput:
     """Input to the matching activity / child workflow."""
 
-    pass
+    subscription_id: str = ""
 
 
 @dataclass
-class ReprovisionwitholdplanInput:
+class RestoreOldEntitlementsInput:
     """Input to the matching activity / child workflow."""
 
-    pass
+    subscription_id: str = ""
+    old_plan_id: str = ""
 
 
 @dataclass
-class RestoreoldresourcereservationInput:
+class ReProvisionWithOldPlanInput:
     """Input to the matching activity / child workflow."""
 
-    pass
+    subscription_id: str = ""
 
 
 @dataclass
-class ReleasepreauthorisationInput:
+class RestoreOldResourceReservationInput:
     """Input to the matching activity / child workflow."""
 
-    pass
+    subscription_id: str = ""
 
 
 @dataclass
-class ReversechargecaptureInput:
+class ReleasePreAuthorisationInput:
     """Input to the matching activity / child workflow."""
 
-    pass
+    pre_auth_id: str = ""
 
 
 @dataclass
-class PublishrollbackeventInput:
+class ReverseChargeCaptureInput:
     """Input to the matching activity / child workflow."""
 
-    pass
+    charge_id: str = ""
+
+
+@dataclass
+class PublishRollbackEventInput:
+    """Input to the matching activity / child workflow."""
+
+    subscription_id: str = ""

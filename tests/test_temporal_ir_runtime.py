@@ -139,7 +139,10 @@ def test_ir_emits_gate_parallel_branch() -> None:
     assert "await workflow.wait_condition(lambda: self._approve_received)" in workflow
     assert "await asyncio.gather(" in workflow
     assert "import asyncio" in workflow
-    assert "if True:  # TODO: replace with real condition: needs C" in workflow
+    # An unbound branch emits an explicit placeholder flag, never a silent ``if True``.
+    assert "if True:" not in workflow
+    assert "should_needs_c = True  # TODO: set from a real condition: needs C" in workflow
+    assert "if should_needs_c:" in workflow
 
 
 # --- Runtime execution (skipped if no Temporal test server is available) -----

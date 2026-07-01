@@ -13,20 +13,200 @@ from workflow_compiler.compiler import WorkflowCompiler
 from workflow_compiler.exceptions import CompilationError
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import (
+    BindingSource,
     CompilationStage,
+    InputBinding,
     NodeType,
     RetryPolicyDesign,
+    StepKind,
     TemporalActivityDesign,
     TemporalChildWorkflowDesign,
     TemporalCompensationDesign,
+    TemporalParam,
     TemporalQueryDesign,
     TemporalSignalDesign,
+    TemporalStep,
     TemporalTimerDesign,
     TemporalWorkflowDesign,
     WorkflowEdge,
     WorkflowGraph,
     WorkflowNode,
 )
+
+
+def _workflow_src(design: TemporalWorkflowDesign) -> str:
+    """Render ``design`` and return the generated ``workflow.py`` source."""
+    bundle = to_temporal_python(design)
+    src = next(f.content for f in bundle.files if f.path == "workflow.py")
+    ast.parse(src)  # generated code must always be syntactically valid
+    return src
+
+
+def test_compensation_registers_bound_input() -> None:
+    """A compensation receives the id it must undo via its bindings."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Pay",
+        workflow_inputs=[TemporalParam(name="order_id")],
+        activities=[
+            TemporalActivityDesign(name="Charge", params=[TemporalParam(name="order_id")])
+        ],
+        compensation_activities=[
+            TemporalCompensationDesign(
+                name="Refund",
+                compensates="Charge",
+                params=[TemporalParam(name="charge_id")],
+                bindings=[
+                    InputBinding(
+                        param="charge_id", source=BindingSource.STEP_OUTPUT, ref="charge"
+                    )
+                ],
+            )
+        ],
+        plan=[
+            TemporalStep(
+                id="charge",
+                kind=StepKind.ACTIVITY,
+                ref="Charge",
+                result_name="charge_id",
+                bindings=[
+                    InputBinding(
+                        param="order_id", source=BindingSource.WORKFLOW_INPUT, ref="order_id"
+                    )
+                ],
+            )
+        ],
+    )
+    src = _workflow_src(design)
+    # Bound, not an empty ``RefundInput()``.
+    assert "compensations.append((refund, RefundInput(charge_id=charge_id)))" in src
+    shared = next(f.content for f in to_temporal_python(design).files if f.path == "shared.py")
+    assert "charge_id: str = " in shared
+
+
+def test_parallel_lane_compensation_registered_and_results_captured() -> None:
+    """Compensations inside a parallel group are registered; gather results captured."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Fan",
+        activities=[TemporalActivityDesign(name="A"), TemporalActivityDesign(name="B")],
+        compensation_activities=[
+            TemporalCompensationDesign(name="Rollback", compensates="A")
+        ],
+        plan=[
+            TemporalStep(
+                id="par",
+                kind=StepKind.PARALLEL,
+                lanes=[
+                    [TemporalStep(id="a", kind=StepKind.ACTIVITY, ref="A")],
+                    [TemporalStep(id="b", kind=StepKind.ACTIVITY, ref="B")],
+                ],
+            )
+        ],
+    )
+    src = _workflow_src(design)
+    # Results are assigned (no discarded gather → no NameError on later binds).
+    assert "= await asyncio.gather(" in src
+    # The parallel activity's compensation is registered (A2 regression).
+    assert "compensations.append((rollback, RollbackInput()))" in src
+
+
+def test_run_body_symbols_match_declarations_despite_casing() -> None:
+    """A plan ref with different word boundaries resolves to the declared symbol.
+
+    Regression for the camelCase/snake_case mismatch: declarations were built from
+    the (slug-collapsed) activity name while the run body used the raw plan ref, so
+    the workflow referenced undefined names. The body must reuse declared symbols.
+    """
+    design = TemporalWorkflowDesign(
+        workflow_name="Demo",
+        # Declaration name is collapsed (as the old agent slug produced)...
+        activities=[TemporalActivityDesign(name="Validaterequestpayload")],
+        # ...while the plan ref keeps proper word boundaries.
+        plan=[TemporalStep(id="s1", kind=StepKind.ACTIVITY, ref="ValidateRequestPayload")],
+    )
+    src = _workflow_src(design)  # also asserts the source parses
+    # The body uses the *declared* symbol, never a mismatched snake form.
+    assert "validate_request_payload" not in src
+    assert "validaterequestpayload," in src  # imported and called with one name
+    assert "ValidaterequestpayloadInput()" in src
+    # Steps are logged so a run shows what is executing.
+    assert 'workflow.logger.info("Running step: Validaterequestpayload")' in src
+
+
+def test_step_output_binding_resolves_by_activity_name() -> None:
+    """A binding that names the producing activity resolves to its result variable."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Pay",
+        activities=[TemporalActivityDesign(name="PreAuth")],
+        compensation_activities=[
+            TemporalCompensationDesign(
+                name="Release",
+                compensates="PreAuth",
+                params=[TemporalParam(name="auth_id")],
+                bindings=[
+                    InputBinding(
+                        param="auth_id", source=BindingSource.STEP_OUTPUT, ref="PreAuth"
+                    )
+                ],
+            )
+        ],
+        plan=[TemporalStep(id="s1", kind=StepKind.ACTIVITY, ref="PreAuth", result_name="auth_id")],
+    )
+    src = _workflow_src(design)  # also asserts it parses (no undefined-name surprises)
+    assert "compensations.append((release, ReleaseInput(auth_id=auth_id)))" in src
+
+
+def test_unresolved_step_output_binding_is_dropped() -> None:
+    """A binding to a non-existent step is dropped — never an undefined ``<ref>_result``."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Pay",
+        activities=[TemporalActivityDesign(name="Do")],
+        compensation_activities=[
+            TemporalCompensationDesign(
+                name="Undo",
+                compensates="Do",
+                params=[TemporalParam(name="ghost_id")],
+                bindings=[
+                    InputBinding(
+                        param="ghost_id", source=BindingSource.STEP_OUTPUT, ref="NoSuchStep"
+                    )
+                ],
+            )
+        ],
+        plan=[TemporalStep(id="s1", kind=StepKind.ACTIVITY, ref="Do")],
+    )
+    src = _workflow_src(design)
+    assert "compensations.append((undo, UndoInput()))" in src
+    assert "no_such_step_result" not in src
+
+
+def test_activity_stub_returns_placeholder_not_raises() -> None:
+    """Activity stubs return a typed placeholder so the bundle is runnable as-is."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Demo",
+        activities=[TemporalActivityDesign(name="Work", result_type="str")],
+        plan=[TemporalStep(id="s1", kind=StepKind.ACTIVITY, ref="Work")],
+    )
+    acts = next(f.content for f in to_temporal_python(design).files if f.path == "activities.py")
+    ast.parse(acts)
+    assert "raise NotImplementedError" not in acts
+    assert 'return ""' in acts
+
+
+def test_rollback_loop_carries_retry_policy() -> None:
+    """The saga rollback loop retries compensations using the default policy."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Saga",
+        default_retry_policy=RetryPolicyDesign(maximum_attempts=5),
+        activities=[TemporalActivityDesign(name="Do")],
+        compensation_activities=[TemporalCompensationDesign(name="Undo", compensates="Do")],
+        plan=[TemporalStep(id="do", kind=StepKind.ACTIVITY, ref="Do")],
+    )
+    src = _workflow_src(design)
+    _head, _sep, tail = src.partition("except Exception:")
+    assert _sep, "expected a rollback except block"
+    assert "for _comp_fn, _comp_arg in reversed(compensations):" in tail
+    assert "retry_policy=RetryPolicy(" in tail
+    assert "maximum_attempts=5" in tail
 
 
 def _graph() -> WorkflowGraph:

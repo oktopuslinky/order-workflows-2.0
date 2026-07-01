@@ -40,6 +40,72 @@ def _edge(graph, source, target, edge_type=None):  # type: ignore[no-untyped-def
     )
 
 
+def _node_by_label(graph, label):  # type: ignore[no-untyped-def]
+    return next(n.id for n in graph.nodes if n.label == label)
+
+
+# --- Upstream normalization: parallel / decision / orphan guardrails ---------
+
+
+def test_validated_strips_parallel_group_from_decision_gated_activity() -> None:
+    """An activity gated by a decision must not stay folded into a parallel group."""
+    structure = WorkflowStructure(
+        activities=[
+            ActivityNode(id="a1", name="Reprovision", parallel_group="g"),
+            ActivityNode(id="a2", name="Update inventory", parallel_group="g"),
+            ActivityNode(id="a3", name="Send events", parallel_group="g"),
+        ],
+        decisions=[
+            DecisionNode(id="d1", question="ok?", after="a1", yes_target="a2", no_target="end")
+        ],
+    )
+    clean, warnings = structure.validated()
+    groups = {a.id: a.parallel_group for a in clean.activities}
+    assert groups["a1"] is None  # gated as the decision anchor
+    assert groups["a2"] is None  # gated as a branch target
+    assert groups["a3"] == "g"  # genuinely parallel — left intact
+    assert any("parallel group" in w for w in warnings)
+
+
+def test_validated_repairs_degenerate_decision() -> None:
+    """A decision whose yes/no targets are identical reroutes 'no' to its exception."""
+    structure = WorkflowStructure(
+        activities=[ActivityNode(id="a1", name="Validate promo")],
+        decisions=[
+            DecisionNode(id="d1", question="valid?", after="a1", yes_target="a2", no_target="a2")
+        ],
+        # a2 is not declared, so keep_target nulls it; declare it to isolate B3.
+    )
+    structure = structure.model_copy(
+        update={"activities": [*structure.activities, ActivityNode(id="a2", name="Apply promo")]}
+    )
+    structure = structure.model_copy(
+        update={"exceptions": [ExceptionNode(id="x1", reason="Invalid promo", raised_by="a1")]}
+    )
+    clean, warnings = structure.validated()
+    decision = clean.decisions[0]
+    assert decision.yes_target == "a2"
+    assert decision.no_target == "x1"  # rerouted to the gated activity's exception
+    assert any("identical yes/no" in w for w in warnings)
+
+
+def test_orphan_activity_reconnected_to_predecessor() -> None:
+    """An activity stranded when a decision replaces its spine edge gets an inbound edge."""
+    structure = WorkflowStructure(
+        activities=[
+            ActivityNode(id="a1", name="First"),
+            ActivityNode(id="a2", name="Second"),
+            ActivityNode(id="a3", name="Audit"),
+        ],
+        decisions=[
+            DecisionNode(id="d1", question="ok?", after="a2", yes_target="end", no_target="end")
+        ],
+    )
+    graph, _nx = WorkflowGraphBuilder().build_from_structure(structure)
+    audit = _node_by_label(graph, "Audit")
+    assert [e for e in graph.edges if e.target == audit], "Audit must not be an orphan"
+
+
 # --- Lever 2: referential integrity -----------------------------------------
 
 

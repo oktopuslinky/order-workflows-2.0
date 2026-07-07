@@ -35,7 +35,18 @@ from workflow_compiler.models.patch import (
     PatchAction,
     ReviewResult,
 )
+from workflow_compiler.models.project import (
+    CompilationProject,
+    ProjectStage,
+    WorkflowSegment,
+)
 from workflow_compiler.models.review import ReviewIssue, ReviewReport
+from workflow_compiler.models.spec import (
+    CrossReference,
+    Provenance,
+    SpecItem,
+    WorkflowSpec,
+)
 from workflow_compiler.models.state import WorkflowState
 from workflow_compiler.models.structure import (
     ActivityNode,
@@ -67,6 +78,15 @@ from workflow_compiler.models.temporal import (
 __all__ = [
     # state
     "WorkflowState",
+    # project (spec-centric front-end aggregate)
+    "CompilationProject",
+    "ProjectStage",
+    "WorkflowSegment",
+    # spec (the human-reviewed primary artifact)
+    "CrossReference",
+    "Provenance",
+    "SpecItem",
+    "WorkflowSpec",
     # checklist (pre-generation readiness gate)
     "ChecklistItem",
     "ChecklistSeverity",

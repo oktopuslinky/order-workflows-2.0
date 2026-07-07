@@ -8,6 +8,15 @@ Endpoints (per the project spec):
 - ``GET  /workflow/{id}``     — load a stored workflow state.
 - ``GET  /workflows``         — list stored workflow ids.
 - ``GET  /health``            — liveness probe.
+
+Spec-centric project endpoints:
+
+- ``POST /projects/compile``        — segment a document into reviewed specs.
+- ``GET  /projects``                — list stored project ids.
+- ``GET  /projects/{id}``           — load a project + rendered spec files.
+- ``PUT  /projects/{id}/spec``      — fold edited spec Markdown back in (no LLM).
+- ``POST /projects/{id}/validate``  — run the spec validator passes.
+- ``POST /projects/{id}/approve``   — approve specs, compile every workflow.
 """
 
 from __future__ import annotations
@@ -17,11 +26,16 @@ from collections.abc import Awaitable
 from fastapi import Depends, FastAPI, HTTPException, status
 
 from workflow_compiler import __version__
-from workflow_compiler.api.dependencies import get_compiler
+from workflow_compiler.api.dependencies import get_compiler, get_project_compiler
 from workflow_compiler.api.schemas import (
     ApproveRequest,
     CompileRequest,
+    ProjectApproveRequest,
+    ProjectCompileRequest,
+    ProjectIdList,
+    ProjectResponse,
     RejectRequest,
+    SpecUpdateRequest,
     WorkflowIdList,
     WorkflowStateResponse,
 )
@@ -32,6 +46,9 @@ from workflow_compiler.exceptions import (
     StateNotFoundError,
     WorkflowCompilerError,
 )
+from workflow_compiler.models import CompilationProject
+from workflow_compiler.project_compiler import ProjectCompiler
+from workflow_compiler.spec import render_spec
 
 
 async def _guard[T](coro: Awaitable[T]) -> T:
@@ -116,6 +133,93 @@ def create_app() -> FastAPI:
         """List stored workflow ids."""
         ids = await _guard(compiler.list_states())
         return WorkflowIdList(workflow_ids=ids)
+
+    def _project_response(project: CompilationProject) -> ProjectResponse:
+        """Wrap a project with its rendered spec Markdown files."""
+        return ProjectResponse(
+            project=project,
+            spec_markdown={
+                spec.slug: render_spec(spec, project.cross_references)
+                for spec in project.specs
+            },
+        )
+
+    @app.post("/projects/compile", response_model=ProjectResponse, tags=["projects"])
+    async def compile_project(
+        request: ProjectCompileRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+    ) -> ProjectResponse:
+        """Segment a document into per-workflow specs (stops at the spec gate)."""
+        project = await _guard(
+            compiler.compile_document(request.document_text, persist=request.persist)
+        )
+        return _project_response(project)
+
+    @app.get("/projects", response_model=ProjectIdList, tags=["projects"])
+    async def list_projects(
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+    ) -> ProjectIdList:
+        """List stored project ids."""
+        ids = await _guard(compiler.list_projects())
+        return ProjectIdList(project_ids=ids)
+
+    @app.get("/projects/{project_id}", response_model=ProjectResponse, tags=["projects"])
+    async def get_project(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+    ) -> ProjectResponse:
+        """Load a stored project plus its rendered spec files."""
+        project = await _guard(compiler.load_project(project_id))
+        return _project_response(project)
+
+    @app.put("/projects/{project_id}/spec", response_model=ProjectResponse, tags=["projects"])
+    async def update_project_spec(
+        project_id: str,
+        request: SpecUpdateRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+    ) -> ProjectResponse:
+        """Fold edited spec Markdown back onto the structured specs (no LLM)."""
+        project = await _guard(
+            compiler.update_specs(project_id, request.spec_markdown)
+        )
+        return _project_response(project)
+
+    @app.post(
+        "/projects/{project_id}/validate", response_model=ProjectResponse, tags=["projects"]
+    )
+    async def validate_project(
+        project_id: str,
+        request: SpecUpdateRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+    ) -> ProjectResponse:
+        """Ingest edits (if any) and run the spec validator review passes."""
+        project = await _guard(
+            compiler.validate_specs(
+                project_id, markdown_by_slug=request.spec_markdown or None
+            )
+        )
+        return _project_response(project)
+
+    @app.post(
+        "/projects/{project_id}/approve", response_model=ProjectResponse, tags=["projects"]
+    )
+    async def approve_project(
+        project_id: str,
+        request: ProjectApproveRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+    ) -> ProjectResponse:
+        """Approve the specs and compile every workflow through the back-end."""
+        project = await _guard(
+            compiler.approve_spec(
+                project_id,
+                workflows=request.workflows,
+                reviewer=request.reviewer,
+                markdown_by_slug=request.spec_markdown or None,
+                accept_incomplete=request.accept_incomplete,
+                allow_unconfirmed_references=request.allow_unconfirmed_references,
+            )
+        )
+        return _project_response(project)
 
     return app
 

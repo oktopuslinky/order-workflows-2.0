@@ -84,6 +84,19 @@ picture before changing pipeline behavior.
   (`review/editor.py`), which returns **new validated immutable `WorkflowGraph` instances** and
   raises on invalid edits rather than corrupting state.
 
+- **Spec-centric front-end (`ProjectCompiler`, `project_compiler.py`)** layers on top of the
+  unchanged per-workflow pipeline for multi-workflow documents: segmentation
+  (`agents/segmentation.py`) discovers every workflow + output→input cross-references, facts are
+  extracted per segment, and the human gate moves to **editable spec Markdown files**
+  (`compile --spec-dir` → edit → `validate` → `approve-spec`). The structured `WorkflowSpec`
+  (`models/spec.py`) is the source of truth — `spec/renderer.py` projects it to Markdown and
+  `spec/ingest.py` parses edits back **deterministically** (round-trip identity is tested; never
+  re-extract a spec with an LLM). Provenance (`document_grounded`/`llm_inferred`/`human_provided`)
+  governs the spec validator (`spec/validator.py`): human-provided elements are flagged, never
+  removed. At approval the graph gate is automatic (`compile_prepared` with
+  `graph_health_threshold`, default 0.9); the classic `approve` stays as the manual override, and
+  the readiness checklist is absorbed into the spec's Open Questions section.
+
 ## Conventions
 
 - Pydantic v2 models everywhere; Python 3.12+; `mypy --strict` must pass (the pydantic mypy plugin

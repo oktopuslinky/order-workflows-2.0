@@ -39,6 +39,53 @@ Deterministic (no LLM) stages: graph building, Mermaid rendering, structural rev
 item is unmet; the user's report answers are folded back in as deterministic amendments (no LLM
 re-run) until the gate clears or `--accept-as-is` overrides it.
 
+## Spec-centric front-end (ProjectCompiler)
+
+For multi-workflow (or large, convoluted) documents, `ProjectCompiler` (`project_compiler.py`)
+layers a **spec-centric front-end** on top of the unchanged per-workflow pipeline. The primary
+human-reviewed artifact moves from the graph to a **workflow specification**:
+
+```mermaid
+flowchart TD
+    doc["Business document"]
+    seg["WorkflowSegmentationAgent<br/>→ every workflow + its sections<br/>+ output→input cross-references<br/>(LLM, 3 review passes)"]
+    ext["Per-segment Discovery + Fact Extraction<br/>(existing agents + review pipeline,<br/>each sees only its workflow's text)"]
+    specs["CompilationProject<br/>one WorkflowSpec per workflow<br/>(structured source of truth)"]
+    files["Spec .md files on disk<br/>(deterministic projection)"]
+    gate{"SPEC GATE<br/>edit ⇄ validate loop"}
+    backend["Per workflow: seeded WorkflowState →<br/>Graph → auto-review ≥ health threshold →<br/>CVPA → Temporal design → Code"]
+
+    doc --> seg --> ext --> specs --> files --> gate
+    gate -->|validate: ingest edits + 3 spec review passes| files
+    gate -->|approve-spec| backend
+```
+
+Key invariants:
+
+- **The structured model is the source of truth.** The Markdown spec is a pure render
+  (`spec/renderer.py`); edits are parsed back **deterministically** (`spec/ingest.py`) and merged
+  onto the existing model — never re-extracted by an LLM — so the compiled graph remains a pure
+  function of what the human approved. A round-trip test asserts `ingest(render(spec)) == spec`.
+- **Provenance-aware validation.** Every element carries provenance (`document_grounded` /
+  `llm_inferred` / `human_provided`). The spec validator (`spec/validator.py`, three review passes
+  re-targeted at the spec vs. the original document) may remove unsupported machine extractions
+  but only ever *flags* human additions for confirmation. After every ingest,
+  `WorkflowStructure.validated()` re-enforces referential integrity.
+- **The checklist gate is absorbed.** Unmet readiness items render as the spec's *Open Questions*
+  section; the user's answers fold back through the existing deterministic `checklist/amend.py`
+  at approval time.
+- **The graph gate becomes automatic.** Approval seeds one `WorkflowState` per spec (its
+  `document_text` is the rendered spec — downstream prompts see the normalized artifact) and runs
+  `WorkflowCompiler.compile_prepared`: graph review health ≥
+  `WORKFLOW_COMPILER_GRAPH_HEALTH_THRESHOLD` (default 0.9) auto-approves; below it the workflow
+  stays `PENDING` for the classic manual `approve`, and the project is marked `NEEDS_ATTENTION`.
+- **Workflows compile independently**, but typed **output→input cross-references** between them
+  are discovered, carried on the project, and must be user-confirmed (checkbox in the spec file)
+  before approval unless explicitly overridden.
+
+Projects persist via `storage/project_store.py` (`<state-root>/projects/<id>.json`, same atomic
+write pattern); per-workflow states are unchanged apart from an optional `project_id` back-link.
+
 ## Relational fact extraction → semantic graph wiring
 
 Fact extraction emits two layers: **flat facts** (`WorkflowFacts`) and an optional

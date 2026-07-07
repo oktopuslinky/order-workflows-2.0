@@ -9,8 +9,12 @@ an in-memory store.
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from workflow_compiler.compiler import WorkflowCompiler
+
+if TYPE_CHECKING:
+    from workflow_compiler.project_compiler import ProjectCompiler
 
 
 @lru_cache(maxsize=1)
@@ -21,3 +25,11 @@ def get_compiler() -> WorkflowCompiler:
     environment configuration (see :class:`~workflow_compiler.config.Settings`).
     """
     return WorkflowCompiler.from_settings()
+
+
+@lru_cache(maxsize=1)
+def get_project_compiler() -> ProjectCompiler:
+    """Provide a process-wide :class:`ProjectCompiler` built from settings."""
+    from workflow_compiler.project_compiler import ProjectCompiler
+
+    return ProjectCompiler.from_settings()

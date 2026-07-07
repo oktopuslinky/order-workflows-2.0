@@ -33,6 +33,10 @@ class WorkflowState(WorkflowBaseModel):
         description="Stable identifier for this compilation run.",
     )
     document_text: str = Field(..., description="The raw business workflow document.")
+    project_id: str | None = Field(
+        default=None,
+        description="Owning CompilationProject id when compiled via the spec front-end.",
+    )
 
     workflow_metadata: WorkflowMetadata | None = Field(
         default=None, description="Extracted workflow metadata."

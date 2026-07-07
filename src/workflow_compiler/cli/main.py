@@ -7,11 +7,22 @@ defer to the compiler, whose business logic is not implemented yet.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
 
 from workflow_compiler import __version__
+
+if TYPE_CHECKING:
+    from workflow_compiler.compiler import (
+        EnsembleConfig,
+        ProgressCallback,
+        ReviewConfig,
+    )
+    from workflow_compiler.interfaces.llm import BaseLLMProvider
+    from workflow_compiler.project_compiler import ProjectCompiler
+    from workflow_compiler.storage import FileStateStore
 
 app = typer.Typer(
     name="workflow-compiler",
@@ -84,10 +95,25 @@ def compile(
         "--checklist-out",
         help="Where to write the checklist form (default: <document>.checklist.md).",
     ),
+    spec_dir: Path = typer.Option(
+        None,
+        "--spec-dir",
+        help="Spec-centric mode: discover every workflow in the document, write one "
+        "editable spec file per workflow to this directory, and stop at the spec "
+        "gate (resume with 'validate' / 'approve-spec').",
+    ),
 ) -> None:
     """Compile a workflow document into a review-ready state."""
     import asyncio
 
+    if spec_dir is not None:
+        asyncio.run(
+            _run_compile_spec(
+                document, provider, model, timeout, spec_dir, review, persist,
+                auto_approve, out_dir,
+            )
+        )
+        return
     asyncio.run(
         _run_compile(
             document, provider, model, timeout, auto_approve, persist, out, out_dir,
@@ -126,6 +152,60 @@ def checklist_cmd(
         _run_checklist(
             workflow_id, answers, accept_as_is, auto_approve, provider, model, timeout,
             out, out_dir, checklist_out,
+        )
+    )
+
+
+@app.command(name="validate")
+def validate_cmd(
+    project_id: str = typer.Argument(..., help="Project id from 'compile --spec-dir'."),
+    spec_dir: Path = typer.Option(
+        Path("./specs"), "--spec-dir", exists=True, file_okay=False,
+        help="Directory holding the edited spec files.",
+    ),
+    provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
+    model: str = typer.Option(None, "--model", help="Override the model id."),
+    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+) -> None:
+    """Fold edited spec files back in and run the spec validator passes."""
+    import asyncio
+
+    asyncio.run(_run_validate(project_id, spec_dir, provider, model, timeout))
+
+
+@app.command(name="approve-spec")
+def approve_spec_cmd(
+    project_id: str = typer.Argument(..., help="Project id from 'compile --spec-dir'."),
+    spec_dir: Path = typer.Option(
+        Path("./specs"), "--spec-dir", exists=True, file_okay=False,
+        help="Directory holding the edited spec files.",
+    ),
+    workflow: list[str] = typer.Option(
+        None, "--workflow", help="Approve only these workflow slug(s); default: all."
+    ),
+    reviewer: str = typer.Option(None, "--reviewer", help="Reviewer name to record."),
+    out_dir: Path = typer.Option(
+        None, "--out-dir", help="Write each generated Temporal code bundle here."
+    ),
+    accept_incomplete: bool = typer.Option(
+        False, "--accept-incomplete",
+        help="Proceed even when required open questions remain unanswered.",
+    ),
+    allow_unconfirmed: bool = typer.Option(
+        False, "--allow-unconfirmed",
+        help="Proceed without confirming the cross-workflow dependencies.",
+    ),
+    provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
+    model: str = typer.Option(None, "--model", help="Override the model id."),
+    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+) -> None:
+    """Approve the specs and compile every workflow through graph → code."""
+    import asyncio
+
+    asyncio.run(
+        _run_approve_spec(
+            project_id, spec_dir, list(workflow or []), reviewer, out_dir,
+            accept_incomplete, allow_unconfirmed, provider, model, timeout,
         )
     )
 
@@ -172,7 +252,9 @@ def show(
     asyncio.run(_run_show(workflow_id))
 
 
-def _build_provider(provider_name: str | None, model: str | None, timeout: float):
+def _build_provider(
+    provider_name: str | None, model: str | None, timeout: float
+) -> BaseLLMProvider:
     """Construct an LLM provider from CLI overrides or settings (.env)."""
     from workflow_compiler.config import get_settings
     from workflow_compiler.llm import ProviderFactory
@@ -185,7 +267,7 @@ def _build_provider(provider_name: str | None, model: str | None, timeout: float
     return factory.create(name, model=model or settings.llm_model, timeout=timeout)
 
 
-def _file_store():
+def _file_store() -> FileStateStore:
     """Build the file-backed state store rooted at the configured path."""
     from workflow_compiler.config import get_settings
     from workflow_compiler.storage import FileStateStore
@@ -193,7 +275,7 @@ def _file_store():
     return FileStateStore(get_settings().state_store_path)
 
 
-def _make_progress():
+def _make_progress() -> ProgressCallback:
     """Return a progress sink that prints each pipeline step with a timestamp.
 
     Gives a live, timed view of what stage is running and how long each takes —
@@ -297,7 +379,7 @@ def _print_checklist(state: object) -> None:
     console.print(table)
 
 
-def _ensemble_config(enabled_flag: bool, n: int):
+def _ensemble_config(enabled_flag: bool, n: int) -> EnsembleConfig:
     """Build an EnsembleConfig from settings, applying CLI overrides."""
     from workflow_compiler.compiler import EnsembleConfig
     from workflow_compiler.config import get_settings
@@ -309,7 +391,7 @@ def _ensemble_config(enabled_flag: bool, n: int):
     )
 
 
-def _review_config(enabled_flag: bool):
+def _review_config(enabled_flag: bool) -> ReviewConfig:
     """Build a ReviewConfig from settings, applying the CLI --review/--no-review override."""
     from workflow_compiler.compiler import ReviewConfig
     from workflow_compiler.config import get_settings
@@ -409,6 +491,196 @@ async def _run_compile(
         )
     _write_diagram(state, out)
     _write_code(state, out_dir)
+
+
+def _project_compiler(provider: BaseLLMProvider, review: bool) -> ProjectCompiler:
+    """Build a ProjectCompiler wired to the configured file stores."""
+    from workflow_compiler.compiler import WorkflowCompiler
+    from workflow_compiler.config import get_settings
+    from workflow_compiler.project_compiler import ProjectCompiler
+    from workflow_compiler.storage.project_store import FileProjectStore
+
+    settings = get_settings()
+    inner = WorkflowCompiler(
+        llm_provider=provider,  # type: ignore[arg-type]
+        state_store=_file_store(),
+        review=_review_config(review),
+    )
+    return ProjectCompiler(
+        llm_provider=provider,  # type: ignore[arg-type]
+        workflow_compiler=inner,
+        project_store=FileProjectStore(settings.state_store_path),
+        segmentation_review=review,
+        graph_health_threshold=settings.graph_health_threshold,
+    )
+
+
+def _print_project(project: object, spec_dir: Path) -> None:
+    """Print the project's workflows, dependencies, warnings, and findings."""
+    from workflow_compiler.models import CompilationProject
+
+    assert isinstance(project, CompilationProject)
+    console.print(f"\n[bold green]project_id[/]: {project.project_id}")
+    console.print(f"[bold]stage[/]: {project.stage.value}")
+    console.print(f"[bold]workflows[/] ({len(project.specs)}):")
+    for spec in project.specs:
+        open_questions = len(spec.unresolved_questions())
+        note = f"  [yellow]{open_questions} open question(s)[/]" if open_questions else ""
+        console.print(f"  - [cyan]{spec_dir / (spec.slug + '.md')}[/] — {spec.metadata.name}{note}")
+    for reference in project.cross_references:
+        status = "[green]confirmed[/]" if reference.user_confirmed else "[yellow]UNCONFIRMED[/]"
+        console.print(
+            f"  dependency: {reference.source_workflow}.{reference.output_field} -> "
+            f"{reference.target_workflow}.{reference.input_field} ({status})"
+        )
+    for warning in project.warnings:
+        console.print(f"  [yellow]warning[/]: {warning}")
+    for slug, findings in project.validation_findings.items():
+        for finding in findings:
+            console.print(f"  [yellow]{slug}[/]: {finding}")
+
+
+async def _run_compile_spec(
+    document: Path,
+    provider_name: str | None,
+    model: str | None,
+    timeout: float,
+    spec_dir: Path,
+    review: bool,
+    persist: bool,
+    auto_approve: bool,
+    out_dir: Path | None,
+) -> None:
+    from workflow_compiler.ingestion import DocumentParserFactory
+
+    console.print(f"[bold]Ingesting[/] {document} ...")
+    content = DocumentParserFactory().parse(document)
+    provider = _build_provider(provider_name, model, timeout)
+    console.print(f"[bold]Provider[/]: {provider.name}")
+    compiler = _project_compiler(provider, review)
+    try:
+        console.print("[bold]Compiling to specification[/] (segment → per-workflow facts) ...")
+        project = await compiler.compile_document(
+            content.text, persist=persist, progress=_make_progress()
+        )
+        if auto_approve:
+            console.print("[bold]Auto-approving specs[/] (straight-through) ...")
+            project = await compiler.approve_spec(
+                project.project_id,
+                reviewer="auto",
+                accept_incomplete=True,
+                allow_unconfirmed_references=True,
+                persist=persist,
+                progress=_make_progress(),
+            )
+            await _write_project_code(compiler, project, out_dir)
+    finally:
+        await _aclose(provider)
+
+    compiler.write_spec_files(project, spec_dir)
+    _print_project(project, spec_dir)
+    if not auto_approve:
+        console.print(
+            f"\nReview and edit the spec files in [cyan]{spec_dir}[/], then run:\n"
+            f"  [cyan]workflow-compiler validate {project.project_id} --spec-dir {spec_dir}[/]\n"
+            f"  [cyan]workflow-compiler approve-spec {project.project_id} "
+            f"--spec-dir {spec_dir}[/]"
+        )
+
+
+async def _run_validate(
+    project_id: str,
+    spec_dir: Path,
+    provider_name: str | None,
+    model: str | None,
+    timeout: float,
+) -> None:
+    provider = _build_provider(provider_name, model, timeout)
+    console.print(f"[bold]Provider[/]: {provider.name}")
+    compiler = _project_compiler(provider, review=True)
+    try:
+        project = await compiler.load_project(project_id)
+        edited = compiler.read_spec_files(project, spec_dir)
+        console.print(
+            f"[bold]Validating[/] {len(project.specs)} spec(s) "
+            f"({len(edited)} file(s) read from {spec_dir}) ..."
+        )
+        project = await compiler.validate_specs(
+            project_id, markdown_by_slug=edited, progress=_make_progress()
+        )
+    finally:
+        await _aclose(provider)
+
+    compiler.write_spec_files(project, spec_dir)
+    _print_project(project, spec_dir)
+    console.print(
+        "\nSpec files re-written with the validator's fixes. Review the findings, "
+        "edit again if needed, then run "
+        f"[cyan]workflow-compiler approve-spec {project_id} --spec-dir {spec_dir}[/]"
+    )
+
+
+async def _run_approve_spec(
+    project_id: str,
+    spec_dir: Path,
+    workflows: list[str],
+    reviewer: str | None,
+    out_dir: Path | None,
+    accept_incomplete: bool,
+    allow_unconfirmed: bool,
+    provider_name: str | None,
+    model: str | None,
+    timeout: float,
+) -> None:
+    provider = _build_provider(provider_name, model, timeout)
+    console.print(f"[bold]Provider[/]: {provider.name}")
+    compiler = _project_compiler(provider, review=True)
+    try:
+        project = await compiler.load_project(project_id)
+        edited = compiler.read_spec_files(project, spec_dir)
+        console.print("[bold]Approving specs[/] and compiling each workflow ...")
+        project = await compiler.approve_spec(
+            project_id,
+            workflows=workflows or None,
+            reviewer=reviewer,
+            markdown_by_slug=edited,
+            accept_incomplete=accept_incomplete,
+            allow_unconfirmed_references=allow_unconfirmed,
+            progress=_make_progress(),
+        )
+        await _write_project_code(compiler, project, out_dir)
+    finally:
+        await _aclose(provider)
+
+    compiler.write_spec_files(project, spec_dir)
+    _print_project(project, spec_dir)
+    from workflow_compiler.models import ProjectStage
+
+    if project.stage is ProjectStage.NEEDS_ATTENTION:
+        console.print(
+            "\n[bold yellow]Some workflows need attention[/] — see the findings above. "
+            "Fix the spec files and re-run approve-spec, or approve individual "
+            "workflows with [cyan]workflow-compiler approve <workflow-id>[/]."
+        )
+    else:
+        console.print("\n[bold green]All workflows compiled.[/]")
+
+
+async def _write_project_code(compiler: object, project: object, out_dir: Path | None) -> None:
+    """Write each completed workflow's Temporal code bundle under ``out_dir``."""
+    from workflow_compiler.models import CompilationProject, CompilationStage
+    from workflow_compiler.project_compiler import ProjectCompiler
+
+    assert isinstance(compiler, ProjectCompiler)
+    assert isinstance(project, CompilationProject)
+    if out_dir is None:
+        return
+    for slug, workflow_id in project.workflow_ids.items():
+        state = await compiler.workflow_compiler.load_state(workflow_id)
+        if state.stage is CompilationStage.COMPLETED:
+            _write_code(state, out_dir)
+        else:
+            console.print(f"  [yellow]{slug}[/]: not completed, no code written")
 
 
 async def _run_checklist(

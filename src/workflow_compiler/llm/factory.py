@@ -18,10 +18,21 @@ from workflow_compiler.llm.providers.openai_compatible import OpenAICompatiblePr
 
 ProviderBuilder = Callable[..., BaseLLMProvider]
 
+def _scripted_mock(**kwargs: Any) -> MockProvider:
+    """Factory-built mocks answer with scripted demo defaults when unqueued.
+
+    This is what makes every CLI command runnable offline with
+    ``--provider mock``; tests that need the strict raising behavior construct
+    :class:`MockProvider` directly.
+    """
+    kwargs.setdefault("script_defaults", True)
+    return MockProvider(**kwargs)
+
+
 _DEFAULT_PROVIDERS: dict[str, ProviderBuilder] = {
     "nemotron": NemotronProvider,
     "openai-compatible": OpenAICompatibleProvider,
-    "mock": MockProvider,
+    "mock": _scripted_mock,
 }
 
 

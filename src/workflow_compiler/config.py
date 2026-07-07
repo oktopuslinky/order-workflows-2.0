@@ -79,6 +79,17 @@ class Settings(BaseSettings):
         description="Which LLM stages get the sequential review pipeline.",
     )
 
+    graph_health_threshold: float = Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Spec-centric pipeline: auto-approve a workflow's graph when its review "
+            "health score is at or above this value; below it the workflow halts for "
+            "manual review."
+        ),
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

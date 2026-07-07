@@ -478,6 +478,68 @@ class WorkflowCompiler:
             state, post_agents, progress, review_mode=review_mode, persist=persist
         )
 
+    async def extract_facts(
+        self,
+        document_text: str,
+        *,
+        workflow_id: str | None = None,
+        project_id: str | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> WorkflowState:
+        """Run only the front half (discovery → facts) plus the checklist.
+
+        Used by the spec-centric :class:`ProjectCompiler` to extract one
+        workflow segment at a time; nothing is persisted and no graph is built.
+        """
+        if not document_text or not document_text.strip():
+            raise CompilationError("Cannot extract facts from an empty document.")
+        state = WorkflowState(document_text=document_text, project_id=project_id)
+        if workflow_id is not None:
+            state.workflow_id = workflow_id
+        pre_agents, _post = self._split_on_graph(self._agents)
+        state = await self._run_agents(pre_agents, state, progress)
+        state.checklist = ChecklistValidator().validate(state)
+        state.touch()
+        return state
+
+    async def compile_prepared(
+        self,
+        state: WorkflowState,
+        *,
+        review_mode: bool = True,
+        persist: bool = True,
+        auto_approve_threshold: float | None = None,
+        reviewer: str | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> WorkflowState:
+        """Continue compilation for a ``state`` already holding metadata + facts.
+
+        This is the back-end entry point for the spec-centric front-end: the
+        state was seeded from an approved :class:`WorkflowSpec` (discovery and
+        fact extraction have effectively already run), so only the graph build,
+        structural review, and post-approval stages remain.
+
+        When ``auto_approve_threshold`` is set, the review report's
+        ``health_score`` acts as the gate: at or above the threshold the graph
+        is approved automatically and the downstream pipeline runs; below it the
+        state is left at the gate (``PENDING``) for a human to inspect.
+        ``review_mode=False`` keeps its usual meaning (approve unconditionally).
+        """
+        _pre, post_agents = self._split_on_graph(self._agents)
+        state = await self._continue_after_checklist(
+            state, post_agents, progress, review_mode=review_mode, persist=persist
+        )
+        threshold = auto_approve_threshold
+        report = state.review_report
+        health = report.health_score if report is not None else None
+        if review_mode and threshold is not None and health is not None and health >= threshold:
+            state = await self._finalize_approval(
+                state, reviewer=reviewer or "auto-threshold", progress=progress
+            )
+            if persist:
+                await self._state_store.save(state)
+        return state
+
     async def resume_from_checklist(
         self,
         workflow_id: str,

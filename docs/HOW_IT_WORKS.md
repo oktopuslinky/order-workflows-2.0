@@ -747,6 +747,64 @@ produce identical downstream results; the automated path just doesn't reload fro
 
 ---
 
+## 8b. The spec-centric front-end: `ProjectCompiler`
+
+Everything above describes the classic single-document pipeline, which remains unchanged. For
+**large documents describing several workflows** — where downstream quality degrades because every
+stage reasons about the whole document at once — a second orchestrator, `ProjectCompiler`
+(`project_compiler.py`), layers a *spec-centric* front-end on top:
+
+```
+Document ─▶ Segmentation ─▶ per-workflow Discovery+Facts ─▶ one WorkflowSpec per workflow
+         ─▶ spec .md files on disk      [SPEC GATE: the user edits ⇄ `validate`]
+         ─▶ approve-spec ─▶ per workflow: Graph ─▶ auto-review ≥ threshold ─▶ CVPA
+                            ─▶ Temporal design ─▶ Temporal code
+```
+
+The pieces, and where they live:
+
+- **Segmentation** (`agents/segmentation.py` → `WorkflowSegmentationAgent`): one LLM call
+  enumerates *every* distinct workflow, the document sections belonging to each, and any
+  **output→input dependencies** between workflows (`prompts/templates/discover_workflows.md`),
+  improved by the same three-pass review discipline (completeness / grounding / consistency with
+  a deterministic `SegmentationPatchApplier`). Deterministic code then slices the document per
+  workflow — so fact extraction sees **only its own workflow's text**, which is the
+  scope-isolation win this front-end exists for. A single-workflow document yields one segment
+  holding the full text (the classic path's behavior, unchanged).
+- **The project aggregate** (`models/project.py` → `CompilationProject`): document text, segments,
+  one `WorkflowSpec` per workflow, typed `CrossReference`s, the spec approval status, and a
+  `ProjectStage` (`INGESTED → WORKFLOWS_DISCOVERED → SPEC_DRAFTED → SPEC_VALIDATED →
+  SPEC_APPROVED → COMPILING → COMPLETED | NEEDS_ATTENTION`). Persisted by
+  `storage/project_store.py` under `<state-root>/projects/`. `WorkflowState` stays the
+  per-workflow unit — it only gained an optional `project_id` back-link.
+- **The spec is the source of truth; Markdown is a projection.** `WorkflowSpec` (`models/spec.py`)
+  bundles the metadata + facts/structure with review-surface lists (assumptions, ambiguities,
+  **open questions** — the readiness checklist absorbed as fill-in questions — and suggested
+  edits), each element carrying **provenance**: `document_grounded`, `llm_inferred`, or
+  `human_provided`. `spec/renderer.py` renders it to a strict-grammar Markdown file;
+  `spec/ingest.py` parses edits back **deterministically** and merges them onto the existing model
+  (ids preserved, unrendered fields survive, `WorkflowStructure.validated()` re-run). A test
+  asserts the round trip is the identity — this is what keeps the compiled graph a pure function
+  of what the human approved, with no LLM between the gate and the graph.
+- **The edit ⇄ validate loop.** `validate_specs` ingests the edited files and runs three review
+  passes over each spec *against the original document* (`spec/validator.py`,
+  `prompts/templates/review_spec_*.md`). The applier is **provenance-aware**: unsupported
+  machine-extracted elements are removed, but a `remove` aimed at a *human-provided* element is
+  converted into a finding ("please confirm") — the validator challenges human additions, never
+  deletes them. Findings land in `project.validation_findings` and the re-rendered files.
+- **Approval → the unchanged back-end.** `approve_spec` requires the cross-references to be
+  user-confirmed (checkboxes), folds answered open questions in via the existing deterministic
+  `checklist/amend.py`, seeds one `WorkflowState` per spec (its `document_text` is the **rendered
+  spec**, so CVPA/Temporal prompts see the normalized artifact instead of the raw document), and
+  calls `WorkflowCompiler.compile_prepared`. The old human graph gate becomes a **threshold
+  gate**: review `health_score ≥ settings.graph_health_threshold` (default 0.9) auto-approves and
+  runs CVPA → Temporal design → code; below it the workflow stays `PENDING` (the classic
+  `approve <workflow-id>` is the manual override) and the project is marked `NEEDS_ATTENTION`.
+
+CLI: `compile <doc> --spec-dir <dir>` → edit the files → `validate <project-id>` →
+`approve-spec <project-id> [--out-dir gen]`. HTTP: `POST /projects/compile`,
+`GET/PUT /projects/{id}/spec`, `POST /projects/{id}/validate`, `POST /projects/{id}/approve`.
+
 ## 9. The three entry points (same engine, three faces)
 
 ### 9.1 Library
@@ -896,8 +954,10 @@ covered separately in `tests/test_review_pipeline.py`.
 
 ```
 src/workflow_compiler/
-  __init__.py          Public exports (WorkflowCompiler, stores, providers, …)
+  __init__.py          Public exports (WorkflowCompiler, ProjectCompiler, stores, providers, …)
   compiler.py          WorkflowCompiler — orchestrates the whole pipeline + the gate
+  project_compiler.py  ProjectCompiler — spec-centric front-end (segment → specs → spec gate →
+                       per-workflow back-end with the automatic graph-health threshold gate)
   config.py            Settings from .env (pydantic-settings)
   env.py               Loads .env into the environment (python-dotenv)
   logging.py           Loguru + Rich logging
@@ -905,6 +965,8 @@ src/workflow_compiler/
 
   models/              Pydantic artifacts:
     state.py           WorkflowState (the aggregate; incl. temporal_code)
+    project.py         CompilationProject + ProjectStage + WorkflowSegment (spec front-end)
+    spec.py            WorkflowSpec + SpecItem + CrossReference + Provenance
     enums.py           CompilationStage, NodeType, EdgeType, CVPAPhase, FactCategory, …
     temporal.py        Temporal design + plan IR (StepKind, BindingSource, TemporalStep, …)
                        and the generated-code models (GeneratedFile, TemporalCodeBundle)
@@ -935,7 +997,13 @@ src/workflow_compiler/
     ensemble.py        ConsensusMergeAgent + per-stage specs (opt-in N-candidate merge)
     ensemble_merge.py  reference-free consensus merge (votes + validation + grounding)
     review_pipeline.py ReviewPipelineAgent + ReviewPass/ReviewSpec/PatchApplier (default-on review)
+    segmentation.py    WorkflowSegmentationAgent (multi-workflow discovery + document slicing)
     serialization.py   compact graph/CVPA/facts text for prompts
+
+  spec/                Spec projection layer (spec-centric front-end, no LLM except validator)
+    renderer.py        deterministic WorkflowSpec → Markdown (the human review surface)
+    ingest.py          deterministic Markdown → merged spec (provenance + validated())
+    validator.py       SpecValidator + provenance-aware SpecPatchApplier (3 review passes)
 
   graph/               Deterministic graph machinery (no LLM)
     builder.py         WorkflowGraphBuilder (facts → graph, NetworkX; positional + structural)
@@ -953,6 +1021,7 @@ src/workflow_compiler/
   storage/             State persistence
     file.py            FileStateStore (atomic JSON on disk)
     memory.py          InMemoryStateStore
+    project_store.py   FileProjectStore / InMemoryProjectStore (CompilationProject JSON)
 
   api/                 FastAPI app (app.py, schemas.py, dependencies.py)
   cli/                 Typer CLI (main.py)

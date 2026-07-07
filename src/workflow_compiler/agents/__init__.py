@@ -29,6 +29,11 @@ from workflow_compiler.agents.review_pipeline import (
     ReviewSpec,
     rebuild_facts,
 )
+from workflow_compiler.agents.segmentation import (
+    SegmentationPatchApplier,
+    WorkflowsDiscovery,
+    WorkflowSegmentationAgent,
+)
 from workflow_compiler.agents.temporal import (
     TemporalDesignOutput,
     TemporalGeneratorAgent,
@@ -51,6 +56,7 @@ __all__ = [
     "ReviewPass",
     "ReviewPipelineAgent",
     "ReviewSpec",
+    "SegmentationPatchApplier",
     "StageSpec",
     "TemporalCodeGeneratorAgent",
     "TemporalDesignOutput",
@@ -58,5 +64,7 @@ __all__ = [
     "WorkflowDiscovery",
     "WorkflowDiscoveryAgent",
     "WorkflowReviewAgent",
+    "WorkflowSegmentationAgent",
+    "WorkflowsDiscovery",
     "rebuild_facts",
 ]

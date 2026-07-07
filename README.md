@@ -42,6 +42,26 @@ By default the **Workflow Discovery** and **Fact Extraction** stages each genera
 output and then run three sequential **review passes** (completeness → grounding → consistency) that
 patch it in place; this is on by default and toggled with `--review` / `--no-review` (see below).
 
+### Spec-centric mode (multi-workflow documents)
+
+For large documents — especially ones describing **several** workflows — the compiler can first
+normalize everything into **human-reviewed workflow specification files** and only then compile
+each workflow independently:
+
+```
+Document ─▶ Segmentation (every workflow + its sections) ─▶ per-workflow Fact Extraction
+         ─▶ one editable spec .md file per workflow      [HUMAN GATE: edit ⇄ validate]
+         ─▶ approve-spec ─▶ per workflow: Graph (auto-review ≥ health threshold)
+                            ─▶ CVPA ─▶ Temporal Design ─▶ Temporal Code
+```
+
+The structured spec model is the source of truth; the Markdown files are a deterministic
+projection of it. Your edits are parsed back deterministically (no re-extraction), recorded with
+provenance (`document-grounded` / `inferred` / `human-provided`), and re-checked for referential
+integrity. The old graph-approval gate becomes automatic: a workflow whose graph review health
+score meets `WORKFLOW_COMPILER_GRAPH_HEALTH_THRESHOLD` (default `0.9`) proceeds straight to code;
+below it, the workflow halts for manual review. Enter this mode with `compile --spec-dir` (below).
+
 See [`docs/architecture.md`](docs/architecture.md) for component and sequence diagrams.
 
 ## Stack
@@ -76,9 +96,11 @@ State is persisted as JSON under `WORKFLOW_COMPILER_STATE_STORE_PATH` (default `
 
 ## Use — CLI
 
-Six commands. `compile`, `checklist`, `approve`, and `inspect` use the LLM (set `NVIDIA_API_KEY`,
-or pass `--provider mock`); `reject` and `show` need no LLM. `--version` prints the version, and
-`workflow-compiler <command> --help` is always the authoritative reference.
+Eight commands. `compile`, `checklist`, `validate`, `approve-spec`, `approve`, and `inspect` use
+the LLM (set `NVIDIA_API_KEY`, or pass `--provider mock` — the mock answers every stage with a
+scripted demo workflow, so every command runs offline); `reject` and `show` need no LLM.
+`--version` prints the version, and `workflow-compiler <command> --help` is always the
+authoritative reference.
 
 ### `compile <document>` — run discovery → facts → **checklist** → graph → review, stop at the gate
 
@@ -247,6 +269,49 @@ WORKFLOW_COMPILER_ENSEMBLE_OVERALL_TIMEOUT=480
 > Cost note: the ensemble multiplies the discovery + facts LLM calls by N (run in parallel), which
 > is why it is opt-in and off by default.
 
+### `compile <document> --spec-dir <dir>` — spec-centric mode
+
+Discovers **every** workflow in the document, extracts facts per workflow (with the same review
+pipeline), and writes one editable spec file per workflow plus an `overview.md` to `<dir>`,
+stopping at the **spec gate**:
+
+```bash
+workflow-compiler compile big_business_doc.docx --spec-dir ./specs
+# → specs/overview.md, specs/customer-onboarding.md, specs/account-provisioning.md, ...
+```
+
+Each spec file contains the workflow's metadata, activities/decisions/exceptions/compensations
+(with stable `[ids]`), plus **Assumptions**, **Ambiguities**, **Open Questions** (the readiness
+checklist rendered as fill-in questions), and **Cross-Workflow Dependencies** (output→input links
+you confirm by ticking their checkbox). Edit the files in any editor — keep the `[id]` markers on
+lines you modify; new lines you add are recorded as *human-provided*.
+
+### `validate <project-id>` — fold edits back in and re-check the specs
+
+```bash
+workflow-compiler validate <project-id> --spec-dir ./specs
+```
+
+Deterministically parses your edits back onto the structured spec, then runs three LLM review
+passes against the original document (completeness / grounding / consistency). Machine-extracted
+statements without support are removed; **your** additions are only ever *flagged* for
+confirmation, never deleted. The files are re-written with the fixes and findings. Iterate
+edit ⇄ validate until you are satisfied.
+
+### `approve-spec <project-id>` — compile every workflow through to code
+
+```bash
+workflow-compiler approve-spec <project-id> --spec-dir ./specs --out-dir ./generated
+```
+
+Approves the specs and runs each workflow **independently** through graph building, structural
+review, CVPA, Temporal design, and code generation. The graph gate is automatic: health ≥ the
+configured threshold continues; below it the workflow is left pending (`approve <workflow-id>`
+remains the manual override). Unanswered required questions block a workflow unless you pass
+`--accept-incomplete`; unconfirmed dependencies block approval unless you pass
+`--allow-unconfirmed`. Each completed workflow's runnable Temporal bundle is written under
+`--out-dir`.
+
 ## Use — HTTP API
 
 ```bash
@@ -261,6 +326,18 @@ uvicorn workflow_compiler.api.app:app --reload
 | GET    | `/workflow/{id}`    | —                                          | Load a stored workflow state.             |
 | GET    | `/workflows`        | —                                          | List stored workflow ids.                 |
 | GET    | `/health`           | —                                          | Liveness probe.                           |
+
+Spec-centric project endpoints (mirror the `--spec-dir` CLI flow; spec files travel as
+`spec_markdown: {slug: markdown}`):
+
+| Method | Path                        | Body                                        | Purpose                                        |
+|--------|-----------------------------|---------------------------------------------|------------------------------------------------|
+| POST   | `/projects/compile`         | `{document_text, persist?}`                 | Segment into per-workflow specs (spec gate).    |
+| GET    | `/projects`                 | —                                           | List stored project ids.                        |
+| GET    | `/projects/{id}`            | —                                           | Load a project + rendered spec files.           |
+| PUT    | `/projects/{id}/spec`       | `{spec_markdown}`                           | Fold edited spec Markdown back in (no LLM).     |
+| POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes.   |
+| POST   | `/projects/{id}/approve`    | `{workflows?, reviewer?, spec_markdown?, accept_incomplete?, allow_unconfirmed_references?}` | Approve specs, compile every workflow. |
 
 Interactive docs are served at `/docs`. Example:
 
@@ -306,11 +383,15 @@ src/workflow_compiler/
   llm/           Provider-agnostic LLM layer (ProviderFactory, Nemotron, mock)
   prompts/       Markdown prompt templates + PromptManager
   agents/        Discovery, FactExtraction, GraphBuilder, Review, CVPAClassifier, TemporalGenerator
-                 (+ review_pipeline: default-on sequential review; ensemble: opt-in consensus merge)
+                 (+ review_pipeline: default-on sequential review; ensemble: opt-in consensus merge;
+                  segmentation: multi-workflow discovery for the spec-centric front-end)
+  spec/          Spec projection layer: deterministic Markdown renderer, parse-back ingestion,
+                 provenance-aware spec validator
   graph/         Deterministic NetworkX graph builder, Mermaid renderer, structural reviewer
   review/        DefaultReviewManager (approval gate) + GraphEditor (validated edits)
-  storage/       FileStateStore (JSON on disk) + InMemoryStateStore
+  storage/       FileStateStore (JSON on disk) + InMemoryStateStore (+ project stores)
   compiler.py    WorkflowCompiler — end-to-end orchestration
+  project_compiler.py  ProjectCompiler — spec-centric front-end (segment → specs → gate → compile)
   api/           FastAPI application
   cli/           Typer command-line interface
 examples/        Sample business workflow documents

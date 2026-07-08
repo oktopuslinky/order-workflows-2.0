@@ -21,6 +21,7 @@ The LLM never writes code — it fills this specification; templates emit code.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
 from pydantic import Field
@@ -313,3 +314,59 @@ class TemporalCodeBundle(WorkflowBaseModel):
 # ``TemporalStep`` is self-referential (lanes hold nested steps); rebuild so the
 # forward reference under ``from __future__ import annotations`` is resolved.
 TemporalStep.model_rebuild()
+
+
+#: Tokens too generic to pair a timer with a signal by themselves.
+_GENERIC_TIMER_TOKENS = frozenset(
+    {"timeout", "timer", "deadline", "sla", "wait", "confirmation", "signal", "event"}
+)
+
+
+def _timer_tokens(name: str) -> set[str]:
+    """Meaningful (>2-char) tokens of ``name``, splitting camelCase and delimiters.
+
+    ``CarrierPickupTimeout`` → ``{carrier, pickup, timeout}`` and
+    ``carrier.picked_up`` → ``{carrier, picked}`` so the two can be compared.
+    """
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name or "")
+    return {t for t in re.findall(r"[a-z0-9]+", spaced.lower()) if len(t) > 2}
+
+
+def pair_gate_timer(
+    explicit_timer: str | None,
+    signal_name: str,
+    timers: list[TemporalTimerDesign],
+) -> TemporalTimerDesign | None:
+    """Return the declared timer that bounds a signal gate, or ``None``.
+
+    Documents that follow the format guide pair every human/external wait with a
+    deadline ("shipping confirmation must arrive within 24 hours"), recorded as a
+    timer. Pairing order: an explicit timer name on the step, then the unique
+    timer sharing a meaningful name/description token with the signal
+    (``carrier.picked_up`` ↔ ``CarrierPickupTimeout``). An ambiguous tie binds
+    nothing (leave the wait unbounded rather than guess). Shared by the code
+    generator (to emit ``timeout=``) and the design agent (to decide whether a
+    gate is a bounded wait) so the two never diverge.
+    """
+    if explicit_timer:
+        target = "".join(re.findall(r"[a-z0-9]+", explicit_timer.lower()))
+        for timer in timers:
+            if "".join(re.findall(r"[a-z0-9]+", timer.name.lower())) == target:
+                return timer
+    signal_tokens = _timer_tokens(signal_name) - _GENERIC_TIMER_TOKENS
+    if not signal_tokens:
+        return None
+    scored: list[tuple[int, TemporalTimerDesign]] = []
+    for timer in timers:
+        timer_tokens = (
+            _timer_tokens(timer.name) | _timer_tokens(timer.description or "")
+        ) - _GENERIC_TIMER_TOKENS
+        overlap = len(signal_tokens & timer_tokens)
+        if overlap:
+            scored.append((overlap, timer))
+    if not scored:
+        return None
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None  # ambiguous — leave the wait unbounded rather than guess
+    return scored[0][1]

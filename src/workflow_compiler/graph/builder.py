@@ -15,6 +15,7 @@ import networkx as nx
 
 from workflow_compiler.models import (
     EdgeType,
+    EventKind,
     FactCategory,
     NodeType,
     WorkflowEdge,
@@ -31,6 +32,12 @@ _PARALLEL_RE = re.compile(
 )
 _TRIGGER_RE = re.compile(
     r"\b(submit|receiv|request|creat|plac|initiat|trigger|arriv)\w*",
+    re.IGNORECASE,
+)
+#: Best-effort detection of an inbound wait when only flat facts exist (no
+#: structure carries the event kind). The structural path uses ``EventKind``.
+_SIGNAL_WAIT_RE = re.compile(
+    r"\b(wait(?:s|ing)?\s+for|await|pending|confirmation|approval)\b",
     re.IGNORECASE,
 )
 _TRANSITION_SPLIT = re.compile(r"\s*(?:->|→|=>)\s*")
@@ -169,7 +176,12 @@ class WorkflowGraphBuilder:
             for i, c in enumerate(structure.compensations, start=1)
         }
         vmap = {
-            v.id: self._add_node(f"event_{i}", v.name, NodeType.EVENT)
+            v.id: self._add_node(
+                f"event_{i}",
+                v.name,
+                # A signal-wait is a Temporal wait node; triggers/emits stay events.
+                NodeType.SIGNAL if v.kind is EventKind.SIGNAL_WAIT else NodeType.EVENT,
+            )
             for i, v in enumerate(structure.events, start=1)
         }
         target_map: dict[str, str] = {**amap, **xmap, **vmap}
@@ -310,17 +322,52 @@ class WorkflowGraphBuilder:
         amap: dict[str, str],
         ordered: list[tuple[str, str | None]],
     ) -> None:
-        """Emit an event from its declared activity, or from start if it triggers."""
+        """Wire an event by its ``kind``: trigger start, mid-flow wait, or emit.
+
+        - ``SIGNAL_WAIT``: an inbound wait placed **inline** after the activity it
+          follows (``activity -> wait -> next``), so it is on the main path and
+          not a dead-end. This is what lets the design model a bounded
+          ``wait_condition`` instead of dropping the wait or hanging on an output.
+        - ``TRIGGER``: ``start -> event -> first activity``.
+        - ``OUTPUT_EMIT`` (default): ``activity -> event`` terminal emission.
+        """
+        kind = getattr(event, "kind", EventKind.OUTPUT_EMIT)
         emitter = event.emitted_by
-        if emitter in amap:
-            specs.append(_EdgeSpec(amap[emitter], event_node, EdgeType.SIGNAL, label="emits"))
-        elif (emitter in {"start", "trigger"}) or (
-            emitter is None and _TRIGGER_RE.search(self._nodes[event_node].label)
-        ):
+
+        if kind is EventKind.SIGNAL_WAIT:
+            source = amap.get(emitter) or (ordered[0][0] if ordered else _START)
+            following = self._next_in_order(source, ordered)
+            specs.append(_EdgeSpec(source, event_node, EdgeType.SIGNAL, label="waits for"))
+            specs.append(_EdgeSpec(event_node, following, EdgeType.SEQUENCE, label="then"))
+            return
+
+        is_trigger = kind is EventKind.TRIGGER or (
+            kind is EventKind.OUTPUT_EMIT
+            and emitter not in amap
+            and (
+                emitter in {"start", "trigger"}
+                or (emitter is None and _TRIGGER_RE.search(self._nodes[event_node].label))
+            )
+        )
+        if is_trigger:
             first = ordered[0][0] if ordered else _END
             specs.append(_EdgeSpec(_START, event_node, EdgeType.SIGNAL, label="event"))
             specs.append(_EdgeSpec(event_node, first, EdgeType.SIGNAL, label="triggers"))
+        elif emitter in amap:
+            specs.append(_EdgeSpec(amap[emitter], event_node, EdgeType.SIGNAL, label="emits"))
         # else: no grounded emission point — leave unattached rather than guess.
+
+    @staticmethod
+    def _next_in_order(
+        node_id: str, ordered: list[tuple[str, str | None]]
+    ) -> str:
+        """The activity following ``node_id`` in declaration order (else END)."""
+        ids = [nid for nid, _group in ordered]
+        if node_id in ids:
+            index = ids.index(node_id)
+            if index + 1 < len(ids):
+                return ids[index + 1]
+        return _END
 
     @staticmethod
     def _resolve_target(ref: str | None, target_map: dict[str, str]) -> str | None:
@@ -500,7 +547,13 @@ class WorkflowGraphBuilder:
 
     def _attach_event(self, specs: list[_EdgeSpec], seq_ids: list[str], event: str) -> None:
         label = self._nodes[event].label
-        if _TRIGGER_RE.search(label):
+        if _SIGNAL_WAIT_RE.search(label) and not _TRIGGER_RE.search(label):
+            # Best-effort inbound wait: place it on the path with an outgoing edge
+            # (never a dead-end) so downstream can model a bounded wait.
+            anchor = seq_ids[-1] if seq_ids else _START
+            specs.append(_EdgeSpec(anchor, event, EdgeType.SIGNAL, label="waits for"))
+            specs.append(_EdgeSpec(event, _END, EdgeType.SEQUENCE, label="then"))
+        elif _TRIGGER_RE.search(label):
             first = seq_ids[0] if seq_ids else _END
             specs.append(_EdgeSpec(_START, event, EdgeType.SIGNAL, label="event"))
             specs.append(_EdgeSpec(event, first, EdgeType.SIGNAL, label="triggers"))

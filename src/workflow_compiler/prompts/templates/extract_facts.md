@@ -35,8 +35,21 @@ not declare.
 - compensation_nodes: `{id, name, compensates}` — saga rollbacks. `compensates` =
   the id of the activity this action reverses. The document states these as
   "X compensates Y" — map X to `name` and Y's activity to `compensates`.
-- event_nodes: `{id, name, emitted_by}` — emitted events. `emitted_by` = the id of
-  the activity that emits it (or `start` if it triggers the workflow).
+- event_nodes: `{id, name, emitted_by, kind}` — workflow events. Set `kind` to one of:
+  - `trigger` — the event **starts** the workflow (an inbound request/message that
+    kicks it off, e.g. "starts when an order is confirmed", "a `return.requested`
+    request reaches the service"). Set `emitted_by` to `start`.
+  - `signal_wait` — the workflow **pauses mid-flow to receive** an external signal,
+    typically bounded by a deadline (e.g. "the workflow **waits for** shipping
+    confirmation — a `shipping.confirmed` signal — for up to 24 hours"). Set
+    `emitted_by` to the id of the activity **after which** the wait occurs.
+  - `output_emit` — the workflow **produces / returns** this value; it is never
+    something the workflow waits for (e.g. an activity "returns an `order_id`",
+    or a value listed under Outputs). Set `emitted_by` to the id of the activity
+    that produces it. **This is the default** when in doubt.
+  Distinguish carefully: an id the workflow *returns* is `output_emit`; a signal
+  the workflow *receives and waits on* is `signal_wait`. They are opposite
+  directions and must not be confused.
 - transition_edges: `{source, target, trigger}` — transitions between named
   **workflow states** from the States/Process sections, e.g.
   `{source: "active", target: "upgrade_in_progress"}`. Use the human-readable

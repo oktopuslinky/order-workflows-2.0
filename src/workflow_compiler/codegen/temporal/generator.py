@@ -47,6 +47,7 @@ from workflow_compiler.models import (
     TemporalTimerDesign,
     TemporalWorkflowDesign,
     WorkflowGraph,
+    pair_gate_timer,
 )
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -673,48 +674,15 @@ class _RunBodyEmitter:
             )
         return lines
 
-    #: Tokens too generic to pair a timer with a signal by themselves.
-    _GENERIC_TIMER_TOKENS = frozenset(
-        {"timeout", "timer", "deadline", "sla", "wait", "confirmation", "signal"}
-    )
-
     def _gate_timer(
         self, step: TemporalStep, signal_name: str
     ) -> TemporalTimerDesign | None:
         """The declared timer bounding this signal gate, if one can be paired.
 
-        Documents that follow the format guide pair every human/external wait
-        with a deadline ("shipping confirmation must arrive within 24 hours"),
-        which the design records as a timer. Pairing order: the step's explicit
-        ``timer`` ref, then the unique timer sharing a meaningful name token
-        with the signal (``carrier.picked_up`` ↔ ``CarrierPickupTimeout``).
-        An ambiguous match (two timers tie) binds nothing.
+        Delegates to :func:`pair_gate_timer` so the code generator and the design
+        agent's gate-pruning use one implementation and never diverge.
         """
-        if step.timer:
-            explicit = self._timers.get(_snake(step.timer))
-            if explicit is not None:
-                return explicit
-        signal_tokens = self._name_tokens(signal_name) - self._GENERIC_TIMER_TOKENS
-        if not signal_tokens:
-            return None
-        scored = []
-        for timer in self._design.timers:
-            timer_tokens = (
-                self._name_tokens(timer.name) | self._name_tokens(timer.description or "")
-            ) - self._GENERIC_TIMER_TOKENS
-            overlap = len(signal_tokens & timer_tokens)
-            if overlap:
-                scored.append((overlap, timer))
-        if not scored:
-            return None
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        if len(scored) > 1 and scored[0][0] == scored[1][0]:
-            return None  # ambiguous — leave the wait unbounded rather than guess
-        return scored[0][1]
-
-    @staticmethod
-    def _name_tokens(name: str) -> set[str]:
-        return {t for t in re.findall(r"[a-z0-9]+", _snake(name)) if len(t) > 2}
+        return pair_gate_timer(step.timer, signal_name, self._design.timers)
 
     def _emit_timer(self, step: TemporalStep, *, depth: int) -> list[str]:
         pad = _INDENT * depth

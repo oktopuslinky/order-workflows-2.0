@@ -17,6 +17,7 @@ from __future__ import annotations
 from pydantic import Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
+from workflow_compiler.models.enums import EventKind
 
 #: Branch / emission targets that are valid without referencing a declared id.
 TERMINAL_TARGETS: frozenset[str] = frozenset(
@@ -71,12 +72,25 @@ class CompensationNode(WorkflowBaseModel):
 
 
 class EventNode(WorkflowBaseModel):
-    """An emitted event, attributed to the activity (or point) that emits it."""
+    """A workflow event, classified by how the workflow relates to it.
+
+    ``kind`` distinguishes a trigger (starts the workflow), a signal-wait (the
+    workflow pauses to receive it), and an output-emit (the workflow produces
+    it). It defaults to ``OUTPUT_EMIT`` for backward compatibility with older
+    extractions that carried no kind (the historical assumption).
+    """
 
     id: str = Field(..., description="Stable id (e.g. 'v1').")
     name: str = Field(..., description="Event name.")
     emitted_by: str | None = Field(
         default=None, description="Activity id (or terminal token) that emits this event."
+    )
+    kind: EventKind = Field(
+        default=EventKind.OUTPUT_EMIT,
+        description=(
+            "trigger (starts the workflow), signal_wait (the workflow pauses to "
+            "receive an external signal), or output_emit (the workflow produces it)."
+        ),
     )
 
 

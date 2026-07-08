@@ -27,6 +27,7 @@ from workflow_compiler.models import (
     CompilationStage,
     ConfidenceScores,
     DecisionNode,
+    EventKind,
     EventNode,
     ExceptionNode,
     FactCategory,
@@ -108,6 +109,7 @@ class _EventNodeOut(BaseModel):
     id: str = Field(default="")
     name: str = Field(default="")
     emitted_by: str | None = Field(default=None)
+    kind: str = Field(default="output_emit")
 
 
 class _TransitionEdgeOut(BaseModel):
@@ -174,6 +176,14 @@ def _normalize(statement: str) -> str:
         previous = text
         text = text.strip().strip("\"'").rstrip(".").strip()
     return text
+
+
+def _event_kind(value: object) -> EventKind:
+    """Parse an event ``kind`` from the LLM output, defaulting to OUTPUT_EMIT."""
+    try:
+        return EventKind(str(value).strip().lower())
+    except (ValueError, AttributeError):
+        return EventKind.OUTPUT_EMIT
 
 
 class FactExtractionAgent(BaseAgent):
@@ -357,6 +367,7 @@ class FactExtractionAgent(BaseAgent):
                 id=n.id.strip(),
                 name=_normalize(n.name),
                 emitted_by=(n.emitted_by or "").strip() or None,
+                kind=_event_kind(n.kind),
             )
             for n in extraction.event_nodes
             if n.id.strip() and _normalize(n.name)

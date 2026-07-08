@@ -177,3 +177,65 @@ async def test_requires_graph_and_cvpa() -> None:
 async def test_requires_llm() -> None:
     with pytest.raises(CompilationError):
         await TemporalGeneratorAgent(None).run(_state())
+
+
+# --- Stage A: prune signal gates that wait on the workflow's own output -----
+
+
+def _emit_graph() -> WorkflowGraph:
+    """A graph whose activity emits an ``order_id`` event (an output)."""
+    return WorkflowGraph(
+        nodes=[
+            WorkflowNode(id="start", label="Start", node_type=NodeType.START),
+            WorkflowNode(id="activity_1", label="Create order", node_type=NodeType.TASK),
+            WorkflowNode(
+                id="event_1", label="[ev1] order_id emitted", node_type=NodeType.EVENT
+            ),
+            WorkflowNode(id="end", label="End", node_type=NodeType.END),
+        ],
+        edges=[
+            WorkflowEdge(id="e1", source="start", target="activity_1"),
+            WorkflowEdge(id="e2", source="activity_1", target="event_1", label="emits"),
+        ],
+    )
+
+
+def _design_with_gate(*, timers):  # type: ignore[no-untyped-def]
+    from workflow_compiler.models import (
+        StepKind,
+        TemporalSignalDesign,
+        TemporalStep,
+        TemporalWorkflowDesign,
+    )
+
+    return TemporalWorkflowDesign(
+        workflow_name="Placement",
+        signals=[TemporalSignalDesign(name="order_id_emitted")],
+        timers=timers,
+        plan=[
+            TemporalStep(id="a", kind=StepKind.ACTIVITY, ref="CreateOrder"),
+            TemporalStep(id="g", kind=StepKind.SIGNAL_GATE, signal="order_id_emitted"),
+        ],
+    )
+
+
+def test_prune_drops_unbounded_self_output_gate() -> None:
+    agent = TemporalGeneratorAgent(MockProvider())
+    design = _design_with_gate(timers=[])
+    pruned = agent._prune_ungrounded_signal_gates(design, _emit_graph())
+    kinds = [s.kind.value for s in pruned.plan]
+    assert "signal_gate" not in kinds  # the self-output wait is gone
+    assert pruned.signals == []  # orphaned signal declaration removed
+
+
+def test_prune_keeps_timer_bounded_gate() -> None:
+    from workflow_compiler.models import TemporalTimerDesign
+
+    agent = TemporalGeneratorAgent(MockProvider())
+    # A gate whose event pairs with a timer is bounded — it times out, never hangs.
+    design = _design_with_gate(
+        timers=[TemporalTimerDesign(name="OrderIdEmittedTimeout", duration_seconds=60)]
+    )
+    pruned = agent._prune_ungrounded_signal_gates(design, _emit_graph())
+    assert any(s.kind.value == "signal_gate" for s in pruned.plan)
+    assert pruned.signals  # declaration retained

@@ -89,6 +89,47 @@ def test_validated_repairs_degenerate_decision() -> None:
     assert any("identical yes/no" in w for w in warnings)
 
 
+def test_event_kinds_wire_distinctly() -> None:
+    """trigger / signal_wait / output_emit each wire to a different shape."""
+    from workflow_compiler.models import EventKind, NodeType
+
+    structure = WorkflowStructure(
+        activities=[
+            ActivityNode(id="a1", name="Dispatch shipment"),
+            ActivityNode(id="a2", name="Capture payment"),
+        ],
+        events=[
+            EventNode(id="v1", name="order.fulfil", emitted_by="start",
+                      kind=EventKind.TRIGGER),
+            EventNode(id="v2", name="carrier.picked_up", emitted_by="a1",
+                      kind=EventKind.SIGNAL_WAIT),
+            EventNode(id="v3", name="shipment_id", emitted_by="a2",
+                      kind=EventKind.OUTPUT_EMIT),
+        ],
+    )
+    graph, _ = WorkflowGraphBuilder().build_from_structure(structure)
+    by_label = {n.label: n for n in graph.nodes}
+    wait = by_label["carrier.picked_up"]
+    # The signal-wait is a SIGNAL node, inline (has an outgoing edge — not a dead-end).
+    assert wait.node_type is NodeType.SIGNAL
+    assert any(e.source == wait.id for e in graph.edges), "wait must not be a dead-end"
+    assert any(
+        e.target == wait.id and e.source == by_label["Dispatch shipment"].id
+        for e in graph.edges
+    )
+    # The trigger enters from start; the output-emit is a plain event emitted by a2.
+    assert by_label["order.fulfil"].node_type is NodeType.EVENT
+    assert any(e.source == "start" and e.target == by_label["order.fulfil"].id
+               for e in graph.edges)
+    emit = by_label["shipment_id"]
+    assert emit.node_type is NodeType.EVENT
+    assert any(
+        e.source == by_label["Capture payment"].id and e.target == emit.id
+        and e.label == "emits"
+        for e in graph.edges
+    )
+
+
 def test_orphan_activity_reconnected_to_predecessor() -> None:
     """An activity stranded when a decision replaces its spine edge gets an inbound edge."""
     structure = WorkflowStructure(

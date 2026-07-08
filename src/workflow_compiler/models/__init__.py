@@ -19,6 +19,7 @@ from workflow_compiler.models.enums import (
     CompilationStage,
     CVPAPhase,
     EdgeType,
+    EventKind,
     FactCategory,
     MermaidDiagramType,
     MermaidDirection,
@@ -73,6 +74,7 @@ from workflow_compiler.models.temporal import (
     TemporalStep,
     TemporalTimerDesign,
     TemporalWorkflowDesign,
+    pair_gate_timer,
 )
 
 __all__ = [
@@ -136,6 +138,7 @@ __all__ = [
     "TemporalStep",
     "TemporalTimerDesign",
     "TemporalWorkflowDesign",
+    "pair_gate_timer",
     # temporal code generation
     "GeneratedFile",
     "TemporalCodeBundle",
@@ -146,6 +149,7 @@ __all__ = [
     # enums
     "ApprovalStatus",
     "CVPAPhase",
+    "EventKind",
     "CompilationStage",
     "EdgeType",
     "FactCategory",

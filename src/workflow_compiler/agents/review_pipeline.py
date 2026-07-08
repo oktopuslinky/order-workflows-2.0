@@ -39,6 +39,7 @@ from workflow_compiler.models import (
     CompensationNode,
     ConfidenceScores,
     DecisionNode,
+    EventKind,
     EventNode,
     ExceptionNode,
     FactCategory,
@@ -76,6 +77,14 @@ def _norm(text: object) -> str:
         previous = out
         out = out.strip().strip("\"'").rstrip(".").strip()
     return out
+
+
+def _event_kind(value: object) -> EventKind:
+    """Parse an event ``kind`` from a patch payload, defaulting to OUTPUT_EMIT."""
+    try:
+        return EventKind(str(value).strip().lower())
+    except (ValueError, AttributeError):
+        return EventKind.OUTPUT_EMIT
 
 
 def _grounded(text: str, evidence: Evidence | None, document_text: str) -> bool:
@@ -458,7 +467,8 @@ class FactsPatchApplier:
                                     compensates=_norm(p.get("compensates")) or None)
         else:  # event
             node = EventNode(id=new_id, name=label,
-                             emitted_by=_norm(p.get("emitted_by")) or None)
+                             emitted_by=_norm(p.get("emitted_by")) or None,
+                             kind=_event_kind(p.get("kind")))
         items.append(node)
         return True
 

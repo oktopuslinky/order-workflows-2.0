@@ -21,6 +21,7 @@ from workflow_compiler.models import (
     CompilationStage,
     ConfidenceScores,
     InputBinding,
+    NodeType,
     RetryPolicyDesign,
     StepKind,
     TemporalActivityDesign,
@@ -32,7 +33,9 @@ from workflow_compiler.models import (
     TemporalStep,
     TemporalTimerDesign,
     TemporalWorkflowDesign,
+    WorkflowGraph,
     WorkflowState,
+    pair_gate_timer,
 )
 from workflow_compiler.prompts import PromptManager
 
@@ -42,6 +45,39 @@ _SYSTEM = (
     "ONLY (names, descriptions, parameters) as strict JSON. Never emit executable "
     "Temporal code, SDK calls, or language snippets."
 )
+
+#: A leading ``[evN]`` provenance tag on event node labels.
+_EVENT_PREFIX = re.compile(r"^\s*\[[^\]]*\]\s*")
+#: Words that describe an event's *direction*, not its identity.
+_EVENT_STOP_TOKENS = frozenset(
+    {"emitted", "emit", "emits", "event", "signal", "received", "receive", "produced"}
+)
+
+
+def _event_tokens(text: str) -> set[str]:
+    """Identity tokens of an event/signal name (prefix + direction words removed).
+
+    Splits camelCase and delimiters so ``OrderIdEmitted``, ``order_id_emitted``,
+    and ``[ev1] order_id emitted`` all reduce to ``{order}``.
+    """
+    core = _EVENT_PREFIX.sub("", text or "")
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", core)
+    return {
+        t for t in re.findall(r"[a-z0-9]+", spaced.lower()) if len(t) > 2
+    } - _EVENT_STOP_TOKENS
+
+
+def _squash_name(name: str | None) -> str:
+    """Lowercase alphanumeric squash for casing/word-boundary-insensitive matching."""
+    return "".join(re.findall(r"[a-z0-9]+", (name or "").lower()))
+
+
+def _walk_steps(steps: list[TemporalStep]):  # type: ignore[no-untyped-def]
+    """Yield every step in ``steps``, descending into nested ``lanes``."""
+    for step in steps:
+        yield step
+        for lane in step.lanes:
+            yield from _walk_steps(lane)
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -269,7 +305,7 @@ class TemporalGeneratorAgent(BaseAgent):
             state.workflow_metadata.purpose if state.workflow_metadata else None
         )
 
-        return TemporalWorkflowDesign(
+        design = TemporalWorkflowDesign(
             workflow_name=workflow_name,
             task_queue=task_queue,
             description=description,
@@ -284,6 +320,84 @@ class TemporalGeneratorAgent(BaseAgent):
             default_retry_policy=self._retry(result.default_retry_policy),
             plan=self._plan(result.plan),
         )
+        if state.workflow_graph is not None:
+            design = self._prune_ungrounded_signal_gates(design, state.workflow_graph)
+        return design
+
+    # -- Stage A/B: deterministic gate guard --------------------------------
+
+    def _prune_ungrounded_signal_gates(
+        self, design: TemporalWorkflowDesign, graph: WorkflowGraph
+    ) -> TemporalWorkflowDesign:
+        """Drop ``signal_gate`` steps not backed by a genuine inbound wait.
+
+        A ``signal_gate`` is legitimate only for an event the workflow *receives
+        and waits on* — a ``SIGNAL`` node in the graph (a ``signal_wait`` event).
+        When the design LLM instead makes a gate for a value the workflow
+        **produces** (an output-emit) or for its **trigger**, the generated
+        ``wait_condition`` blocks on a signal that never arrives — the workflow
+        hangs forever. This deterministic guard removes any **unbounded** gate
+        whose signal matches no wait node (and drops the orphaned signal
+        declaration). Bounded gates (paired with a timer) are always kept — they
+        time out rather than hang — so a genuine wait is never lost. Mirrors the
+        design prompt's rule; guarantees "never hang" even if the LLM slips.
+        """
+        wait_tokens = self._wait_signal_tokens(graph)
+
+        def is_ungrounded_gate(step: TemporalStep) -> bool:
+            if step.kind is not StepKind.SIGNAL_GATE or not step.signal:
+                return False
+            if pair_gate_timer(step.timer, step.signal, design.timers) is not None:
+                return False  # bounded — will time out, cannot hang
+            sig_tokens = _event_tokens(step.signal)
+            if not sig_tokens:
+                return False
+            # Grounded iff it matches a real wait node's identity tokens.
+            return not any(w and w <= sig_tokens for w in wait_tokens)
+
+        dropped: list[str] = []
+
+        def filter_steps(steps: list[TemporalStep]) -> list[TemporalStep]:
+            kept: list[TemporalStep] = []
+            for step in steps:
+                if is_ungrounded_gate(step):
+                    dropped.append(step.signal or "")
+                    continue
+                if step.lanes:
+                    step = step.model_copy(
+                        update={"lanes": [filter_steps(lane) for lane in step.lanes]}
+                    )
+                kept.append(step)
+            return kept
+
+        new_plan = filter_steps(design.plan)
+        if not dropped:
+            return design
+
+        still_used = {
+            _squash_name(step.signal)
+            for step in _walk_steps(new_plan)
+            if step.kind is StepKind.SIGNAL_GATE and step.signal
+        }
+        dropped_norm = {_squash_name(name) for name in dropped}
+        new_signals = [
+            sig
+            for sig in design.signals
+            if _squash_name(sig.name) in still_used
+            or _squash_name(sig.name) not in dropped_norm
+        ]
+        return design.model_copy(update={"plan": new_plan, "signals": new_signals})
+
+    @staticmethod
+    def _wait_signal_tokens(graph: WorkflowGraph) -> list[set[str]]:
+        """Identity token sets of genuine inbound-wait nodes (``NodeType.SIGNAL``)."""
+        out: list[set[str]] = []
+        for node in graph.nodes:
+            if node.node_type is NodeType.SIGNAL:
+                tokens = _event_tokens(node.label)
+                if tokens:
+                    out.append(tokens)
+        return out
 
     @staticmethod
     def _params(items: list[_ParamOut]) -> list[TemporalParam]:

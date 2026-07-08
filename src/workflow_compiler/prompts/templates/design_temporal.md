@@ -24,6 +24,11 @@ DECLARATIONS:
   facts), and a `retry_policy` (from RETRY facts, incl. non_retryable_error_types
   from EXCEPTION facts).
 - signals: model human/external waits (approvals, callbacks, compliance holds).
+  Model a signal ONLY for an event the workflow **receives and waits on** (a
+  SIGNAL node / "waits for" edge in the graph). NEVER model a signal for a value
+  the workflow **produces** (an output the graph shows an activity "emits") — that
+  is just the activity's return, not something to wait for. Waiting on your own
+  output blocks the workflow forever.
 - queries: expose useful in-flight state; set `state_field` to the state attr.
 - child_workflows: model subprocess nodes or cohesive sub-flows.
 - timers: model durable waits / SLAs / deadlines (name + duration_seconds).
@@ -43,7 +48,11 @@ PLAN (the ordered control-and-data flow; this is what becomes runnable code):
     value comes from: source "workflow_input" (ref = WorkflowInput field),
     "step_output" (ref = an earlier step id), or "constant".
   - "signal_gate": set `signal` (the signal to await) and `condition`. Place it
-    where the workflow must pause (e.g. a compliance approval before provisioning).
+    where the workflow must pause for an **inbound** signal it receives (a SIGNAL
+    node / "waits for" edge in the graph, e.g. a carrier pickup confirmation). Set
+    `timer` to the matching deadline timer so the wait is bounded. Do NOT add a
+    signal_gate for an event the workflow emits/returns (an output) — that never
+    arrives as a signal and the workflow would hang.
   - "timer": set `timer` to a declared timer name for a *deliberate mid-workflow*
     durable sleep (e.g. a grace period before retrying). Do NOT add a timer step
     for an overall workflow timeout / total SLA — that is enforced by Temporal's

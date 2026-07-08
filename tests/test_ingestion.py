@@ -138,6 +138,30 @@ def test_markdown_parser_structure_and_title() -> None:
     assert "bold" in content.text
     assert "**" not in content.text
     assert "http://x" not in content.text
+    # Heading markers survive into the plain text (segmentation slices by them).
+    assert "# Order Intake" in content.text
+
+
+def test_markdown_parser_preserves_snake_case_identifiers() -> None:
+    md = (
+        "## Inputs\n\n"
+        "1. The service validates the order using `order_id` and returns a "
+        "`reservation_id` for `customer_id`.\n\n"
+        "- `order_id` — identifier of the confirmed order\n"
+        "- requires the order_id produced by placement and the shipment_id "
+        "produced by fulfilment\n\n"
+        "Some _real emphasis_ and __strong emphasis__ still get stripped.\n"
+    )
+    content = MarkdownParser().parse(md.encode(), filename="doc.md")
+    # snake_case identifiers must survive verbatim — they are the field names
+    # the pipeline binds workflow inputs/outputs and cross-references by.
+    for ident in ("order_id", "reservation_id", "customer_id", "shipment_id"):
+        assert ident in content.text, ident
+    assert "orderid" not in content.text
+    # Genuine word-boundary emphasis is still stripped.
+    assert "real emphasis" in content.text
+    assert "_real emphasis_" not in content.text
+    assert "__strong emphasis__" not in content.text
 
 
 # ---------------------------------------------------------------------------

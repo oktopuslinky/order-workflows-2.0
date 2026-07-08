@@ -209,6 +209,93 @@ def test_rollback_loop_carries_retry_policy() -> None:
     assert "maximum_attempts=5" in tail
 
 
+def test_signal_gate_bounded_by_matching_timer() -> None:
+    """A signal gate paired with a declared timer waits with ``timeout=``."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Fulfil",
+        signals=[TemporalSignalDesign(name="carrier.picked_up")],
+        timers=[
+            TemporalTimerDesign(name="CarrierPickupTimeout", duration_seconds=43200),
+            TemporalTimerDesign(name="RefundProcessingTimeout", duration_seconds=1800),
+        ],
+        plan=[
+            TemporalStep(id="gate", kind=StepKind.SIGNAL_GATE, signal="carrier.picked_up")
+        ],
+    )
+    src = _workflow_src(design)
+    assert (
+        "await workflow.wait_condition("
+        "lambda: self._carrier_picked_up_received, timeout=CARRIER_PICKUP_TIMEOUT)" in src
+    )
+
+
+def test_signal_gate_explicit_timer_ref_wins() -> None:
+    """A step's explicit ``timer`` ref outranks fuzzy name matching."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Fulfil",
+        signals=[TemporalSignalDesign(name="carrier.picked_up")],
+        timers=[
+            TemporalTimerDesign(name="CarrierPickupTimeout", duration_seconds=43200),
+            TemporalTimerDesign(name="ShippingDeadline", duration_seconds=600),
+        ],
+        plan=[
+            TemporalStep(
+                id="gate",
+                kind=StepKind.SIGNAL_GATE,
+                signal="carrier.picked_up",
+                timer="ShippingDeadline",
+            )
+        ],
+    )
+    src = _workflow_src(design)
+    assert "timeout=SHIPPING_DEADLINE)" in src
+
+
+def test_signal_gate_without_timer_stays_unbounded_with_todo() -> None:
+    """No pairable timer → unbounded wait, flagged with an explicit TODO."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Approve",
+        signals=[TemporalSignalDesign(name="manager.approved")],
+        plan=[
+            TemporalStep(id="gate", kind=StepKind.SIGNAL_GATE, signal="manager.approved")
+        ],
+    )
+    src = _workflow_src(design)
+    assert "await workflow.wait_condition(lambda: self._manager_approved_received)" in src
+    assert "TODO: pass timeout=" in src
+
+
+def test_branch_predicate_resolves_to_step_result() -> None:
+    """A simple predicate over a known result variable is emitted as code."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Checkout",
+        activities=[
+            TemporalActivityDesign(name="ValidateCart"),
+            TemporalActivityDesign(name="CreateOrder"),
+        ],
+        plan=[
+            TemporalStep(
+                id="v",
+                kind=StepKind.ACTIVITY,
+                ref="ValidateCart",
+                result_name="eligibility",
+            ),
+            TemporalStep(
+                id="b",
+                kind=StepKind.BRANCH,
+                predicate="eligibility == 'eligible'",
+                lanes=[
+                    [TemporalStep(id="c", kind=StepKind.ACTIVITY, ref="CreateOrder")],
+                    [],
+                ],
+            ),
+        ],
+    )
+    src = _workflow_src(design)
+    assert "= eligibility == 'eligible'  # branch condition" in src
+    assert "= True  # TODO: set from a real condition" not in src
+
+
 def _graph() -> WorkflowGraph:
     return WorkflowGraph(
         nodes=[

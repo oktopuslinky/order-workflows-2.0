@@ -127,7 +127,8 @@ src/workflow_compiler/
     providers/       nemotron.py, openai_compatible.py, mock.py
 
   prompts/           markdown templates + manager/loader/renderer/models
-    templates/*.md   discover_workflow, extract_facts, build_graph, classify_cvpa, design_temporal, render_mermaid
+    templates/*.md   discover_workflow, discover_workflows, extract_facts, classify_cvpa, design_temporal
+                     (LLM stages only; graph/mermaid/codegen are deterministic and prompt-less)
                      (each has YAML front-matter declaring its variables)
 
   agents/            one class per stage (thin LLM wrappers around graph/ logic where applicable)

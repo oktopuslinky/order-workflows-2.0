@@ -46,6 +46,14 @@ class WorkflowSegment(WorkflowBaseModel):
         default_factory=list, description="Document headings assigned to this workflow."
     )
     text: str = Field(..., description="The assembled document text for this workflow.")
+    sliced: bool = Field(
+        default=True,
+        description=(
+            "Whether the text is a real per-workflow slice. False means slicing "
+            "failed and the full document was used — the segment is contaminated "
+            "with the other workflows' content and must not be silently compiled."
+        ),
+    )
 
 
 class CompilationProject(WorkflowBaseModel):

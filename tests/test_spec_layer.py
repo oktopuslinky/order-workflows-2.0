@@ -253,4 +253,59 @@ class TestSegmentation:
         segments, refs, warnings = agent.assemble(discovery, "full document text")
         assert len(segments) == 1
         assert segments[0].text == "full document text"
+        assert segments[0].sliced
         assert refs == [] and warnings == []
+
+    def test_assemble_slices_by_title_lines_without_heading_markers(self) -> None:
+        """Parsed .docx/.pdf plain text has no ``#`` markers — headings survive
+        as short standalone lines, and slicing must key on those."""
+        document = (
+            "Order Management Operations\n"
+            "\n"
+            "Order Placement Purpose\n"
+            "Placement validates the cart.\n"
+            "\n"
+            "Order Placement Process\n"
+            "1. Validate the cart.\n"
+            "\n"
+            "Order Fulfilment Purpose\n"
+            "Fulfilment ships the order.\n"
+            "\n"
+            "Order Fulfilment Process\n"
+            "1. Pick the items.\n"
+        )
+        agent = WorkflowSegmentationAgent(llm=None)
+        discovery = WorkflowsDiscovery(
+            workflows=[
+                DiscoveredWorkflow(
+                    name="Order Placement",
+                    section_titles=["Order Placement Purpose", "Order Placement Process"],
+                ),
+                DiscoveredWorkflow(
+                    name="Order Fulfilment",
+                    section_titles=["Order Fulfilment Purpose", "Order Fulfilment Process"],
+                ),
+            ]
+        )
+        segments, _refs, warnings = agent.assemble(discovery, document)
+        assert warnings == []
+        placement, fulfilment = segments
+        assert placement.sliced and fulfilment.sliced
+        assert "Validate the cart" in placement.text
+        assert "Pick the items" not in placement.text
+        assert "Pick the items" in fulfilment.text
+        assert "Validate the cart" not in fulfilment.text
+
+    def test_assemble_flags_unsliced_and_identical_segments(self) -> None:
+        """A full-document fallback is marked ``sliced=False`` and warned about."""
+        agent = WorkflowSegmentationAgent(llm=None)
+        discovery = WorkflowsDiscovery(
+            workflows=[
+                DiscoveredWorkflow(name="Alpha", section_titles=["Missing Alpha"]),
+                DiscoveredWorkflow(name="Beta", section_titles=["Missing Beta"]),
+            ]
+        )
+        segments, _refs, warnings = agent.assemble(discovery, "no headings at all here")
+        assert all(not s.sliced for s in segments)
+        assert any("Could not locate" in w for w in warnings)
+        assert any("identical text" in w for w in warnings)

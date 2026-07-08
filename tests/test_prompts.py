@@ -36,28 +36,30 @@ def test_parse_front_matter_absent() -> None:
 
 
 def test_bundled_prompts_load() -> None:
+    # Only prompts an agent actually renders are bundled: graph building,
+    # Mermaid rendering, and code generation are deterministic (no LLM, no
+    # prompt), so no template exists for them.
     loader = PromptLoader()
     prompts = loader.load_all()
     for expected in (
-        "extract_metadata",
+        "discover_workflow",
+        "discover_workflows",
         "extract_facts",
-        "build_graph",
         "classify_cvpa",
         "design_temporal",
-        "render_mermaid",
     ):
         assert expected in prompts
 
 
-def test_extract_metadata_prompt_declares_variable() -> None:
-    prompt = PromptLoader().load("extract_metadata")
+def test_discover_workflow_prompt_declares_variable() -> None:
+    prompt = PromptLoader().load("discover_workflow")
     assert "document_text" in prompt.variables
     assert prompt.description
 
 
 def test_manager_renders_bundled_prompt() -> None:
     manager = PromptManager()
-    rendered = manager.render("extract_metadata", document_text="ORDER DOC")
+    rendered = manager.render("discover_workflow", document_text="ORDER DOC")
     assert "ORDER DOC" in rendered
     assert "{{" not in rendered
 

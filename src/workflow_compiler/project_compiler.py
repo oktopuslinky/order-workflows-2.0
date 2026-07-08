@@ -357,6 +357,31 @@ class ProjectCompiler:
                 phase="approve", name=name, status="start", index=index, total=total,
             ))
             started = time.perf_counter()
+            segment = next(
+                (s for s in project.segments if s.slug == spec.slug), None
+            )
+            if (
+                segment is not None
+                and not segment.sliced
+                and len(project.segments) > 1
+                and not accept_incomplete
+            ):
+                # The segmenter fell back to the full document: this spec merges
+                # every workflow's content and would compile to a mega-workflow.
+                # Never do that silently — surface it as a blocking finding.
+                project.validation_findings.setdefault(spec.slug, []).append(
+                    "blocked: this workflow's document segment could not be "
+                    "isolated (the full document was used as its text), so its "
+                    "spec merges every workflow's content. Fix the section "
+                    "titles / spec content and re-compile, or override with "
+                    "accept_incomplete."
+                )
+                needs_attention = True
+                _emit(progress, ProgressEvent(
+                    phase="approve", name=name, status="done", index=index, total=total,
+                    seconds=time.perf_counter() - started, stage="blocked",
+                ))
+                continue
             state = self._seed_state(project, spec)
             state = checklist_amend.apply(
                 state, self._answers(spec), accept_as_is=accept_incomplete

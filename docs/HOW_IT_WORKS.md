@@ -218,7 +218,10 @@ For each stage: **what goes in, what it does, how, what comes out, and the code.
 - **Why a factory?** So the rest of the system never cares about file types — it just gets `text`.
 - **Notable details:** encoding is auto-detected (`encoding.py` using `charset-normalizer`); empty
   or oversized files raise typed errors (`EmptyDocumentError`, `FileValidationError`); Markdown
-  parsing flattens to readable plain text.
+  parsing produces readable plain text that **keeps the `#` heading markers** (multi-workflow
+  segmentation slices by them) and **preserves snake_case identifiers verbatim** — emphasis
+  stripping only applies at word boundaries, so `order_id` can never be mangled into `orderid`
+  (the field names are what workflow inputs/outputs and cross-references bind by).
 
 The CLI/compiler take the parser's `content.text` and put it into a fresh `WorkflowState`.
 
@@ -457,16 +460,24 @@ requests, even separate processes.
     `execute_child_workflow(...)`, constructing the typed input dataclass and binding each field from
     its `InputBinding` (workflow input → `arg.<field>`, step output → that step's result variable,
     constant → the dataclass default). The result is captured into `result_name`.
-  - **signal_gate** → `await workflow.wait_condition(lambda: self._<signal>_received)`.
+  - **signal_gate** → `await workflow.wait_condition(lambda: self._<signal>_received)`. When the
+    design declares a timer that pairs with the signal (the step's explicit `timer` ref, or the
+    unique timer sharing a meaningful name token — `carrier.picked_up` ↔ `CarrierPickupTimeout`),
+    the wait is **bounded**: `wait_condition(..., timeout=<TIMER_CONST>)`, so a signal that never
+    arrives raises `TimeoutError` and fires the saga compensations instead of blocking forever.
+    Only a gate with no pairable timer stays unbounded, marked with an explicit TODO.
   - **timer** → `await workflow.sleep(<TIMER_CONST>)` using the declared duration.
   - **parallel** → concurrent calls via `asyncio.gather(...)` (the workflow template only imports
     `asyncio` when a parallel step is actually present). Each lane's result is **captured
     positionally** from the gather so a later step can bind to it (no discarded results → no
     `NameError`).
   - **branch** → a real `if/else`. When the design bound the branch to a data dependency it
-    branches on that expression (`if bool(<expr>):`); otherwise it emits an explicit placeholder
-    flag (`should_<predicate> = False  # TODO`) and branches on it — **never** a silent `if True`
-    that would always take one lane.
+    branches on that expression (`if bool(<expr>):`). When the predicate is a simple comparison
+    whose identifier resolves to a known step result or workflow input
+    (`eligibility == 'eligible'`), the **real condition is emitted as code**
+    (`should_x = eligibility == 'eligible'`). Only when neither resolves does it emit an explicit
+    placeholder flag (`should_<predicate> = True  # TODO`) — named and commented, never a silent
+    literal `if True` — defaulting to the main (then) path so the stub bundle runs out of the box.
   - **Saga compensation** — every activity that has a registered compensation appends
     `(comp_fn, comp_input)` to a `compensations` list — including activities **inside a parallel
     group** (registered after the gather succeeds). The compensation input is built from the
@@ -531,8 +542,10 @@ MockProvider (llm/providers/mock.py) — returns queued/canned responses (no net
 
 ### 7.2 Prompts — markdown templates, not hardcoded strings
 
-`prompts/templates/*.md` hold every prompt (`discover_workflow`, `extract_facts`, `build_graph`,
-`classify_cvpa`, `design_temporal`, `render_mermaid`). Each file has YAML front-matter declaring its
+`prompts/templates/*.md` hold every prompt (`discover_workflow`, `discover_workflows`,
+`extract_facts`, `classify_cvpa`, `design_temporal`, plus the review/validator pass prompts). Only
+LLM stages have templates — graph building, Mermaid rendering, and code generation are
+deterministic and prompt-less. Each file has YAML front-matter declaring its
 `variables`. `PromptManager.render("classify_cvpa", workflow_graph=...)` loads (and caches) the
 template and substitutes variables (`prompts/loader.py`, `renderer.py`, `manager.py`). Editing a
 prompt requires no code change.

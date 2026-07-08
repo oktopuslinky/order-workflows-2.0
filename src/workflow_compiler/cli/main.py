@@ -323,14 +323,21 @@ def _write_diagram(state: object, out: Path | None) -> None:
     console.print(f"[green]Mermaid diagram written to[/] {out}")
 
 
-def _write_code(state: object, out_dir: Path | None) -> None:
-    """Write the generated Temporal code bundle into ``out_dir`` if present."""
+def _write_code(
+    state: object, out_dir: Path | None, *, package_dir_name: str | None = None
+) -> None:
+    """Write the generated Temporal code bundle into ``out_dir`` if present.
+
+    ``package_dir_name`` overrides the design's LLM-chosen package name as the
+    directory — project mode passes the deterministic workflow slug so two
+    workflows whose designs picked the same name can never overwrite each other.
+    """
     from workflow_compiler.models import WorkflowState
 
     assert isinstance(state, WorkflowState)
     if out_dir is None or state.temporal_code is None:
         return
-    package_dir = out_dir / state.temporal_code.package_name
+    package_dir = out_dir / (package_dir_name or state.temporal_code.package_name)
     for generated in state.temporal_code.files:
         path = package_dir / generated.path
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -667,7 +674,13 @@ async def _run_approve_spec(
 
 
 async def _write_project_code(compiler: object, project: object, out_dir: Path | None) -> None:
-    """Write each completed workflow's Temporal code bundle under ``out_dir``."""
+    """Write each workflow's code bundle + Mermaid diagram under ``out_dir/<slug>/``.
+
+    The directory is keyed by the deterministic workflow *slug* (never the
+    design's LLM-chosen package name), so two workflows can never overwrite each
+    other. The diagram is written even when the workflow did not complete —
+    seeing the flow is exactly what the user needs to fix a pending graph.
+    """
     from workflow_compiler.models import CompilationProject, CompilationStage
     from workflow_compiler.project_compiler import ProjectCompiler
 
@@ -677,8 +690,13 @@ async def _write_project_code(compiler: object, project: object, out_dir: Path |
         return
     for slug, workflow_id in project.workflow_ids.items():
         state = await compiler.workflow_compiler.load_state(workflow_id)
+        package_dir_name = slug.replace("-", "_")
+        workflow_dir = out_dir / package_dir_name
+        if state.mermaid_diagram is not None:
+            workflow_dir.mkdir(parents=True, exist_ok=True)
+            _write_diagram(state, workflow_dir / "diagram.mmd")
         if state.stage is CompilationStage.COMPLETED:
-            _write_code(state, out_dir)
+            _write_code(state, out_dir, package_dir_name=package_dir_name)
         else:
             console.print(f"  [yellow]{slug}[/]: not completed, no code written")
 

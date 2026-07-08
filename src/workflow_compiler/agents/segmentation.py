@@ -160,6 +160,44 @@ def _find_anchor(document: str, needle: str) -> int:
     return idx
 
 
+_LINE_NUMBERING = re.compile(r"^\s*(?:\d+[.)]\s*)+")
+#: A heading rendered as a plain line is short; longer lines are prose.
+_MAX_HEADING_LINE_CHARS = 100
+
+
+def _sections_from_title_lines(text: str, titles: list[str]) -> list[_Section]:
+    """Format-agnostic fallback: section boundaries from title-matching lines.
+
+    Parsed ``.docx``/``.pdf`` (and legacy flattened Markdown) lose their ``#``
+    heading markers, so :func:`_split_sections` sees no structure. But headings
+    survive as short standalone *lines* in every parser's plain text — so any
+    line that normalizes to one of the LLM-claimed ``section_titles`` is a
+    section boundary. Matching is exact (after stripping ``#`` markers and
+    ``1.``/``1)`` numbering prefixes) to avoid prose lines that merely mention
+    a title.
+    """
+    wanted = {_title_key(t) for t in titles if _title_key(t)}
+    if not wanted:
+        return []
+    boundaries: list[tuple[int, str]] = []
+    offset = 0
+    for line in text.split("\n"):
+        stripped = line.strip().lstrip("#").strip()
+        stripped = _LINE_NUMBERING.sub("", stripped)
+        if 0 < len(stripped) <= _MAX_HEADING_LINE_CHARS and _title_key(stripped) in wanted:
+            boundaries.append((offset, stripped))
+        offset += len(line) + 1
+    if not boundaries:
+        return []
+    sections: list[_Section] = []
+    if boundaries[0][0] > 0:
+        sections.append(_Section(title="", start=0, end=boundaries[0][0]))
+    for i, (start, title) in enumerate(boundaries):
+        end = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
+        sections.append(_Section(title=title, start=start, end=end))
+    return sections
+
+
 # --------------------------------------------------------------------------- #
 # Deterministic patch applier for the segmentation review passes
 # --------------------------------------------------------------------------- #
@@ -385,6 +423,11 @@ class WorkflowSegmentationAgent:
 
         warnings: list[str] = []
         sections = _split_sections(document_text)
+        # Format-agnostic backup boundaries: the union of every workflow's
+        # claimed section titles matched against whole lines. This is what
+        # slices parsed .docx/.pdf text, where no ``#`` markers ever existed.
+        all_titles = [t for w in workflows for t in w.section_titles]
+        title_sections = _sections_from_title_lines(document_text, all_titles)
         segments: list[WorkflowSegment] = []
         used_slugs: set[str] = set()
 
@@ -395,9 +438,11 @@ class WorkflowSegmentationAgent:
             used_slugs.add(slug)
 
             if len(workflows) == 1:
-                text = document_text
+                text, sliced = document_text, True
             else:
-                text = self._segment_text(workflow, sections, document_text, warnings)
+                text, sliced = self._segment_text(
+                    workflow, sections, title_sections, document_text, warnings
+                )
 
             segments.append(
                 WorkflowSegment(
@@ -407,8 +452,21 @@ class WorkflowSegmentationAgent:
                     purpose=_norm(workflow.purpose) or None,
                     section_titles=[_norm(t) for t in workflow.section_titles if _norm(t)],
                     text=text,
+                    sliced=sliced,
                 )
             )
+
+        if len(segments) > 1:
+            by_text: dict[str, list[str]] = {}
+            for segment in segments:
+                by_text.setdefault(segment.text.strip(), []).append(segment.slug)
+            for slugs in by_text.values():
+                if len(slugs) > 1:
+                    warnings.append(
+                        f"Segments {slugs} have identical text — slicing failed to "
+                        "separate these workflows and their specs will describe the "
+                        "same (merged) content."
+                    )
 
         slug_by_name = {_norm(s.name).lower(): s.slug for s in segments}
         cross_references: list[CrossReference] = []
@@ -443,18 +501,30 @@ class WorkflowSegmentationAgent:
     def _segment_text(
         workflow: DiscoveredWorkflow,
         sections: list[_Section],
+        title_sections: list[_Section],
         document_text: str,
         warnings: list[str],
-    ) -> str:
-        """Assemble one workflow's text from matched sections or excerpt anchors."""
+    ) -> tuple[str, bool]:
+        """Assemble one workflow's text; returns ``(text, sliced)``.
+
+        Tries, in order: heading-delimited sections (``#`` markers), title-line
+        sections (format-agnostic), excerpt anchors — and only then falls back
+        to the full document, marking the segment as *not sliced* so the
+        approval gate can refuse to compile contaminated content silently.
+        """
         wanted = [_title_key(t) for t in workflow.section_titles if _title_key(t)]
-        matched = [
-            s
-            for s in sections
-            if s.title and any(_titles_match(_title_key(s.title), w) for w in wanted)
-        ]
-        if matched:
-            return "\n".join(document_text[s.start : s.end].rstrip() for s in matched) + "\n"
+        for candidates in (sections, title_sections):
+            matched = [
+                s
+                for s in candidates
+                if s.title and any(_titles_match(_title_key(s.title), w) for w in wanted)
+            ]
+            if matched:
+                return (
+                    "\n".join(document_text[s.start : s.end].rstrip() for s in matched)
+                    + "\n",
+                    True,
+                )
 
         start = _find_anchor(document_text, workflow.excerpt_start)
         end = _find_anchor(document_text, workflow.excerpt_end)
@@ -462,10 +532,11 @@ class WorkflowSegmentationAgent:
             line_start = document_text.rfind("\n", 0, start) + 1
             line_end = document_text.find("\n", end)
             line_end = len(document_text) if line_end == -1 else line_end
-            return document_text[line_start:line_end] + "\n"
+            return document_text[line_start:line_end] + "\n", True
 
         warnings.append(
             f"Could not locate document sections for workflow '{workflow.name}' — "
-            "using the full document as its segment."
+            "using the full document as its segment. Its spec will contain the "
+            "other workflows' content; fix the section titles before approving."
         )
-        return document_text
+        return document_text, False

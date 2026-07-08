@@ -44,6 +44,7 @@ from workflow_compiler.models import (
     TemporalCompensationDesign,
     TemporalParam,
     TemporalStep,
+    TemporalTimerDesign,
     TemporalWorkflowDesign,
     WorkflowGraph,
 )
@@ -647,16 +648,73 @@ class _RunBodyEmitter:
         if signal:
             attr = f"_{_snake(signal.name)}_received"
             lines.append(f'{pad}workflow.logger.info("Waiting for signal: {signal.name}")')
-            lines.append(
-                f"{pad}# TODO: pass timeout= to wait_condition so a signal that never"
-                f" arrives can't block the workflow forever."
-            )
-            lines.append(f"{pad}await workflow.wait_condition(lambda: self.{attr})")
+            timer = self._gate_timer(step, signal.name)
+            if timer is not None:
+                const = _snake(timer.name).upper()
+                lines.append(
+                    f"{pad}# Bounded wait: raises TimeoutError after {timer.name}, which"
+                )
+                lines.append(
+                    f"{pad}# fires the saga compensations below instead of blocking forever."
+                )
+                lines.append(
+                    f"{pad}await workflow.wait_condition("
+                    f"lambda: self.{attr}, timeout={const})"
+                )
+            else:
+                lines.append(
+                    f"{pad}# TODO: pass timeout= to wait_condition so a signal that never"
+                    f" arrives can't block the workflow forever."
+                )
+                lines.append(f"{pad}await workflow.wait_condition(lambda: self.{attr})")
         else:
             lines.append(
                 f"{pad}await workflow.wait_condition(lambda: True)  # TODO: real condition"
             )
         return lines
+
+    #: Tokens too generic to pair a timer with a signal by themselves.
+    _GENERIC_TIMER_TOKENS = frozenset(
+        {"timeout", "timer", "deadline", "sla", "wait", "confirmation", "signal"}
+    )
+
+    def _gate_timer(
+        self, step: TemporalStep, signal_name: str
+    ) -> TemporalTimerDesign | None:
+        """The declared timer bounding this signal gate, if one can be paired.
+
+        Documents that follow the format guide pair every human/external wait
+        with a deadline ("shipping confirmation must arrive within 24 hours"),
+        which the design records as a timer. Pairing order: the step's explicit
+        ``timer`` ref, then the unique timer sharing a meaningful name token
+        with the signal (``carrier.picked_up`` ↔ ``CarrierPickupTimeout``).
+        An ambiguous match (two timers tie) binds nothing.
+        """
+        if step.timer:
+            explicit = self._timers.get(_snake(step.timer))
+            if explicit is not None:
+                return explicit
+        signal_tokens = self._name_tokens(signal_name) - self._GENERIC_TIMER_TOKENS
+        if not signal_tokens:
+            return None
+        scored = []
+        for timer in self._design.timers:
+            timer_tokens = (
+                self._name_tokens(timer.name) | self._name_tokens(timer.description or "")
+            ) - self._GENERIC_TIMER_TOKENS
+            overlap = len(signal_tokens & timer_tokens)
+            if overlap:
+                scored.append((overlap, timer))
+        if not scored:
+            return None
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        if len(scored) > 1 and scored[0][0] == scored[1][0]:
+            return None  # ambiguous — leave the wait unbounded rather than guess
+        return scored[0][1]
+
+    @staticmethod
+    def _name_tokens(name: str) -> set[str]:
+        return {t for t in re.findall(r"[a-z0-9]+", _snake(name)) if len(t) > 2}
 
     def _emit_timer(self, step: TemporalStep, *, depth: int) -> list[str]:
         pad = _INDENT * depth
@@ -751,11 +809,20 @@ class _RunBodyEmitter:
         predicate = step.predicate or "condition"
         lines: list[str] = []
         bound = self._branch_bound_expr(step)
+        resolved = self._predicate_expr(step)
         if bound is not None:
             # The design tied this branch to a real data dependency (e.g. an
             # earlier activity's result) — branch on it directly.
             condition = bound
             lines.append(f"{pad}if {condition}:  # branch: {predicate}")
+        elif resolved is not None:
+            # The predicate is a simple comparison whose identifier resolves to
+            # a known step result / workflow input — emit the real condition.
+            # (With the placeholder activity stubs this may take the else path;
+            # implementing the activity makes it real.)
+            flag = f"should_{_snake(predicate)}"
+            lines.append(f"{pad}{flag} = {resolved}  # branch condition: {predicate}")
+            lines.append(f"{pad}if {flag}:")
         else:
             # No grounded condition — emit an explicit, named placeholder flag the
             # implementer must set. It defaults to ``True`` so the bundle runs the
@@ -776,6 +843,34 @@ class _RunBodyEmitter:
             expr = self._binding_expr(binding)
             if expr is not None:
                 return f"bool({expr})"
+        return None
+
+    #: ``<identifier> ==|!= <literal>`` — the only predicate shape emitted as code.
+    _SIMPLE_PREDICATE = re.compile(
+        r"^\s*(\w+)\s*(==|!=)\s*('[^']*'|\"[^\"]*\"|\d+(?:\.\d+)?|True|False|None)\s*$"
+    )
+
+    def _predicate_expr(self, step: TemporalStep) -> str | None:
+        """Render the branch predicate as code when it resolves to known data.
+
+        Only the conservative ``<ident> ==/!= <literal>`` shape is emitted, and
+        only when the identifier is a step result variable or a workflow input
+        field — anything else stays a TODO placeholder rather than guessing.
+        """
+        if not step.predicate:
+            return None
+        match = self._SIMPLE_PREDICATE.match(step.predicate)
+        if match is None:
+            return None
+        ident, op, literal = match.group(1), match.group(2), match.group(3)
+        snake = _snake(ident)
+        if snake in self._result_vars.values() or snake in self._result_by_ref.values():
+            return f"{snake} {op} {literal}"
+        var = self._result_by_ref.get(snake) or self._result_by_ref.get(_squash(ident))
+        if var is not None:
+            return f"{var} {op} {literal}"
+        if any(_snake(p.name) == snake for p in self._design.workflow_inputs):
+            return f"arg.{snake} {op} {literal}"
         return None
 
     # -- helpers ------------------------------------------------------------

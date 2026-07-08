@@ -14,7 +14,7 @@ or inferred with lower confidence.
 
 | Document section | Feeds |
 |---|---|
-| Header block (name, domain, owner, tags) | `extract_metadata` |
+| Header block (name, domain, owner, tags) | `discover_workflow` → metadata |
 | Purpose | `discover_workflow` → `purpose` |
 | Trigger | `discover_workflow` → `trigger_events` |
 | Actors | `discover_workflow` → `actors` |
@@ -73,7 +73,8 @@ The document title is the workflow name. Make it concise and action-oriented.
 
 ### `## Metadata` [required]
 
-A small table of administrative facts. The `extract_metadata` agent reads these directly.
+A small table of administrative facts. The `discover_workflow` agent reads these into the
+workflow metadata.
 Always include **Domain** and **Owner**; add **Version** and **Tags** when relevant.
 
 ```markdown

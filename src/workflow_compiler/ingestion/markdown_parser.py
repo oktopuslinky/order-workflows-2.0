@@ -25,8 +25,16 @@ _FENCE = re.compile(r"^\s*(```|~~~)")
 _IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 _INLINE_CODE = re.compile(r"`([^`]+)`")
-_BOLD = re.compile(r"(\*\*|__)(.+?)\1")
-_ITALIC = re.compile(r"(\*|_)(.+?)\1")
+# Emphasis delimiters must sit on word boundaries: a ``_`` *inside* an
+# identifier (``order_id``) is not markdown emphasis. The old
+# ``(\*|_)(.+?)\1`` pattern paired mid-word underscores across a sentence and
+# fused snake_case identifiers (``order_id and reservation_id`` →
+# ``orderid and reservationid``), corrupting the exact field names the
+# pipeline binds workflow inputs/outputs by.
+_BOLD_STARS = re.compile(r"\*\*(?!\s)(.+?)(?<!\s)\*\*")
+_BOLD_UNDERSCORES = re.compile(r"(?<!\w)__(?!\s)(.+?)(?<!\s)__(?!\w)")
+_ITALIC_STAR = re.compile(r"(?<!\*)\*(?![\s*])(.+?)(?<![\s*])\*(?!\*)")
+_ITALIC_UNDERSCORE = re.compile(r"(?<!\w)_(?![\s_])([^_]*?)(?<![\s_])_(?!\w)")
 
 
 def _strip_inline(value: str) -> str:
@@ -34,8 +42,10 @@ def _strip_inline(value: str) -> str:
     value = _IMAGE.sub(r"\1", value)
     value = _LINK.sub(r"\1", value)
     value = _INLINE_CODE.sub(r"\1", value)
-    value = _BOLD.sub(r"\2", value)
-    value = _ITALIC.sub(r"\2", value)
+    value = _BOLD_STARS.sub(r"\1", value)
+    value = _BOLD_UNDERSCORES.sub(r"\1", value)
+    value = _ITALIC_STAR.sub(r"\1", value)
+    value = _ITALIC_UNDERSCORE.sub(r"\1", value)
     return value.strip()
 
 
@@ -115,7 +125,10 @@ class MarkdownParser(BaseDocumentParser):
                 )
                 if level == 1 and title is None:
                     title = heading_text
-                plain_lines.append(heading_text)
+                # Keep the ``#`` markers in the plain text: heading structure is
+                # what multi-workflow segmentation slices the document by, and
+                # readers (LLM prompts included) benefit from the hierarchy.
+                plain_lines.append(f"{heading.group(1)} {heading_text}")
                 continue
 
             list_item = _LIST_ITEM.match(raw_line)

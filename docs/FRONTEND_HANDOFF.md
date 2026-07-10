@@ -27,22 +27,31 @@ Authoritative references in this repo: `README.md` (commands + API), `docs/HOW_I
 (design), `docs/architecture.md` (diagrams), `src/workflow_compiler/api/app.py` (endpoints),
 `src/workflow_compiler/spec/renderer.py` (spec line grammar, docstring is normative).
 
-## 2. Verified behavior (live Nemotron runs on the two ideal docs)
+## 2. Verified behavior (live Nemotron runs on the two ideal docs, 2026-07-10)
 
 Both `examples/ideal_temporal_workflow.md` (1 workflow) and `examples/ideal_multi_workflow.md`
-(3 workflows + cross-dependencies) were run end-to-end with the real LLM, including the user
-edit ⇄ validate loop. Results after this session's fixes:
+(3 workflows + cross-dependencies) were run end-to-end with the real LLM **twice** — once to
+diagnose, once after the fixes (commits `c896bfa` and `f4b002b`) — including the full user
+edit ⇄ validate loop. Final state:
 
-- Segmentation found exactly the right workflows and **all 3 cross-workflow dependencies**.
+- Segmentation found exactly the right workflows, **all 3 cross-workflow dependencies**, and
+  (post-fix) exactly **one merged trigger scaffold per workflow pair**.
 - The edit ⇄ validate loop works: user edits (fixing decision branches, removing wrong entities,
-  answering open questions, confirming dependency checkboxes, deduping triggers) all folded back
-  in deterministically and survived validation.
-- All generated bundles **execute** under Temporal's time-skipping test environment
-  (`test_stepthrough.py` passes for all 4 workflows).
-- Generated code correctly contains: bounded `wait_condition` + signal handler (signal waits),
-  `asyncio.gather` (parallel groups), reversed saga compensations, per-activity retry policies
-  and SLA timeouts from the document, data threading between steps, `triggers.py` (cross-workflow
-  starts on the target's task queue with idempotent ids), project `contracts.py` + `README.md`.
+  answering open questions, confirming dependency/trigger checkboxes, re-adding an element the
+  validator wrongly removed) all folded back in deterministically and survived validation.
+- All four generated bundles **execute end-to-end** under Temporal's time-skipping test
+  environment: `python -m pytest test_stepthrough.py` passes in every bundle — the happy path
+  completes with signal gates auto-released by the harness. (Run the harness with **pytest**;
+  invoking it with plain `python` is a silent no-op.)
+- **Rejection paths terminate**: a decision's `no:` branch generates
+  `raise ApplicationError(type=<ExceptionName>, non_retryable=True)`, which fires the reversed
+  saga compensations and fails the run — a rejected order can no longer report success.
+- Generated code correctly contains: real branch conditions bound to step results
+  (`eligibility == 'eligible'`, `bool(is_settleable)`), bounded `wait_condition` + signal handler
+  (signal waits), `asyncio.gather` (parallel groups), reversed saga compensations, per-activity
+  retry policies and SLA timeouts from the document, data threading between steps, `triggers.py`
+  (cross-workflow starts on the target's task queue with idempotent ids), project `contracts.py`
+  + `README.md`.
 
 ## 3. What the user actually has to fix in the loop (design the UI around this)
 
@@ -50,13 +59,19 @@ The LLM extraction is good but not perfect. Observed misses the user corrected v
 the editor should make these easy to spot:
 
 - **Decisions missing their `no:` branch** (the readiness gate catches this and asks an Open
-  Question — surface open questions prominently with answer inputs).
+  Question — surface open questions prominently with answer inputs). Note the stakes: the `no:`
+  target is what generates the rejection `raise` in code, so this edit matters most.
 - **Missing `raised by:` on exceptions**, **missing `parallel: g` on one member of a pair**.
 - **A compensation duplicated as an activity** (user deletes the activity line).
 - **Outputs duplicated as events** (user deletes the event line).
-- **Scaffolded triggers duplicated or spurious** (two entries for the same target — one with the
-  condition, one with the inputs — that the user merges; and a semantically wrong trigger, e.g.
-  auto-firing a *customer-initiated* return, that the user deletes).
+- **Semantically wrong scaffolded triggers** the user deletes (e.g. auto-firing a
+  *customer-initiated* return workflow). Duplicate half-entries are fixed — the scaffolder now
+  merges condition + input rows into one entry per pair — but whether a trigger *should exist*
+  remains a human call; render triggers as editable cards.
+- **Elements the validator wrongly removed** (see R8): the validate pass occasionally deletes a
+  correct, document-grounded element. Removals now appear as findings, and removals that would
+  orphan references are blocked — but the UI should show removals prominently (a diff view of
+  the spec before/after validate) so the user can re-add with one click. A re-added line sticks.
 - **`domain:` / `owner:` / `tags:` metadata not extracted** from doc metadata tables (blank).
 
 ## 4. The spec markdown grammar (the editor's contract)
@@ -124,6 +139,14 @@ the frontend can render/zip client-side.
    `ProgressEvent`s (`compiler.py: ProgressCallback`) — segmentation 90–130s, per-workflow fact
    extraction 80–180s, validate 10–60s, approve (CVPA+design) 60–120s per workflow. Without
    progress streaming the UI will sit on multi-minute spinners.
+7. **Request-duration plumbing**: `/projects/compile` and `/projects/{id}/approve` can run for
+   several minutes. If the Next.js app proxies API calls through its own routes, default
+   serverless/route timeouts will kill them — call the FastAPI origin directly from the browser
+   (hence CORS in item 1) or move long operations to a background-job + polling pattern.
+8. **No auth / single-user today**: the API has no authentication, no user scoping, and a
+   process-wide `lru_cache` compiler singleton. Fine for a local/internal tool; anything
+   client-facing needs at least a reverse-proxy auth layer, and concurrent LLM runs from several
+   users will contend on the free Nemotron tier.
 
 ## 7. Decisions already made (do not re-litigate)
 
@@ -184,9 +207,11 @@ Remaining (the UI should tolerate/flag these):
    dependency confirmation status); center = markdown editor ⇄ preview; right = findings panel
    (BLOCK red / WARN yellow / INFO dim, clickable → scroll to section) + open questions + diagram.
 3. Actions: **Save** (PUT spec — instant, no LLM), **Validate** (POST validate — shows new
-   findings, editor reloads the re-rendered markdown), **Approve** (guarded by: blocking findings
-   = 0, deps confirmed; else needs explicit override toggles matching `accept_incomplete` /
-   `allow_unconfirmed_references`).
+   findings, editor reloads the re-rendered markdown), **Approve** (guarded by: a validate has
+   run on the *current* editor content — see the §8 flow rule — blocking findings = 0, deps
+   confirmed; else needs explicit override toggles matching `accept_incomplete` /
+   `allow_unconfirmed_references`). Consider a combined "Validate & Approve" button that chains
+   the two calls when validate comes back clean.
 4. **Results view**: per-workflow file tree with code viewer (files from `temporal_code.files`),
    mermaid diagram, review report/health, CVPA table; download-zip. Pending (below-threshold)
    workflows get an approve/reject override card showing the review issues.
@@ -197,9 +222,17 @@ Remaining (the UI should tolerate/flag these):
 - Run backend: `uvicorn workflow_compiler.api.app:app --reload` (needs `.env` with
   `NVIDIA_API_KEY`, or `WORKFLOW_COMPILER_LLM_PROVIDER=mock` for offline demo — the mock answers
   every stage with a scripted demo workflow, ideal for frontend development).
-- Tests: `pytest` (286 passing, fully offline), `ruff check src tests`. mypy has ~35 pre-existing
+- Tests: `pytest` (295 passing, fully offline), `ruff check src tests`. mypy has ~35 pre-existing
   errors (not clean at HEAD either).
+- Generated bundles' `test_stepthrough.py` must be run with **pytest** from inside the bundle
+  directory (`python -m pytest test_stepthrough.py`); plain `python test_stepthrough.py` defines
+  the test and exits 0 without running anything.
 - Windows console needs `PYTHONUTF8=1` for CLI output (irrelevant to the API).
-- Real-run artifacts from this verification live in `specs-ideal-single-2/`,
-  `specs-ideal-multi-run/`, `generated-ideal-single-2/`, `generated-ideal-multi-run/` — use them
-  as realistic fixtures for UI development.
+- Relevant commits: `df0d6a5` (pipeline consolidation), `c896bfa` (first five verified fixes +
+  this handoff), `f4b002b` (rejection paths, predicate contract, trigger dedup, validator guard,
+  runnable-by-default scaffolds).
+- Real-run artifacts, **newest first** (best UI fixtures): `specs-r1-single/`, `specs-r1-multi/`,
+  `generated-r1-single/`, `generated-r1-multi/` (post-fix: raises in rejection lanes, real
+  predicates, merged triggers, harness auto-signals). Older pre-fix runs for comparison:
+  `specs-ideal-single-2/`, `specs-ideal-multi-run/`, `generated-ideal-single-2/`,
+  `generated-ideal-multi-run/`.

@@ -189,7 +189,7 @@ def test_activity_stub_returns_placeholder_not_raises() -> None:
     acts = next(f.content for f in to_temporal_python(design).files if f.path == "activities.py")
     ast.parse(acts)
     assert "raise NotImplementedError" not in acts
-    assert 'return ""' in acts
+    assert 'return "stub-result"' in acts  # truthy: default run stays on the happy path
 
 
 def test_rollback_loop_carries_retry_policy() -> None:
@@ -325,6 +325,36 @@ def test_bare_identifier_predicate_resolves_to_step_result() -> None:
     src = _workflow_src(design)
     assert "= bool(is_settleable)  # branch condition: is_settleable" in src
     assert "= True  # TODO: set from a real condition" not in src
+
+
+def test_raise_step_terminates_with_application_error() -> None:
+    """A RAISE step emits ApplicationError (and its import) in the else lane."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Settle",
+        activities=[
+            TemporalActivityDesign(name="ValidateOrder"),
+            TemporalActivityDesign(name="ReserveInventory"),
+        ],
+        plan=[
+            TemporalStep(
+                id="v", kind=StepKind.ACTIVITY, ref="ValidateOrder",
+                result_name="is_settleable",
+            ),
+            TemporalStep(
+                id="b",
+                kind=StepKind.BRANCH,
+                predicate="is_settleable",
+                lanes=[
+                    [TemporalStep(id="r", kind=StepKind.ACTIVITY, ref="ReserveInventory")],
+                    [TemporalStep(id="rej", kind=StepKind.RAISE, ref="OrderNotSettleable")],
+                ],
+            ),
+        ],
+    )
+    src = _workflow_src(design)
+    assert "from temporalio.exceptions import ApplicationError" in src
+    assert "raise ApplicationError(" in src
+    assert "type='OrderNotSettleable', non_retryable=True" in src
 
 
 def test_unbound_step_inputs_fall_back_to_matching_workflow_inputs() -> None:
@@ -523,3 +553,33 @@ def test_custom_generator_is_used() -> None:
     sentinel = TemporalPythonCodeGenerator()
     agent = TemporalCodeGeneratorAgent(generator=sentinel)
     assert agent._generator is sentinel
+
+
+def test_stub_returns_literal_that_satisfies_branch_predicate() -> None:
+    """`result == 'literal'` predicates get a stub that takes the happy path."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Checkout",
+        activities=[
+            TemporalActivityDesign(name="ValidateCart"),
+            TemporalActivityDesign(name="CreateOrder"),
+        ],
+        plan=[
+            TemporalStep(
+                id="v", kind=StepKind.ACTIVITY, ref="ValidateCart",
+                result_name="eligibility",
+            ),
+            TemporalStep(
+                id="b", kind=StepKind.BRANCH, predicate="eligibility == 'eligible'",
+                lanes=[
+                    [TemporalStep(id="c", kind=StepKind.ACTIVITY, ref="CreateOrder")],
+                    [],
+                ],
+            ),
+        ],
+    )
+    acts = next(
+        f.content for f in to_temporal_python(design).files if f.path == "activities.py"
+    )
+    ast.parse(acts)
+    assert "return 'eligible'" in acts       # ValidateCart stub satisfies the branch
+    assert 'return "stub-result"' in acts    # CreateOrder keeps the generic stub

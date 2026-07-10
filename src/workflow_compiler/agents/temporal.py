@@ -37,6 +37,7 @@ from workflow_compiler.models import (
     TriggerMode,
     WorkflowGraph,
     WorkflowState,
+    WorkflowStructure,
     WorkflowTrigger,
     pair_gate_timer,
 )
@@ -327,7 +328,119 @@ class TemporalGeneratorAgent(BaseAgent):
         )
         if state.workflow_graph is not None:
             design = self._prune_ungrounded_signal_gates(design, state.workflow_graph)
+        design = self._prune_misplaced_raises(design)
+        structure = (
+            state.workflow_facts.structure if state.workflow_facts is not None else None
+        )
+        if structure is not None:
+            design = self._terminate_rejection_lanes(design, structure)
         return design
+
+    @staticmethod
+    def _prune_misplaced_raises(design: TemporalWorkflowDesign) -> TemporalWorkflowDesign:
+        """Drop RAISE steps anywhere except a branch's else-lane.
+
+        A raise on the unconditional path (or in a then-lane, which the prompt
+        defines as the success path) would fail **every** run — the LLM
+        sometimes appends its rejection raises after the branch instead of
+        inside the else-lane. Only the else-lane position is meaningful; the
+        deterministic rejection-lane pass re-injects a raise there when the
+        spec calls for one.
+        """
+        dropped = False
+
+        def prune(steps: list[TemporalStep], *, allow_raise: bool) -> list[TemporalStep]:
+            nonlocal dropped
+            kept: list[TemporalStep] = []
+            for step in steps:
+                if step.lanes:
+                    if step.kind is StepKind.BRANCH:
+                        lanes = [
+                            prune(lane, allow_raise=(index == 1))
+                            for index, lane in enumerate(step.lanes)
+                        ]
+                    else:
+                        lanes = [prune(lane, allow_raise=False) for lane in step.lanes]
+                    step = step.model_copy(update={"lanes": lanes})
+                if step.kind is StepKind.RAISE and not allow_raise:
+                    dropped = True
+                    continue
+                kept.append(step)
+            return kept
+
+        new_plan = prune(design.plan, allow_raise=False)
+        return design.model_copy(update={"plan": new_plan}) if dropped else design
+
+    # -- deterministic rejection-lane termination -----------------------------
+
+    @staticmethod
+    def _terminate_rejection_lanes(
+        design: TemporalWorkflowDesign, structure: WorkflowStructure
+    ) -> TemporalWorkflowDesign:
+        """Fill a branch's empty else-lane with a RAISE when the spec rejects.
+
+        The design LLM frequently leaves a decision's "no" lane empty, so the
+        generated code falls through and reports a rejected run as completed.
+        The approved spec knows better: a decision whose ``no_target`` is an
+        exception terminates the workflow. This pass folds that in
+        deterministically, under a conservative match so it can never fire on a
+        legitimately-optional branch:
+
+        - the BRANCH step must immediately follow an ACTIVITY step in the same
+          lane, and that activity must be the decision's ``after`` anchor
+          (matched by squashed name);
+        - the decision's ``no_target`` must resolve to a declared exception;
+        - the branch's then-lane must be non-empty and its else-lane empty.
+
+        Anything else (negatively-phrased branches, optional blocks, unmatched
+        anchors) is left untouched.
+        """
+        activity_name_by_id = {a.id: _squash_name(a.name) for a in structure.activities}
+        exception_by_id = {x.id: x for x in structure.exceptions}
+        decision_by_anchor: dict[str, str] = {}
+        for d in structure.decisions:
+            exc = exception_by_id.get(d.no_target or "")
+            anchor = activity_name_by_id.get(d.after or "")
+            if exc is not None and anchor:
+                decision_by_anchor[anchor] = exc.reason
+
+        if not decision_by_anchor:
+            return design
+
+        def rewrite(steps: list[TemporalStep]) -> list[TemporalStep]:
+            out: list[TemporalStep] = []
+            previous_activity_ref: str | None = None
+            for step in steps:
+                if step.lanes:
+                    step = step.model_copy(
+                        update={"lanes": [rewrite(lane) for lane in step.lanes]}
+                    )
+                if (
+                    step.kind is StepKind.BRANCH
+                    and previous_activity_ref is not None
+                    and previous_activity_ref in decision_by_anchor
+                    and len(step.lanes) >= 1
+                    and step.lanes[0]
+                    and (len(step.lanes) < 2 or not step.lanes[1])
+                ):
+                    reason = decision_by_anchor[previous_activity_ref]
+                    raise_step = TemporalStep(
+                        id=f"raise_{_squash_name(reason) or 'rejected'}",
+                        kind=StepKind.RAISE,
+                        ref=reason,
+                        description=f"Rejection path from the spec: raises {reason}.",
+                    )
+                    lanes = [step.lanes[0], [raise_step]]
+                    step = step.model_copy(update={"lanes": lanes})
+                previous_activity_ref = (
+                    _squash_name(step.ref)
+                    if step.kind is StepKind.ACTIVITY and step.ref
+                    else None
+                )
+                out.append(step)
+            return out
+
+        return design.model_copy(update={"plan": rewrite(design.plan)})
 
     # -- deterministic cross-workflow trigger injection ----------------------
 

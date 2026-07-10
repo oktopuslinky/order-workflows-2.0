@@ -60,6 +60,20 @@ PLAN (the ordered control-and-data flow; this is what becomes runnable code):
   - "parallel": set `lanes` (a list of step-lists) to run concurrently.
   - "branch": set `predicate` and `lanes` ([then_steps, else_steps]) for
     conditional paths (e.g. eligibility/payment rejection).
+    - The `predicate` MUST be either a bare `result_name` declared by an earlier
+      step (e.g. `is_settleable`) or `<result_name> == <literal>` — never an
+      attribute path (`x.status`), never free prose. If no step result carries
+      the decision's outcome, give the deciding activity a `result_name` first.
+    - Lane polarity is fixed: the FIRST lane (`then`) is always the
+      success/"yes" path; the SECOND lane (`else`) is the "no" path. Never
+      phrase a predicate negatively to put failure handling in the then-lane.
+  - "raise": terminate the workflow with a named error. Set `ref` to the
+    EXACT exception name from the EXCEPTION facts (e.g. `PaymentDeclined`).
+    Raising fires the registered compensations and fails the run.
+- Every decision whose "no" path leads to an exception in the graph MUST have
+  that branch's else-lane contain a "raise" step (optionally preceded by
+  cleanup activities the facts call for). A rejection must never fall through
+  to a normal completion.
 - Order steps by true data dependencies: a step that consumes another's output
   must come after it.
 

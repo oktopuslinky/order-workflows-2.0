@@ -132,13 +132,15 @@ def _default_for(type_str: str) -> str:
 def _return_placeholder(type_str: str) -> str:
     """A literal return value for an activity stub, so the bundle runs as-is.
 
-    ``bool`` defaults to ``True`` so any caller that gates on the result proceeds
-    down the main path; other types use a benign empty value.
+    Placeholders are **truthy** (``True``, ``1``, a non-empty string) so any
+    branch that gates on the result proceeds down the main (success) path out
+    of the box — a falsy placeholder would send the default run into the
+    rejection lane and fail it before the activity is even implemented.
     """
     return {
-        "str": '""',
-        "int": "0",
-        "float": "0.0",
+        "str": '"stub-result"',
+        "int": "1",
+        "float": "1.0",
         "bool": "True",
         "dict": "{}",
         "list": "[]",
@@ -278,6 +280,7 @@ class TemporalPythonCodeGenerator:
             "timers": timers,
             "run_body": body.text,
             "uses_asyncio": body.uses_asyncio,
+            "uses_application_error": body.uses_application_error,
             "activity_fn_names": [a.fn_name for a in activities],
             "child_class_names": [c.class_name for c in children],
             "triggers": triggers,
@@ -321,6 +324,7 @@ class TemporalPythonCodeGenerator:
 
     def _activities(self, design: TemporalWorkflowDesign) -> list[_Activity]:
         """Activity functions emitted into ``activities.py`` (incl. compensations)."""
+        overrides = self._stub_overrides(design)
         out: list[_Activity] = []
         for activity in design.activities:
             return_type = activity.result_type or "str"
@@ -331,7 +335,9 @@ class TemporalPythonCodeGenerator:
                     input_class=f"{_pascal(activity.name)}Input",
                     description=activity.description,
                     return_type=return_type,
-                    placeholder=_return_placeholder(return_type),
+                    placeholder=overrides.get(
+                        _squash(activity.name), _return_placeholder(return_type)
+                    ),
                 )
             )
         for comp in design.compensation_activities:
@@ -346,6 +352,42 @@ class TemporalPythonCodeGenerator:
                 )
             )
         return out
+
+    @staticmethod
+    def _stub_overrides(design: TemporalWorkflowDesign) -> dict[str, str]:
+        """Stub return literals that satisfy the plan's happy-path predicates.
+
+        When a branch predicate is ``<result> == <literal>`` a generic truthy
+        placeholder can never satisfy it, so the scaffold's default run would
+        take the rejection lane and fail before any activity is implemented.
+        Give the producing activity's stub that literal instead — the happy
+        path runs out of the box. Keyed by squashed activity name.
+        """
+        producer_by_result: dict[str, str] = {}
+
+        def index(steps: list[TemporalStep]) -> None:
+            for step in steps:
+                if step.kind is StepKind.ACTIVITY and step.ref and step.result_name:
+                    producer_by_result[_snake(step.result_name)] = _squash(step.ref)
+                for lane in step.lanes:
+                    index(lane)
+
+        index(design.plan)
+        overrides: dict[str, str] = {}
+
+        def scan(steps: list[TemporalStep]) -> None:
+            for step in steps:
+                if step.kind is StepKind.BRANCH and step.predicate:
+                    match = _RunBodyEmitter._SIMPLE_PREDICATE.match(step.predicate)
+                    if match is not None and match.group(2) == "==":
+                        producer = producer_by_result.get(_snake(match.group(1)))
+                        if producer:
+                            overrides[producer] = match.group(3)
+                for lane in step.lanes:
+                    scan(lane)
+
+        scan(design.plan)
+        return overrides
 
     @staticmethod
     def _children(design: TemporalWorkflowDesign) -> list[_Child]:
@@ -581,6 +623,7 @@ def _retry_expr(policy: RetryPolicyDesign | None) -> str | None:
 class _Body:
     text: str
     uses_asyncio: bool
+    uses_application_error: bool = False
 
 
 class _RunBodyEmitter:
@@ -618,6 +661,7 @@ class _RunBodyEmitter:
         # a binding that references a step by its *name* (not its step id) resolves.
         self._result_by_ref: dict[str, str] = {}
         self._uses_asyncio = False
+        self._uses_application_error = False
 
     def emit(self, plan: list[TemporalStep]) -> _Body:
         self._index_result_vars(plan)
@@ -648,7 +692,11 @@ class _RunBodyEmitter:
         lines.append("return self._status")
         # Re-indent the whole body to 8 spaces (inside the method).
         text = "\n".join((_INDENT * 2 + line) if line else line for line in lines)
-        return _Body(text=text, uses_asyncio=self._uses_asyncio)
+        return _Body(
+            text=text,
+            uses_asyncio=self._uses_asyncio,
+            uses_application_error=self._uses_application_error,
+        )
 
     # -- result variable indexing -------------------------------------------
 
@@ -701,7 +749,20 @@ class _RunBodyEmitter:
             return self._emit_branch(step, depth=depth)
         if step.kind is StepKind.TRIGGER:
             return self._emit_trigger(step, depth=depth)
+        if step.kind is StepKind.RAISE:
+            return self._emit_raise(step, depth=depth)
         return []
+
+    def _emit_raise(self, step: TemporalStep, *, depth: int) -> list[str]:
+        """Terminate the run with a named error (fires the saga compensations)."""
+        self._uses_application_error = True
+        pad = _INDENT * depth
+        error_type = _pascal(step.ref or "WorkflowRejected")
+        message = step.description or f"Workflow rejected: {error_type}"
+        return [
+            f'{pad}workflow.logger.info("Raising: {error_type}")',
+            f"{pad}raise ApplicationError({message!r}, type={error_type!r}, non_retryable=True)",
+        ]
 
     def _ref_name(self, ref: str | None, step_id: str) -> str:
         """Resolve a plan ref to the declared activity/child name (canonical casing)."""

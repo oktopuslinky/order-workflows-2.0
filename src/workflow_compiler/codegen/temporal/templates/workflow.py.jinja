@@ -16,6 +16,9 @@ from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+{% if uses_application_error %}
+from temporalio.exceptions import ApplicationError
+{% endif %}
 
 with workflow.unsafe.imports_passed_through():
 {% if activity_fn_names %}

@@ -39,6 +39,11 @@ class StepKind(StrEnum):
     PARALLEL = "parallel"
     BRANCH = "branch"
     TRIGGER = "trigger"
+    #: Terminate the workflow with a named error (``ref`` carries the exception
+    #: name). Used for a decision's rejection branch: it raises ApplicationError,
+    #: which fires the saga compensations and fails the run instead of falling
+    #: through to a false "completed".
+    RAISE = "raise"
 
 
 class BindingSource(StrEnum):

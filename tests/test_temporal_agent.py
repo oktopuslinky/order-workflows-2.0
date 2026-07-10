@@ -323,3 +323,123 @@ async def test_run_injects_state_outgoing_triggers() -> None:
     assert design is not None
     assert [t.name for t in design.triggers] == ["StartReporting"]
     assert any(s.kind is StepKind.TRIGGER for s in design.plan)
+
+
+# --- deterministic rejection-lane termination -------------------------------
+
+
+def _rejection_structure():
+    from workflow_compiler.models import (
+        ActivityNode,
+        DecisionNode,
+        ExceptionNode,
+        WorkflowStructure,
+    )
+
+    return WorkflowStructure(
+        activities=[
+            ActivityNode(id="a1", name="Validate Order"),
+            ActivityNode(id="a2", name="Reserve Inventory"),
+        ],
+        decisions=[
+            DecisionNode(
+                id="d1", question="Is the order settleable?",
+                after="a1", yes_target="a2", no_target="e1",
+            )
+        ],
+        exceptions=[ExceptionNode(id="e1", reason="OrderNotSettleable", raised_by="a1")],
+    )
+
+
+def test_rejection_lane_gets_raise_step() -> None:
+    from workflow_compiler.models import StepKind, TemporalStep, TemporalWorkflowDesign
+
+    design = TemporalWorkflowDesign(
+        workflow_name="Settle",
+        plan=[
+            TemporalStep(
+                id="s1", kind=StepKind.ACTIVITY, ref="ValidateOrder",
+                result_name="is_settleable",
+            ),
+            TemporalStep(
+                id="s2", kind=StepKind.BRANCH, predicate="is_settleable",
+                lanes=[
+                    [TemporalStep(id="s3", kind=StepKind.ACTIVITY, ref="ReserveInventory")],
+                    [],
+                ],
+            ),
+        ],
+    )
+    out = TemporalGeneratorAgent._terminate_rejection_lanes(design, _rejection_structure())
+    branch = out.plan[1]
+    assert branch.lanes[1], "else lane must gain a RAISE step"
+    assert branch.lanes[1][0].kind is StepKind.RAISE
+    assert branch.lanes[1][0].ref == "OrderNotSettleable"
+
+
+def test_rejection_raise_not_injected_without_anchor_match() -> None:
+    """A branch that doesn't immediately follow its decision's anchor is untouched."""
+    from workflow_compiler.models import StepKind, TemporalStep, TemporalWorkflowDesign
+
+    design = TemporalWorkflowDesign(
+        workflow_name="Settle",
+        plan=[
+            TemporalStep(id="s1", kind=StepKind.ACTIVITY, ref="SomethingElse"),
+            TemporalStep(
+                id="s2", kind=StepKind.BRANCH, predicate="whatever",
+                lanes=[
+                    [TemporalStep(id="s3", kind=StepKind.ACTIVITY, ref="ReserveInventory")],
+                    [],
+                ],
+            ),
+        ],
+    )
+    out = TemporalGeneratorAgent._terminate_rejection_lanes(design, _rejection_structure())
+    assert out.plan[1].lanes[1] == []
+
+
+def test_rejection_raise_not_injected_when_else_lane_populated() -> None:
+    from workflow_compiler.models import StepKind, TemporalStep, TemporalWorkflowDesign
+
+    design = TemporalWorkflowDesign(
+        workflow_name="Settle",
+        plan=[
+            TemporalStep(id="s1", kind=StepKind.ACTIVITY, ref="ValidateOrder"),
+            TemporalStep(
+                id="s2", kind=StepKind.BRANCH, predicate="is_settleable",
+                lanes=[
+                    [TemporalStep(id="s3", kind=StepKind.ACTIVITY, ref="ReserveInventory")],
+                    [TemporalStep(id="s4", kind=StepKind.ACTIVITY, ref="NotifyRejection")],
+                ],
+            ),
+        ],
+    )
+    out = TemporalGeneratorAgent._terminate_rejection_lanes(design, _rejection_structure())
+    assert [s.id for s in out.plan[1].lanes[1]] == ["s4"]
+
+
+def test_misplaced_raises_are_pruned() -> None:
+    """RAISE steps survive only inside a branch's else-lane."""
+    from workflow_compiler.models import StepKind, TemporalStep, TemporalWorkflowDesign
+
+    design = TemporalWorkflowDesign(
+        workflow_name="Settle",
+        plan=[
+            TemporalStep(id="s1", kind=StepKind.ACTIVITY, ref="ValidateOrder"),
+            TemporalStep(
+                id="s2", kind=StepKind.BRANCH, predicate="ok",
+                lanes=[
+                    [  # then-lane: raise here fails every successful run
+                        TemporalStep(id="s3", kind=StepKind.ACTIVITY, ref="Reserve"),
+                        TemporalStep(id="bad1", kind=StepKind.RAISE, ref="Nope"),
+                    ],
+                    [TemporalStep(id="ok1", kind=StepKind.RAISE, ref="Rejected")],
+                ],
+            ),
+            TemporalStep(id="bad2", kind=StepKind.RAISE, ref="AlsoNope"),
+        ],
+    )
+    out = TemporalGeneratorAgent._prune_misplaced_raises(design)
+    assert [s.id for s in out.plan] == ["s1", "s2"]
+    assert [s.id for s in out.plan[1].lanes[0]] == ["s3"]
+    assert [s.id for s in out.plan[1].lanes[1]] == ["ok1"]

@@ -422,3 +422,26 @@ class TestSegmentation:
         assert all(not s.sliced for s in segments)
         assert any("Could not locate" in w for w in warnings)
         assert any("identical text" in w for w in warnings)
+
+
+def test_remove_of_referenced_entity_becomes_finding() -> None:
+    """A grounding `remove` that would orphan references is skipped + surfaced."""
+    from workflow_compiler.models import Patch, PatchAction
+
+    spec = _full_spec()
+    # a2 is referenced by d1.yes_target and c1.compensates.
+    patch = Patch(action=PatchAction.REMOVE, target="activity:a2")
+    new_spec, findings, _summary = SpecPatchApplier().apply(spec, [patch], _DOC)
+    assert any("referenced by other elements" in f for f in findings)
+    assert any(a.id == "a2" for a in new_spec.facts.structure.activities)
+
+
+def test_remove_by_label_of_referenced_entity_becomes_finding() -> None:
+    """The guard also resolves label-form targets (`activity:Reserve inventory`)."""
+    from workflow_compiler.models import Patch, PatchAction
+
+    spec = _full_spec()
+    patch = Patch(action=PatchAction.REMOVE, target="activity:Reserve inventory")
+    new_spec, findings, _summary = SpecPatchApplier().apply(spec, [patch], _DOC)
+    assert any("referenced by other elements" in f for f in findings)
+    assert any(a.id == "a2" for a in new_spec.facts.structure.activities)

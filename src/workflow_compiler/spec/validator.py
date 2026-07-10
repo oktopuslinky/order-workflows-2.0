@@ -96,6 +96,16 @@ class SpecPatchApplier:
                     "document — please confirm or remove it yourself"
                 )
                 continue
+            if patch.action == PatchAction.REMOVE and self._is_referenced(spec, patch):
+                # A remove that would orphan references (a decision's branch
+                # target, a compensation's activity, …) silently breaks the
+                # flow and defeats user repairs — surface it instead.
+                findings.append(
+                    f"'{patch.target}' is referenced by other elements — removal "
+                    "skipped; if it is truly unsupported, remove the referencing "
+                    "lines first"
+                )
+                continue
             if kind in _METADATA_LIST_FIELDS or kind in _METADATA_SCALAR_FIELDS:
                 metadata_patches.append(patch)
             elif kind in _ENTITY_KINDS or kind in _SCALAR_CATEGORIES:
@@ -124,6 +134,47 @@ class SpecPatchApplier:
     def _finding(patch: Patch) -> str:
         note = _payload_value(patch, "note", "reason", "value") or "flagged by validator"
         return f"{patch.target or 'spec'}: {note}"
+
+    @staticmethod
+    def _is_referenced(spec: WorkflowSpec, patch: Patch) -> bool:
+        """True when other structure entities reference the patch's target.
+
+        The patch may name its target by entity id (``activity:a4``) or by
+        label (``activity:Create Order``) — resolve either to the entity id
+        before checking references.
+        """
+        kind, _, ref = patch.target.partition(":")
+        kind, ref = kind.strip().lower(), ref.strip()
+        if kind not in _ENTITY_KINDS or not ref:
+            return False
+        structure = spec.facts.structure
+        if structure is None:
+            return False
+
+        entity_lists = {
+            "activity": [(a.id, a.name) for a in structure.activities],
+            "decision": [(d.id, d.question) for d in structure.decisions],
+            "exception": [(x.id, x.reason) for x in structure.exceptions],
+            "compensation": [(c.id, c.name) for c in structure.compensations],
+            "event": [(v.id, v.name) for v in structure.events],
+        }
+        wanted = _norm(ref).lower()
+        target_id = next(
+            (
+                entity_id
+                for entity_id, label in entity_lists.get(kind, [])
+                if entity_id.lower() == wanted or _norm(label).lower() == wanted
+            ),
+            ref,
+        )
+
+        referenced: set[str] = set()
+        for d in structure.decisions:
+            referenced.update(r for r in (d.after, d.yes_target, d.no_target) if r)
+        referenced.update(x.raised_by for x in structure.exceptions if x.raised_by)
+        referenced.update(c.compensates for c in structure.compensations if c.compensates)
+        referenced.update(v.emitted_by for v in structure.events if v.emitted_by)
+        return target_id in referenced
 
     @staticmethod
     def _is_human(spec: WorkflowSpec, patch: Patch) -> bool:

@@ -533,14 +533,14 @@ class WorkflowSegmentationAgent:
     ) -> list[WorkflowTrigger]:
         """Build executable trigger scaffolds from explicit triggers + data deps.
 
-        Explicit LLM triggers become conditional/blocking triggers (no input map
-        — that is left for human/back-end wiring). Each data dependency then
-        becomes, or contributes an input-map row to, an unconditional
-        fire-and-forget trigger between the same two workflows. Every trigger is
-        left ``user_confirmed=False`` for the human review gate.
+        Explicit LLM triggers carry the mode/condition; each data dependency
+        then contributes an input-map row to the SAME (source, target) trigger
+        — one scaffold per workflow pair, never a duplicate half-entry (one
+        with the condition, one with the inputs). Every trigger is left
+        ``user_confirmed=False`` for the human review gate.
         """
         triggers: list[WorkflowTrigger] = []
-        by_key: dict[tuple[str, str, str], WorkflowTrigger] = {}
+        by_pair: dict[tuple[str, str], WorkflowTrigger] = {}
 
         for trig in discovery.triggers:
             source = slug_by_name.get(_norm(trig.source_workflow).lower())
@@ -557,24 +557,36 @@ class WorkflowSegmentationAgent:
                 if _norm(trig.mode).lower() in {"blocking", "block"}
                 else TriggerMode.FIRE_AND_FORGET
             )
-            key = (source, target, condition or "")
-            if key in by_key:
+            pair = (source, target)
+            existing = by_pair.get(pair)
+            if existing is not None:
+                # Merge rather than duplicate: keep the first condition, adopt
+                # one if the first entry had none, prefer blocking mode.
+                if condition and not existing.condition:
+                    existing.condition = condition
+                elif condition and existing.condition and condition != existing.condition:
+                    warnings.append(
+                        f"Trigger '{source} -> {target}' proposed twice with different "
+                        f"conditions; kept '{existing.condition}', dropped '{condition}'."
+                    )
+                if mode is TriggerMode.BLOCKING:
+                    existing.mode = mode
                 continue
             trigger = WorkflowTrigger(
                 source_workflow=source, target_workflow=target, mode=mode, condition=condition
             )
-            by_key[key] = trigger
+            by_pair[pair] = trigger
             triggers.append(trigger)
 
         for ref in cross_references:
-            key = (ref.source_workflow, ref.target_workflow, "")
+            pair = (ref.source_workflow, ref.target_workflow)
             binding = TriggerInputBinding(
                 target_input=ref.input_field,
                 source=BindingSource.STEP_OUTPUT,
                 source_ref=ref.output_field,
                 type=ref.input_type,
             )
-            existing = by_key.get(key)
+            existing = by_pair.get(pair)
             if existing is not None:
                 if not any(b.target_input == binding.target_input for b in existing.input_map):
                     existing.input_map.append(binding)
@@ -585,7 +597,7 @@ class WorkflowSegmentationAgent:
                 mode=TriggerMode.FIRE_AND_FORGET,
                 input_map=[binding],
             )
-            by_key[key] = trigger
+            by_pair[pair] = trigger
             triggers.append(trigger)
 
         return triggers

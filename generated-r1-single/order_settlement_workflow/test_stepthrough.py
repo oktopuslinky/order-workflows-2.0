@@ -1,4 +1,4 @@
-"""Local step-through harness for the {{ workflow_class }} workflow.
+"""Local step-through harness for the OrderSettlementWorkflow workflow.
 
 Runs this bundle under a time-skipping Temporal test environment with the
 generated stub activities (they return placeholders, no I/O) and **mocked
@@ -22,26 +22,20 @@ from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
-{% if activity_fn_names %}
 from activities import (
-{% for fn in activity_fn_names %}
-    {{ fn }},
-{% endfor %}
+    validate_order,
+    reserve_inventory,
+    charge_payment,
+    notify_customer,
+    record_settlement_event,
+    wait_for_shipping_confirmation,
+    finalise_settlement,
+    release_inventory,
+    refund_payment,
 )
-{% endif %}
 from shared import WorkflowInput
-from workflow import {{ workflow_class }}{% for c in child_class_names %}, {{ c }}{% endfor %}
-
+from workflow import OrderSettlementWorkflow
 TRIGGERS_CALLED: list[str] = []
-{% for t in triggers %}
-
-
-@activity.defn(name="{{ t.activity_name }}")
-async def mock_{{ t.fn_name }}(arg) -> str:
-    """Mocked cross-workflow start — records the call instead of starting."""
-    TRIGGERS_CALLED.append("{{ t.activity_name }}")
-    return ""
-{% endfor %}
 
 
 @pytest.mark.asyncio
@@ -51,29 +45,21 @@ async def test_stepthrough() -> None:
     try:
         async with Worker(
             env.client,
-            task_queue="{{ task_queue }}",
-            workflows=[{{ workflow_class }}{% for c in child_class_names %}, {{ c }}{% endfor %}],
-            activities=[{% for fn in activity_fn_names %}{{ fn }}, {% endfor %}{% for t in triggers %}mock_{{ t.fn_name }}, {% endfor %}],
+            task_queue="order-settlement-queue",
+            workflows=[OrderSettlementWorkflow],
+            activities=[validate_order, reserve_inventory, charge_payment, notify_customer, record_settlement_event, wait_for_shipping_confirmation, finalise_settlement, release_inventory, refund_payment, ],
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
             handle = await env.client.start_workflow(
-                {{ workflow_class }}.run,
+                OrderSettlementWorkflow.run,
                 WorkflowInput(),
                 id=f"stepthrough-{uuid.uuid4()}",
-                task_queue="{{ task_queue }}",
+                task_queue="order-settlement-queue",
             )
-{% if stepwise %}
-            # Step-through bundle: release every top-level step gate. Sending
-            # more `advance` signals than there are steps is harmless.
-            for _ in range(64):
-                await handle.signal("advance")
-{% endif %}
-{% for s in signals %}
-            # Release the '{{ s.signal_name }}' wait gate with a stub payload —
+            # Release the 'shipping.confirmed' wait gate with a stub payload —
             # signalling before the workflow reaches its wait is safe (the
             # received flag stays set).
-            await handle.signal("{{ s.method }}", args=[{% for p in s.params %}"stub-{{ p }}", {% endfor %}])
-{% endfor %}
+            await handle.signal("shipping_confirmed", args=["stub-order_id", ])
             result = await handle.result()
             assert result == "completed"
             print("last step:", await handle.query("current_step"))

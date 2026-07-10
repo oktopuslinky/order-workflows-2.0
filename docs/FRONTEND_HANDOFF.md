@@ -137,25 +137,34 @@ the frontend can render/zip client-side.
 
 ## 8. Known backend limitations to surface in the UI (fix plan, prioritized)
 
-Fixed this session (verified live, regression-tested): event-kind round-trip corruption; dead-end
-penalty on output events (ideal docs now clear the 0.9 auto-gate); bare-identifier branch
-predicates now compile to real conditions; decision-gated parallel groups are expressible; unbound
-step inputs fall back to name-matched workflow inputs.
+Fixed and verified live (regression-tested; all four ideal-doc bundles now pass their generated
+`test_stepthrough.py` under a real Temporal test environment):
 
-Remaining (the UI should tolerate/flag these; backend fixes tracked separately):
+- event-kind round-trip corruption; dead-end penalty on output events (ideal docs clear the 0.9
+  auto-gate); bare-identifier + `== literal` branch predicates compile to real conditions;
+  decision-gated parallel groups are expressible; unbound step inputs fall back to name-matched
+  workflow inputs.
+- **R1 rejection paths**: a `raise` StepKind exists; a deterministic pass fills a rejecting
+  decision's empty else-lane with `raise ApplicationError(<exception>)`, and a companion pass
+  prunes LLM-misplaced raises (only the else-lane position is legal). Rejected runs now fail with
+  a typed error and fire the saga compensations.
+- **R2 predicate contract**: the design prompt requires predicates to be declared result names
+  (bare or `== literal`) with fixed lane polarity (then = success).
+- **R3 trigger dedup**: one scaffold per (source, target) pair; condition and input map merge.
+- **Validator can no longer orphan the flow**: a grounding `remove` targeting an entity that other
+  entities reference (a decision's branch target, a compensation's activity, …) is skipped and
+  surfaced as a WARN instead of silently deleting it.
+- **Runnable-by-default scaffolds**: activity stubs return truthy placeholders, and when a branch
+  compares a result to a literal the producing stub returns that literal — the default run takes
+  the happy path. The generated harness auto-sends every declared signal so bounded waits release.
 
-- **R1 (P0): rejection paths don't terminate.** A decision's "no" lane is often empty in the plan
-  IR → generated code logs the decision and *falls through to success*. Needs a `RAISE`/terminal
-  `StepKind` in the plan IR, deterministically folded from the graph (no-branch → exception →
-  `raise ApplicationError`). Until then: generated bundles need hand-editing of else-branches.
-- **R2 (P1): predicate contract.** The design LLM sometimes invents predicates that don't resolve
-  to any step result (`payment.status == 'declined'`, `payment_successful`) → codegen emits
-  honest `True  # TODO` flags. Worse, a negatively-phrased branch (then-lane = failure handling)
-  defaults to running the failure path. Fix: constrain the design prompt to bind predicates to
-  declared `result_name`s + emit branch polarity.
-- **R3 (P1): trigger scaffolding dedup.** Segmentation drafts duplicate trigger entries (one with
-  condition, one with inputs) for the same target — merge at scaffold time. UI: render triggers as
-  editable cards to make dedup/deletion trivial.
+**Flow rule the UI must encode:** after any spec edit, **Validate must run before Approve** —
+`approve` checks the findings computed by the *last validate*, so approving with stale findings
+fails with the previous cycle's blocks. In the UI: disable Approve until a validate has run on the
+current spec content (or auto-chain validate → approve).
+
+Remaining (the UI should tolerate/flag these):
+
 - **R4 (P2): "Wait for X" duplicated** as both an activity and a `signal_wait` event → an unused
   activity stub in the bundle. Dedup at design fold.
 - **R5 (P2): metadata table extraction** (domain/owner/tags land blank).
@@ -163,6 +172,10 @@ Remaining (the UI should tolerate/flag these; backend fixes tracked separately):
   compensations.
 - **R7 (P3): prose trigger conditions** (`when 'an order is placed'`) can't compile to code —
   always a TODO in `triggers.py` call sites; consider structured conditions.
+- **R8 (P2): validator grounding flakiness.** The LLM validate pass sometimes proposes removing
+  document-grounded elements (it tried to delete `Create Order` three times in one session). The
+  referenced-entity guard now blocks the harmful cases; unreferenced correct elements can still be
+  removed — the user re-adds the line and it sticks (surface removals prominently in the UI diff).
 
 ## 9. Suggested UI shape (starting point, not binding)
 

@@ -309,13 +309,14 @@ class TestTriggerAssembly:
         agent = WorkflowSegmentationAgent(llm=None)
         _segments, _refs, triggers, warnings = agent.assemble(discovery, _DOCUMENT)
         assert any("unknown workflow" in w for w in warnings)
-        # The conditional trigger and the dependency-derived unconditional one
-        # have different conditions, so both exist; only the unconditional one
-        # carries the data-dependency input row.
-        conditional = next(t for t in triggers if t.condition == "application approved")
-        assert conditional.mode is TriggerMode.BLOCKING and conditional.input_map == []
-        unconditional = next(t for t in triggers if t.condition is None)
-        assert unconditional.input_map[0].target_input == "customer_record_id"
+        # One scaffold per (source, target) pair: the explicit conditional
+        # trigger absorbs the data-dependency input row instead of spawning a
+        # second, half-complete unconditional entry.
+        assert len(triggers) == 1
+        merged = triggers[0]
+        assert merged.condition == "application approved"
+        assert merged.mode is TriggerMode.BLOCKING
+        assert merged.input_map[0].target_input == "customer_record_id"
 
 
 def _project_with(
@@ -420,3 +421,49 @@ async def test_compile_prepared_threshold_gate() -> None:
     assert result.stage is CompilationStage.REVIEWED
     assert result.approval_status is ApprovalStatus.PENDING
     assert result.cvpa_classification is None
+
+
+# --- trigger scaffold merge (one entry per workflow pair) --------------------
+
+
+def test_assemble_triggers_merges_condition_and_data_dep_into_one() -> None:
+    """An explicit conditional trigger and the data-dep bindings for the same
+    (source, target) pair must produce ONE scaffold, not two half-entries."""
+    from workflow_compiler.agents.segmentation import (
+        DiscoveredTrigger,
+        WorkflowsDiscovery,
+        WorkflowSegmentationAgent,
+    )
+    from workflow_compiler.models import CrossReference, TriggerMode
+
+    discovery = WorkflowsDiscovery(
+        triggers=[
+            DiscoveredTrigger(
+                source_workflow="Order Placement",
+                target_workflow="Order Fulfilment",
+                condition="an order is placed",
+            )
+        ]
+    )
+    refs = [
+        CrossReference(
+            source_workflow="order-placement",
+            output_field="order_id",
+            target_workflow="order-fulfilment",
+            input_field="order_id",
+        )
+    ]
+    slug_by_name = {
+        "order placement": "order-placement",
+        "order fulfilment": "order-fulfilment",
+    }
+    warnings: list[str] = []
+    triggers = WorkflowSegmentationAgent._assemble_triggers(
+        discovery, refs, slug_by_name, warnings
+    )
+    assert len(triggers) == 1
+    merged = triggers[0]
+    assert merged.condition == "an order is placed"
+    assert merged.mode is TriggerMode.FIRE_AND_FORGET
+    assert [b.target_input for b in merged.input_map] == ["order_id"]
+    assert merged.user_confirmed is False

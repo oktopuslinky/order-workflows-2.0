@@ -13,31 +13,28 @@ flowchart TD
     parser["DocumentParserFactory<br/>(ingestion)"]
     discovery["WorkflowDiscoveryAgent<br/>→ WorkflowMetadata"]
     facts["FactExtractionAgent<br/>→ WorkflowFacts + WorkflowStructure<br/>(flat facts + id-linked relations)"]
-    checklist{"Readiness checklist gate<br/>(deterministic)"}
+    checklist["Readiness checklist<br/>(deterministic; → spec Open Questions)"]
     graph["GraphBuilderAgent<br/>→ WorkflowGraph + Mermaid<br/>(deterministic, NetworkX)"]
     review["GraphReviewer / DefaultReviewManager<br/>→ ReviewReport"]
-    gate{"Approval gate"}
+    gate{"Approval gate<br/>(automatic ≥ health threshold;<br/>approve / reject as manual override)"}
     cvpa["CVPAClassifierAgent<br/>→ CVPAClassification"]
     temporal["TemporalGeneratorAgent<br/>→ TemporalWorkflowDesign"]
     codegen["TemporalCodeGeneratorAgent<br/>→ TemporalCodeBundle<br/>(deterministic, Jinja2)"]
     done(["COMPLETED"])
     halt(["REJECTED — pipeline halts"])
-    form(["CHECKLISTED — write form, await answers"])
 
     doc --> parser --> discovery --> facts --> checklist
-    checklist -->|cleared| graph --> review --> gate
-    checklist -->|required item unmet| form
-    form -->|checklist cmd: answers + amend| checklist
+    checklist --> graph --> review --> gate
     gate -->|approve| cvpa --> temporal --> codegen --> done
     gate -->|reject| halt
 ```
 
 LLM-backed stages: discovery, fact extraction, CVPA classification, Temporal design.
 Deterministic (no LLM) stages: graph building, Mermaid rendering, structural review,
-**the readiness checklist gate** (`checklist/validator.py` + `report.py` + `amend.py`), and
-**Temporal code generation**. The checklist halts before any graph/code is produced when a required
-item is unmet; the user's report answers are folded back in as deterministic amendments (no LLM
-re-run) until the gate clears or `--accept-as-is` overrides it.
+**the readiness checklist** (`checklist/validator.py` + `amend.py`), and **Temporal code
+generation**. The checklist never halts this engine pipeline: its uncleared items surface as the
+spec's *Open Questions* (below), the user's answers fold back in as deterministic amendments (no
+LLM re-run) at spec approval, and unmet *required* items become blocking findings there.
 
 ## Spec-centric front-end (ProjectCompiler)
 
@@ -141,29 +138,11 @@ compensations for parallelized activities), and gating on signals. The LLM never
 the code is a pure function of the reviewed, approved design. See `TEMPORAL_CODEGEN_FINDINGS.md`
 for the standard it satisfies.
 
-## Consensus-merge ensemble (opt-in)
-
-An optional accuracy lever on the LLM stages where hallucinations originate (`discovery`,
-`facts`). When enabled (`--ensemble` / `WORKFLOW_COMPILER_ENSEMBLE_ENABLED`, default off),
-`ConsensusMergeAgent` wraps the stage's agent and runs **N temperature-diversified candidates
-concurrently** (via a `TemperatureProvider` decorator, since temperature-0 would make candidates
-identical), under a per-candidate timeout and overall budget. It then **merges the candidates'
-parts** rather than selecting one: *majority backbone + flagged singletons* — a part with ≥2 votes
-is accepted, a single-vote part is kept only if it grounds in the source document and is flagged
-low-confidence, and conflicting attributions are resolved by vote count. The merge uses only
-**reference-free** signals (no gold answer exists per document): cross-candidate agreement,
-referential integrity via `WorkflowStructure.validated()`, and evidence grounding (local
-substring/token-overlap, embeddings best-effort with graceful fallback). It raises
-grounding/consistency, not certified truth — the human gate remains the oracle, and provenance
-(accepted / flagged / dropped) is recorded in `confidence_scores.notes`. Deterministic stages are
-never ensembled. Lives in `agents/ensemble.py`, `agents/ensemble_merge.py`,
-`llm/ensemble_provider.py`.
-
 ## Sequential review pipeline (default-on)
 
-The default quality lever on the same two LLM stages (`discovery`, `facts`). Instead of sampling
-N candidates, it follows a compiler-style discipline: **generate one canonical output, then run
-three sequential review passes** — *completeness* (add elements explicitly in the document but
+The default quality lever on the LLM stages where hallucinations originate (`discovery`, `facts`,
+and segmentation). It follows a compiler-style discipline: **generate one canonical output, then
+run three sequential review passes** — *completeness* (add elements explicitly in the document but
 missing), *grounding* (remove/flag elements not supported by the document), *consistency* (merge
 duplicates, rename to a canonical label, fix relations). Each pass emits **minimal deterministic
 patches or `no_change`** (never a rewrite); a pure `PatchApplier` folds them in, dropping any
@@ -171,10 +150,11 @@ addition that duplicates an existing element or is not grounded in the document 
 passes **idempotent** (re-running yields `no_change`). The facts applier re-runs
 `WorkflowStructure.validated()` after each pass, so a patched relation can only point at a declared
 entity. `ReviewPipelineAgent` wraps the stage's generator agent, configured by a `ReviewSpec`
-(extract / serialize / apply + the three prompts + the applier) — the same adapter shape as the
-ensemble's `StageSpec`, so a future stage adds a spec, not engine code. On by default
-(`--review` / `WORKFLOW_COMPILER_REVIEW_ENABLED`); the compiler's precedence is **ensemble → review
-→ plain** per stage (the ensemble wins on any stage it is enabled for). Patch vocabulary lives in
+(extract / serialize / apply + the three prompts + the applier) — an adapter shape, so a future
+stage adds a spec, not engine code. On by default
+(`--review` / `WORKFLOW_COMPILER_REVIEW_ENABLED`); the compiler's precedence is **review → plain**
+per stage. It raises grounding/consistency, not certified truth — the human spec gate remains the
+oracle, and per-pass provenance is recorded in `confidence_scores.notes`. Patch vocabulary lives in
 `models/patch.py` (`PatchAction`, `Evidence`, `Patch`, `ReviewResult`); the engine, appliers, and
 specs in `agents/review_pipeline.py`; the six prompts in `prompts/templates/review_*.md`.
 
@@ -272,10 +252,10 @@ field and advances `stage`:
 - **Validated, immutable edits.** `GraphEditor` returns new validated `WorkflowGraph` instances;
   invalid edits raise rather than corrupting state.
 - **Human-in-the-loop gate.** Downstream (CVPA, Temporal) artifacts are produced only after
-  approval, keeping generated designs traceable to a reviewed graph.
-- **Agreement over single samples (opt-in).** The consensus-merge ensemble combines N candidates
-  of a stage by reference-free signals (votes, referential integrity, grounding); it suppresses
-  hallucinations but never certifies truth — the gate stays the oracle.
+  approval, keeping generated designs traceable to a reviewed spec.
+- **Review over blind trust.** The sequential review pipeline patches each LLM stage's output by
+  reference-free signals (evidence quotes, referential integrity, grounding); it suppresses
+  hallucinations but never certifies truth — the spec gate stays the oracle.
 - **The LLM specifies; templates emit code.** The LLM-backed Temporal stage emits
   specifications only (names, parameters, policies) — never executable code. Runnable Temporal
   Python SDK code is produced separately by a *deterministic* generator

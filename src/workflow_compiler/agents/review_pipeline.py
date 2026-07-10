@@ -1,10 +1,7 @@
 """Sequential review pipelines: generate once, then review in three passes.
 
-This is the compiler-style alternative to the consensus-merge ensemble
-(:mod:`workflow_compiler.agents.ensemble`). Where the ensemble runs a stage N
-times and merges the candidates, a review pipeline runs the stage **once** to
-produce a canonical output and then improves it with three specialized,
-sequential review passes:
+A review pipeline runs a stage **once** to produce a canonical output and then
+improves it with three specialized, sequential review passes:
 
 1. **completeness** — add elements explicitly in the document but missing;
 2. **grounding** — remove/flag elements not supported by the document;
@@ -18,9 +15,8 @@ already-reviewed artifact returns ``no_change``.
 
 The machinery is generic. A concrete stage is described by a :class:`ReviewSpec`
 (how to extract / serialize / apply the artifact, plus its three prompts and its
-applier), exactly mirroring the ensemble's :class:`~workflow_compiler.agents.ensemble.StageSpec`.
-Adding a review pipeline for a future stage (Mermaid, Temporal) is a new spec —
-no engine changes.
+applier). Adding a review pipeline for a future stage (Mermaid, Temporal) is a
+new spec — no engine changes.
 """
 
 from __future__ import annotations
@@ -92,9 +88,8 @@ def _grounded(text: str, evidence: Evidence | None, document_text: str) -> bool:
 
     Accept the addition when its supporting quote is a literal substring of the
     document, or when a clear majority of the element's significant words appear
-    in the document. This is the same family of signal the ensemble uses; it
-    cannot certify truth but it filters obvious hallucinations and is what makes
-    the completeness pass idempotent and safe.
+    in the document. This cannot certify truth but it filters obvious
+    hallucinations and is what makes the completeness pass idempotent and safe.
     """
     doc = document_text.lower()
     if evidence is not None and evidence.quote:
@@ -578,7 +573,7 @@ class ReviewPass:
 
 @dataclass(frozen=True)
 class ReviewSpec:
-    """Binds a generic review pipeline to a concrete artifact (mirrors StageSpec)."""
+    """Binds a generic review pipeline to a concrete artifact."""
 
     note_key: str
     extract: Callable[[WorkflowState], object | None]

@@ -2,14 +2,13 @@
 
 Covers the deterministic patch appliers (the heart of the framework), the
 end-to-end :class:`ReviewPipelineAgent`, idempotency, and the compiler's
-ensemble > review > plain precedence.
+review > plain precedence.
 """
 
 from __future__ import annotations
 
 from workflow_compiler import WorkflowCompiler
 from workflow_compiler.agents import (
-    ConsensusMergeAgent,
     FactsPatchApplier,
     MetadataPatchApplier,
     ReviewPipelineAgent,
@@ -18,7 +17,7 @@ from workflow_compiler.agents import (
     rebuild_facts,
 )
 from workflow_compiler.agents.review_pipeline import METADATA_REVIEW_SPEC
-from workflow_compiler.compiler import EnsembleConfig, ReviewConfig
+from workflow_compiler.compiler import ReviewConfig
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import (
     ActivityNode,
@@ -267,28 +266,22 @@ async def test_review_pipeline_no_change_leaves_artifact_intact() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Compiler precedence: ensemble > review > plain
+# Compiler precedence: review > plain
 # --------------------------------------------------------------------------- #
 
 
-def _compiler(*, ensemble: bool, review: bool) -> WorkflowCompiler:
+def _compiler(*, review: bool) -> WorkflowCompiler:
     return WorkflowCompiler(
         llm_provider=MockProvider(),
-        ensemble=EnsembleConfig(enabled=ensemble),
         review=ReviewConfig(enabled=review),
     )
 
 
-def test_precedence_ensemble_wins_when_both_enabled() -> None:
-    discovery_agent = _compiler(ensemble=True, review=True)._agents[0]
-    assert isinstance(discovery_agent, ConsensusMergeAgent)
-
-
-def test_precedence_review_default_when_ensemble_off() -> None:
-    discovery_agent = _compiler(ensemble=False, review=True)._agents[0]
+def test_precedence_review_default() -> None:
+    discovery_agent = _compiler(review=True)._agents[0]
     assert isinstance(discovery_agent, ReviewPipelineAgent)
 
 
-def test_precedence_plain_when_both_off() -> None:
-    discovery_agent = _compiler(ensemble=False, review=False)._agents[0]
+def test_precedence_plain_when_review_off() -> None:
+    discovery_agent = _compiler(review=False)._agents[0]
     assert isinstance(discovery_agent, WorkflowDiscoveryAgent)

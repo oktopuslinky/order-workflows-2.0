@@ -27,12 +27,12 @@ ruff check src tests            # lint (line-length 100, py312)
 mypy src                        # strict type-check (pydantic plugin enabled)
 
 uvicorn workflow_compiler.api.app:app --reload   # run the HTTP API (/docs for interactive)
-workflow-compiler compile examples/order_workflow.md --provider mock   # run CLI offline, no API key
+workflow-compiler compile examples/order_workflow.md --spec-dir ./specs --provider mock   # run CLI offline, no API key
 ```
 
 Tests run fully offline via a `MockProvider`; no `NVIDIA_API_KEY` is required for `pytest` or any
-`--provider mock` invocation. LLM-backed CLI commands (`compile`, `approve`, `inspect`) need either
-`NVIDIA_API_KEY` in `.env` or `--provider mock`.
+`--provider mock` invocation. LLM-backed CLI commands (`compile`, `validate`, `approve-spec`,
+`approve`) need either `NVIDIA_API_KEY` in `.env` or `--provider mock`.
 
 ## Architecture essentials
 
@@ -64,28 +64,24 @@ picture before changing pipeline behavior.
   rather than positionally. This is what stops decisions/events/compensations from being
   mis-attributed. Any new patch/merge logic must re-run `validated()` afterward.
 
-- **Two optional quality levers wrap the discovery + facts stages**, selected per-stage by the
-  compiler with precedence **ensemble → review → plain**:
-  - *Sequential review pipeline* (default ON, `--review`): one canonical output, then three
-    sequential passes (completeness → grounding → consistency) emitting **minimal deterministic
-    patches or `no_change`**, never a rewrite. A pure `PatchApplier` folds them in and drops
-    ungrounded/duplicate additions, making passes idempotent. Engine in `agents/review_pipeline.py`;
-    patch vocabulary in `models/patch.py`; prompts in `prompts/templates/review_*.md`.
-  - *Consensus-merge ensemble* (opt-in OFF, `--ensemble`): N temperature-diversified candidates run
-    concurrently and merged by reference-free signals (votes + referential integrity + grounding).
-    Lives in `agents/ensemble.py`, `agents/ensemble_merge.py`, `llm/ensemble_provider.py`.
-
-  Both are adapter-shaped (`ReviewSpec` / `StageSpec`) so adding a stage means adding a spec, not
-  engine code. Neither certifies truth — the **human approval gate stays the oracle**, and
-  provenance is recorded in `confidence_scores.notes`.
+- **The sequential review pipeline wraps the discovery + facts stages** (and segmentation),
+  selected per-stage by the compiler with precedence **review → plain**. Default ON (`--review`):
+  one canonical output, then three sequential passes (completeness → grounding → consistency)
+  emitting **minimal deterministic patches or `no_change`**, never a rewrite. A pure `PatchApplier`
+  folds them in and drops ungrounded/duplicate additions, making passes idempotent. Engine in
+  `agents/review_pipeline.py`; patch vocabulary in `models/patch.py`; prompts in
+  `prompts/templates/review_*.md`. It is adapter-shaped (`ReviewSpec`) so adding a stage means
+  adding a spec, not engine code. It never certifies truth — the **human spec gate stays the
+  oracle**, and provenance is recorded in `confidence_scores.notes`.
 
 - **Human-in-the-loop gate.** CVPA and Temporal artifacts are produced only after a graph is
   approved (`approve_graph`); `reject` halts the pipeline. Graph edits go through `GraphEditor`
   (`review/editor.py`), which returns **new validated immutable `WorkflowGraph` instances** and
   raises on invalid edits rather than corrupting state.
 
-- **Spec-centric front-end (`ProjectCompiler`, `project_compiler.py`)** layers on top of the
-  unchanged per-workflow pipeline for multi-workflow documents: segmentation
+- **The spec-centric front-end (`ProjectCompiler`, `project_compiler.py`) is the user-facing
+  pipeline** (a single-workflow document yields one segment holding the full text, so it covers
+  that case too), layered on top of the per-workflow engine: segmentation
   (`agents/segmentation.py`) discovers every workflow + output→input cross-references, facts are
   extracted per segment, and the human gate moves to **editable spec Markdown files**
   (`compile --spec-dir` → edit → `validate` → `approve-spec`). The structured `WorkflowSpec`

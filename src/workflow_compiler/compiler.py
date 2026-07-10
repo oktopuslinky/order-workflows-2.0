@@ -15,23 +15,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from workflow_compiler.agents import (
-    DISCOVERY_SPEC,
     FACTS_REVIEW_SPEC,
-    FACTS_SPEC,
     METADATA_REVIEW_SPEC,
-    ConsensusMergeAgent,
     CVPAClassifierAgent,
     FactExtractionAgent,
     GraphBuilderAgent,
     ReviewPipelineAgent,
     ReviewSpec,
-    StageSpec,
     TemporalCodeGeneratorAgent,
     TemporalGeneratorAgent,
     WorkflowDiscoveryAgent,
 )
 from workflow_compiler.checklist import ChecklistValidator
-from workflow_compiler.checklist import amend as checklist_amend
 from workflow_compiler.exceptions import ApprovalError, CompilationError
 from workflow_compiler.interfaces import (
     BaseAgent,
@@ -86,47 +81,12 @@ def _emit(progress: ProgressCallback | None, event: ProgressEvent) -> None:
 
 
 @dataclass(frozen=True)
-class EnsembleConfig:
-    """Configuration for the consensus-merge ensemble on selected LLM stages."""
-
-    enabled: bool = False
-    n: int = 3
-    temperatures: tuple[float, ...] = (0.2, 0.5, 0.8)
-    stages: frozenset[str] = frozenset({"discovery", "facts"})
-    per_candidate_timeout: float = 300.0
-    overall_timeout: float = 480.0
-
-    def temperatures_for(self) -> list[float]:
-        """Return exactly ``n`` temperatures, spreading evenly if too few given."""
-        base = list(self.temperatures)
-        if len(base) >= self.n:
-            return base[: self.n]
-        if self.n == 1:
-            return [base[0] if base else 0.5]
-        return [round(0.2 + 0.6 * i / (self.n - 1), 3) for i in range(self.n)]
-
-    @classmethod
-    def from_settings(
-        cls, settings: Settings, *, enabled: bool | None = None, n: int | None = None
-    ) -> EnsembleConfig:
-        """Build from ``Settings`` with optional CLI overrides for enabled / n."""
-        return cls(
-            enabled=settings.ensemble_enabled if enabled is None else enabled,
-            n=settings.ensemble_n if n is None else n,
-            temperatures=tuple(settings.ensemble_temperatures),
-            stages=frozenset(settings.ensemble_stages),
-            per_candidate_timeout=settings.ensemble_per_candidate_timeout,
-            overall_timeout=settings.ensemble_overall_timeout,
-        )
-
-
-@dataclass(frozen=True)
 class ReviewConfig:
     """Configuration for the sequential review pipeline on selected LLM stages.
 
     The review pipeline generates one canonical output per stage and improves it
-    with three sequential review passes. It is **on by default**, but the ensemble
-    takes precedence on any stage it is enabled for (see ``WorkflowCompiler._maybe_wrap``).
+    with three sequential review passes. It is **on by default** (see
+    ``WorkflowCompiler._maybe_wrap``).
     """
 
     enabled: bool = True
@@ -171,7 +131,6 @@ class WorkflowCompiler:
         review_manager: ReviewManager | None = None,
         state_store: StateStore | None = None,
         prompt_manager: PromptManager | None = None,
-        ensemble: EnsembleConfig | None = None,
         review: ReviewConfig | None = None,
         stepwise: bool = False,
     ) -> None:
@@ -187,14 +146,11 @@ class WorkflowCompiler:
         self._llm_provider = llm_provider
         self._parser = parser
         self._prompt_manager = prompt_manager or PromptManager()
-        self._ensemble = ensemble or EnsembleConfig()
         self._review = review or ReviewConfig()
         self._agents = (
             list(agents)
             if agents is not None
-            else self._default_agents(
-                llm_provider, self._prompt_manager, self._ensemble, self._review
-            )
+            else self._default_agents(llm_provider, self._prompt_manager, self._review)
         )
         self._post_approval_agents = (
             list(post_approval_agents)
@@ -227,13 +183,11 @@ class WorkflowCompiler:
         resolved = settings or get_settings()
         provider = llm_provider or ProviderFactory().from_settings(resolved)
         store = state_store or FileStateStore(resolved.state_store_path)
-        ensemble = kwargs.pop("ensemble", None) or EnsembleConfig.from_settings(resolved)
         review = kwargs.pop("review", None) or ReviewConfig.from_settings(resolved)
         stepwise = bool(kwargs.pop("stepwise", None) or resolved.stepwise)
         return cls(  # type: ignore[arg-type]
             llm_provider=provider,
             state_store=store,
-            ensemble=ensemble,
             review=review,
             stepwise=stepwise,
             **kwargs,
@@ -243,15 +197,13 @@ class WorkflowCompiler:
     def _default_agents(
         llm: BaseLLMProvider | None,
         prompts: PromptManager,
-        ensemble: EnsembleConfig,
         review: ReviewConfig,
     ) -> list[BaseAgent]:
         """Build the standard discovery → facts → graph agent pipeline.
 
-        Each LLM stage is wrapped per :meth:`_maybe_wrap`'s precedence: the
-        ensemble (if enabled for the stage), else the sequential review pipeline
-        (on by default), else the plain agent. Graph building is deterministic and
-        never wrapped.
+        Each LLM stage is wrapped per :meth:`_maybe_wrap`: the sequential review
+        pipeline (on by default), else the plain agent. Graph building is
+        deterministic and never wrapped.
         """
         discovery = WorkflowDiscoveryAgent(llm, prompt_manager=prompts)
         facts = FactExtractionAgent(llm, prompt_manager=prompts)
@@ -260,22 +212,18 @@ class WorkflowCompiler:
                 "discovery",
                 discovery,
                 lambda p: WorkflowDiscoveryAgent(p, prompt_manager=prompts),
-                DISCOVERY_SPEC,
                 METADATA_REVIEW_SPEC,
                 llm,
                 prompts,
-                ensemble,
                 review,
             ),
             WorkflowCompiler._maybe_wrap(
                 "facts",
                 facts,
                 lambda p: FactExtractionAgent(p, prompt_manager=prompts),
-                FACTS_SPEC,
                 FACTS_REVIEW_SPEC,
                 llm,
                 prompts,
-                ensemble,
                 review,
             ),
             GraphBuilderAgent(),
@@ -286,29 +234,18 @@ class WorkflowCompiler:
         stage: str,
         plain: BaseAgent,
         inner_factory: Callable[[BaseLLMProvider], BaseAgent],
-        ensemble_spec: StageSpec,
         review_spec: ReviewSpec,
         llm: BaseLLMProvider | None,
         prompts: PromptManager,
-        ensemble: EnsembleConfig,
         review: ReviewConfig,
     ) -> BaseAgent:
-        """Select the quality strategy for ``stage`` (ensemble > review > plain).
+        """Select the quality strategy for ``stage`` (review > plain).
 
-        The ensemble wins on any stage it is explicitly enabled for; otherwise the
-        sequential review pipeline runs (default-on); otherwise the plain agent runs.
+        The sequential review pipeline runs on any stage it is enabled for
+        (default-on); otherwise the plain agent runs.
         """
         if llm is None:
             return plain
-        if ensemble.enabled and stage in ensemble.stages:
-            return ConsensusMergeAgent(
-                inner_factory=inner_factory,
-                provider=llm,
-                temperatures=ensemble.temperatures_for(),
-                spec=ensemble_spec,
-                per_candidate_timeout=ensemble.per_candidate_timeout,
-                overall_timeout=ensemble.overall_timeout,
-            )
         if review.enabled and stage in review.stages:
             return ReviewPipelineAgent(
                 inner_factory=inner_factory,
@@ -426,8 +363,8 @@ class WorkflowCompiler:
         """Partition agents into those before the graph builder and from it onward.
 
         The readiness checklist is computed between fact extraction and graph
-        building, so the graph builder (and anything after it) runs only once the
-        gate is cleared.
+        building, so the front half can run on its own (e.g. per-segment fact
+        extraction in the spec-centric flow).
         """
         pre: list[BaseAgent] = []
         post: list[BaseAgent] = []
@@ -445,23 +382,17 @@ class WorkflowCompiler:
         review_mode: bool = True,
         persist: bool = True,
         workflow_id: str | None = None,
-        enforce_checklist: bool = False,
         progress: ProgressCallback | None = None,
     ) -> WorkflowState:
         """Compile a raw workflow document into a review-ready WorkflowState.
 
-        Runs discovery → facts, computes the pre-generation readiness checklist,
-        then (if cleared) builds the graph, reviews it, and sets ``approval_status``
-        to ``PENDING``.
+        Runs discovery → facts, computes the readiness checklist (attached to
+        ``state.checklist`` for the spec layer to absorb as Open Questions),
+        then builds the graph, reviews it, and sets ``approval_status`` to
+        ``PENDING``.
 
-        When ``enforce_checklist`` is ``True`` and a **required** checklist item is
-        unmet, compilation **halts at the checklist gate** (stage ``CHECKLISTED``)
-        and returns before any graph/code is produced; the caller resumes via
-        :meth:`resume_from_checklist` after the user fills in the report. The
-        checklist is always computed and attached to ``state.checklist`` regardless.
-
-        When ``review_mode`` is ``True`` (the default) compilation otherwise stops
-        at the approval gate; when ``False`` the graph is auto-approved and the full
+        When ``review_mode`` is ``True`` (the default) compilation stops at the
+        approval gate; when ``False`` the graph is auto-approved and the full
         pipeline runs end-to-end in one call.
         """
         if not document_text or not document_text.strip():
@@ -474,14 +405,9 @@ class WorkflowCompiler:
         pre_agents, post_agents = self._split_on_graph(self._agents)
         state = await self._run_agents(pre_agents, state, progress)
 
-        # Pre-generation readiness gate: always compute, optionally enforce.
+        # Readiness checklist: computed for downstream consumers (spec Open
+        # Questions); never halts compilation here.
         state.checklist = ChecklistValidator().validate(state)
-        if enforce_checklist and not state.checklist.is_satisfied():
-            state.stage = CompilationStage.CHECKLISTED
-            state.touch()
-            if persist:
-                await self._state_store.save(state)
-            return state
 
         return await self._continue_after_checklist(
             state, post_agents, progress, review_mode=review_mode, persist=persist
@@ -548,36 +474,6 @@ class WorkflowCompiler:
             if persist:
                 await self._state_store.save(state)
         return state
-
-    async def resume_from_checklist(
-        self,
-        workflow_id: str,
-        answers: dict[str, str],
-        *,
-        accept_as_is: bool = False,
-        review_mode: bool = True,
-        persist: bool = True,
-        progress: ProgressCallback | None = None,
-    ) -> WorkflowState:
-        """Apply checklist answers to a halted run and continue if the gate clears.
-
-        Loads the state saved at the checklist gate, folds ``answers`` in as
-        deterministic local amendments (no LLM), and re-validates. If required
-        items remain unmet the run stays halted (the refreshed checklist is
-        persisted so a new report can be written); otherwise the graph is built and
-        the pipeline continues exactly as :meth:`compile_document` would have.
-        """
-        state = await self._state_store.load(workflow_id)
-        state = checklist_amend.apply(state, answers, accept_as_is=accept_as_is)
-        if state.checklist is not None and not state.checklist.is_satisfied():
-            if persist:
-                await self._state_store.save(state)
-            return state
-
-        _pre, post_agents = self._split_on_graph(self._agents)
-        return await self._continue_after_checklist(
-            state, post_agents, progress, review_mode=review_mode, persist=persist
-        )
 
     async def _continue_after_checklist(
         self,

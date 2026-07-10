@@ -7,12 +7,6 @@ from workflow_compiler.agents.discovery import (
     WorkflowDiscovery,
     WorkflowDiscoveryAgent,
 )
-from workflow_compiler.agents.ensemble import (
-    DISCOVERY_SPEC,
-    FACTS_SPEC,
-    ConsensusMergeAgent,
-    StageSpec,
-)
 from workflow_compiler.agents.fact_extraction import (
     FactExtraction,
     FactExtractionAgent,
@@ -41,13 +35,10 @@ from workflow_compiler.agents.temporal import (
 from workflow_compiler.agents.temporal_code import TemporalCodeGeneratorAgent
 
 __all__ = [
-    "DISCOVERY_SPEC",
     "FACTS_REVIEW_SPEC",
-    "FACTS_SPEC",
     "METADATA_REVIEW_SPEC",
     "CVPAClassifierAgent",
     "CVPAOutput",
-    "ConsensusMergeAgent",
     "FactExtraction",
     "FactExtractionAgent",
     "FactsPatchApplier",
@@ -57,7 +48,6 @@ __all__ = [
     "ReviewPipelineAgent",
     "ReviewSpec",
     "SegmentationPatchApplier",
-    "StageSpec",
     "TemporalCodeGeneratorAgent",
     "TemporalDesignOutput",
     "TemporalGeneratorAgent",

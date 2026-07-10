@@ -11,7 +11,6 @@ class CompilationStage(StrEnum):
     INGESTED = "ingested"
     METADATA_EXTRACTED = "metadata_extracted"
     FACTS_EXTRACTED = "facts_extracted"
-    CHECKLISTED = "checklisted"
     GRAPH_BUILT = "graph_built"
     REVIEWED = "reviewed"
     CLASSIFIED = "classified"

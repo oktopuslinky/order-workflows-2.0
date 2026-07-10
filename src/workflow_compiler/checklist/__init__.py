@@ -1,10 +1,10 @@
-"""Pre-generation readiness checklist: validate, report, and amend.
+"""Pre-generation readiness checklist: validate and amend.
 
-The checklist gate sits between fact extraction and graph/code generation. It
+The checklist is computed between fact extraction and graph/code generation. It
 validates the discovered facts/structure against the requirements that
-``examples/ideal_temporal_workflow.md`` is known to satisfy, renders an editable
-report when something is missing, and folds the user's answers back in as
-deterministic amendments (no extra LLM call).
+``examples/ideal_temporal_workflow.md`` is known to satisfy; uncleared items
+surface as the spec's **Open Questions**, and answered questions are folded back
+in as deterministic amendments (no extra LLM call) at spec approval.
 """
 
 from __future__ import annotations

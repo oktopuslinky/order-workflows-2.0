@@ -1,7 +1,10 @@
 """Typer command-line interface for workflow-compiler.
 
-Commands are scaffolded: they parse arguments and render output via Rich, but
-defer to the compiler, whose business logic is not implemented yet.
+One pipeline: ``compile <doc> --spec-dir`` writes editable spec files, the user
+iterates ``validate`` until satisfied, and ``approve-spec`` compiles every
+workflow through to Temporal code. ``approve`` / ``reject`` remain as the manual
+override for workflows whose graph health fell below the auto-approve threshold,
+and ``show`` displays a stored workflow state.
 """
 
 from __future__ import annotations
@@ -15,11 +18,7 @@ from rich.console import Console
 from workflow_compiler import __version__
 
 if TYPE_CHECKING:
-    from workflow_compiler.compiler import (
-        EnsembleConfig,
-        ProgressCallback,
-        ReviewConfig,
-    )
+    from workflow_compiler.compiler import ProgressCallback, ReviewConfig
     from workflow_compiler.interfaces.llm import BaseLLMProvider
     from workflow_compiler.project_compiler import ProjectCompiler
     from workflow_compiler.storage import FileStateStore
@@ -60,99 +59,25 @@ def compile(
     ),
     model: str = typer.Option(None, "--model", help="Override the model id."),
     timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
-    auto_approve: bool = typer.Option(
-        False, "--auto-approve", help="Run the full pipeline end-to-end without the human gate."
-    ),
-    persist: bool = typer.Option(True, help="Persist the resulting workflow state."),
-    out: Path = typer.Option(
-        None, "--out", help="Write the Mermaid diagram to this file (CVPA-colored if approved)."
-    ),
-    out_dir: Path = typer.Option(
-        None, "--out-dir", help="Write generated Temporal code to this directory (auto-approve)."
-    ),
-    ensemble: bool = typer.Option(
-        False,
-        "--ensemble",
-        help="Run discovery + fact extraction N times and consensus-merge the candidates.",
-    ),
-    ensemble_n: int = typer.Option(
-        0, "--ensemble-n", help="Number of ensemble candidates (0 = use the configured default)."
-    ),
+    persist: bool = typer.Option(True, help="Persist the resulting project state."),
     review: bool = typer.Option(
         True,
         "--review/--no-review",
-        help="Sequential review passes on discovery + facts (on by default; "
-        "ignored on any stage where --ensemble is active).",
-    ),
-    checklist: bool = typer.Option(
-        True,
-        "--checklist/--no-checklist",
-        help="Enforce the pre-generation readiness checklist; halt and write a form "
-        "if a required item is unmet (on by default).",
-    ),
-    checklist_out: Path = typer.Option(
-        None,
-        "--checklist-out",
-        help="Where to write the checklist form (default: <document>.checklist.md).",
+        help="Sequential review passes on the LLM stages (on by default).",
     ),
     spec_dir: Path = typer.Option(
-        None,
+        Path("./specs"),
         "--spec-dir",
-        help="Spec-centric mode: discover every workflow in the document, write one "
-        "editable spec file per workflow to this directory, and stop at the spec "
-        "gate (resume with 'validate' / 'approve-spec').",
+        help="Discover every workflow in the document, write one editable spec file "
+        "per workflow to this directory, and stop at the spec gate (resume with "
+        "'validate' / 'approve-spec').",
     ),
 ) -> None:
-    """Compile a workflow document into a review-ready state."""
-    import asyncio
-
-    if spec_dir is not None:
-        asyncio.run(
-            _run_compile_spec(
-                document, provider, model, timeout, spec_dir, review, persist,
-                auto_approve, out_dir,
-            )
-        )
-        return
-    asyncio.run(
-        _run_compile(
-            document, provider, model, timeout, auto_approve, persist, out, out_dir,
-            ensemble, ensemble_n, review, checklist, checklist_out,
-        )
-    )
-
-
-@app.command(name="checklist")
-def checklist_cmd(
-    workflow_id: str = typer.Argument(..., help="Workflow id halted at the checklist gate."),
-    answers: Path = typer.Option(
-        None, "--answers", exists=True, readable=True, help="Filled-in checklist form file."
-    ),
-    accept_as_is: bool = typer.Option(
-        False, "--accept-as-is", help="Proceed while accepting any remaining unmet gaps."
-    ),
-    auto_approve: bool = typer.Option(
-        False, "--auto-approve", help="Run end-to-end through code generation if the gate clears."
-    ),
-    provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
-    model: str = typer.Option(None, "--model", help="Override the model id."),
-    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
-    out: Path = typer.Option(None, "--out", help="Write the Mermaid diagram to this file."),
-    out_dir: Path = typer.Option(
-        None, "--out-dir", help="Write generated Temporal code to this directory (auto-approve)."
-    ),
-    checklist_out: Path = typer.Option(
-        None, "--checklist-out", help="Where to re-write the form if items remain unmet."
-    ),
-) -> None:
-    """Apply checklist answers and resume a halted compilation (no re-extraction)."""
+    """Compile a workflow document into editable spec files (stops at the spec gate)."""
     import asyncio
 
     asyncio.run(
-        _run_checklist(
-            workflow_id, answers, accept_as_is, auto_approve, provider, model, timeout,
-            out, out_dir, checklist_out,
-        )
+        _run_compile_spec(document, provider, model, timeout, spec_dir, review, persist)
     )
 
 
@@ -351,153 +276,12 @@ def _write_code(
     )
 
 
-def _write_checklist_report(state: object, path: Path) -> None:
-    """Render the readiness checklist form for ``state`` to ``path``."""
-    from workflow_compiler.checklist import report as checklist_report
-    from workflow_compiler.models import WorkflowState
-
-    assert isinstance(state, WorkflowState)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(checklist_report.render(state), encoding="utf-8")
-    console.print(f"[green]Checklist form written to[/] {path}")
-
-
-def _print_checklist(state: object) -> None:
-    """Render the readiness checklist as a table (cleared vs needs-input)."""
-    from rich.table import Table
-
-    from workflow_compiler.models import WorkflowState
-
-    assert isinstance(state, WorkflowState)
-    checklist = state.checklist
-    if checklist is None:
-        return
-    table = Table(title="Readiness Checklist")
-    table.add_column("")
-    table.add_column("Item")
-    table.add_column("Severity")
-    table.add_column("Status")
-    table.add_column("Evidence")
-    for item in checklist.items:
-        mark = "[green]OK[/]" if item.is_cleared() else "[red]>>[/]"
-        table.add_row(
-            mark, item.id, item.severity.value, item.status.value, item.evidence or "-"
-        )
-    console.print(table)
-
-
-def _ensemble_config(enabled_flag: bool, n: int) -> EnsembleConfig:
-    """Build an EnsembleConfig from settings, applying CLI overrides."""
-    from workflow_compiler.compiler import EnsembleConfig
-    from workflow_compiler.config import get_settings
-
-    return EnsembleConfig.from_settings(
-        get_settings(),
-        enabled=True if enabled_flag else None,
-        n=n or None,
-    )
-
-
 def _review_config(enabled_flag: bool) -> ReviewConfig:
     """Build a ReviewConfig from settings, applying the CLI --review/--no-review override."""
     from workflow_compiler.compiler import ReviewConfig
     from workflow_compiler.config import get_settings
 
     return ReviewConfig.from_settings(get_settings(), enabled=enabled_flag)
-
-
-async def _run_compile(
-    document: Path,
-    provider_name: str | None,
-    model: str | None,
-    timeout: float,
-    auto_approve: bool,
-    persist: bool,
-    out: Path | None = None,
-    out_dir: Path | None = None,
-    ensemble: bool = False,
-    ensemble_n: int = 0,
-    review: bool = True,
-    enforce_checklist: bool = True,
-    checklist_out: Path | None = None,
-) -> None:
-    from workflow_compiler.compiler import WorkflowCompiler
-    from workflow_compiler.ingestion import DocumentParserFactory
-
-    console.print(f"[bold]Ingesting[/] {document} ...")
-    content = DocumentParserFactory().parse(document)
-    console.print(
-        f"  format={content.document_format.value} chars={content.metadata.char_count}"
-    )
-
-    provider = _build_provider(provider_name, model, timeout)
-    console.print(f"[bold]Provider[/]: {provider.name}")
-    ensemble_cfg = _ensemble_config(ensemble, ensemble_n)
-    review_cfg = _review_config(review)
-    if ensemble_cfg.enabled:
-        console.print(
-            f"[bold]Ensemble[/]: on (n={ensemble_cfg.n}, stages={sorted(ensemble_cfg.stages)})"
-        )
-    if review_cfg.enabled:
-        ensembled = ensemble_cfg.stages if ensemble_cfg.enabled else set()
-        active = sorted(review_cfg.stages - ensembled)
-        console.print(
-            f"[bold]Review[/]: on (completeness->grounding->consistency, stages={active})"
-        )
-    else:
-        console.print("[bold]Review[/]: off")
-    compiler = WorkflowCompiler(
-        llm_provider=provider,
-        state_store=_file_store(),
-        ensemble=ensemble_cfg,
-        review=review_cfg,
-    )
-    try:
-        console.print("[bold]Compiling[/] (discover → facts → checklist → graph → review) ...")
-        state = await compiler.compile_document(
-            content.text,
-            review_mode=not auto_approve,
-            persist=persist,
-            enforce_checklist=enforce_checklist,
-            progress=_make_progress(),
-        )
-    finally:
-        await _aclose(provider)
-
-    from workflow_compiler.models import CompilationStage
-
-    if state.stage == CompilationStage.CHECKLISTED:
-        # Halted at the readiness gate: write the form and tell the user how to resume.
-        _print_checklist(state)
-        report_path = checklist_out or document.with_suffix(document.suffix + ".checklist.md")
-        _write_checklist_report(state, report_path)
-        console.print(
-            f"\n[bold yellow]Halted at the readiness checklist[/] for {state.workflow_id}"
-        )
-        console.print(
-            f"Fill in [cyan]{report_path}[/], then run: "
-            f"[cyan]workflow-compiler checklist {state.workflow_id} --answers {report_path}[/]"
-        )
-        return
-
-    _print_summary(state)
-    _print_review(state)
-    if auto_approve:
-        _print_cvpa(state)
-        _print_temporal(state)
-        _print_temporal_code(state)
-    console.print(f"\n[bold green]workflow_id[/]: {state.workflow_id}")
-    console.print(
-        f"[bold]stage[/]: {state.stage.value}  "
-        f"[bold]approval[/]: {state.approval_status.value}"
-    )
-    if not auto_approve:
-        console.print(
-            f"Review the graph, then run: "
-            f"[cyan]workflow-compiler approve {state.workflow_id}[/]"
-        )
-    _write_diagram(state, out)
-    _write_code(state, out_dir)
 
 
 def _project_compiler(provider: BaseLLMProvider, review: bool) -> ProjectCompiler:
@@ -509,12 +293,12 @@ def _project_compiler(provider: BaseLLMProvider, review: bool) -> ProjectCompile
 
     settings = get_settings()
     inner = WorkflowCompiler(
-        llm_provider=provider,  # type: ignore[arg-type]
+        llm_provider=provider,
         state_store=_file_store(),
         review=_review_config(review),
     )
     return ProjectCompiler(
-        llm_provider=provider,  # type: ignore[arg-type]
+        llm_provider=provider,
         workflow_compiler=inner,
         project_store=FileProjectStore(settings.state_store_path),
         segmentation_review=review,
@@ -567,8 +351,6 @@ async def _run_compile_spec(
     spec_dir: Path,
     review: bool,
     persist: bool,
-    auto_approve: bool,
-    out_dir: Path | None,
 ) -> None:
     from workflow_compiler.ingestion import DocumentParserFactory
 
@@ -582,29 +364,17 @@ async def _run_compile_spec(
         project = await compiler.compile_document(
             content.text, persist=persist, progress=_make_progress()
         )
-        if auto_approve:
-            console.print("[bold]Auto-approving specs[/] (straight-through) ...")
-            project = await compiler.approve_spec(
-                project.project_id,
-                reviewer="auto",
-                accept_incomplete=True,
-                allow_unconfirmed_references=True,
-                persist=persist,
-                progress=_make_progress(),
-            )
-            await _write_project_code(compiler, project, out_dir)
     finally:
         await _aclose(provider)
 
     compiler.write_spec_files(project, spec_dir)
     _print_project(project, spec_dir)
-    if not auto_approve:
-        console.print(
-            f"\nReview and edit the spec files in [cyan]{spec_dir}[/], then run:\n"
-            f"  [cyan]workflow-compiler validate {project.project_id} --spec-dir {spec_dir}[/]\n"
-            f"  [cyan]workflow-compiler approve-spec {project.project_id} "
-            f"--spec-dir {spec_dir}[/]"
-        )
+    console.print(
+        f"\nReview and edit the spec files in [cyan]{spec_dir}[/], then run:\n"
+        f"  [cyan]workflow-compiler validate {project.project_id} --spec-dir {spec_dir}[/]\n"
+        f"  [cyan]workflow-compiler approve-spec {project.project_id} "
+        f"--spec-dir {spec_dir}[/]"
+    )
 
 
 async def _run_validate(
@@ -735,73 +505,6 @@ async def _write_project_code(compiler: object, project: object, out_dir: Path |
         )
 
 
-async def _run_checklist(
-    workflow_id: str,
-    answers: Path | None,
-    accept_as_is: bool,
-    auto_approve: bool,
-    provider_name: str | None,
-    model: str | None,
-    timeout: float,
-    out: Path | None,
-    out_dir: Path | None,
-    checklist_out: Path | None,
-) -> None:
-    from workflow_compiler.compiler import WorkflowCompiler
-    from workflow_compiler.models import CompilationStage
-
-    parsed: dict[str, str] = {}
-    if answers is not None:
-        from workflow_compiler.checklist import report as checklist_report
-
-        parsed = checklist_report.parse(answers.read_text(encoding="utf-8"))
-        console.print(f"[bold]Answers[/]: {len(parsed)} item(s) from {answers}")
-
-    # An LLM provider is only needed if the gate clears and downstream stages run.
-    provider = _build_provider(provider_name, model, timeout)
-    compiler = WorkflowCompiler(llm_provider=provider, state_store=_file_store())
-    try:
-        console.print(f"[bold]Applying checklist answers[/] to {workflow_id} ...")
-        state = await compiler.resume_from_checklist(
-            workflow_id,
-            parsed,
-            accept_as_is=accept_as_is,
-            review_mode=not auto_approve,
-            progress=_make_progress(),
-        )
-    finally:
-        await _aclose(provider)
-
-    if state.stage == CompilationStage.CHECKLISTED:
-        _print_checklist(state)
-        report_path = checklist_out or Path(f"{workflow_id}.checklist.md")
-        _write_checklist_report(state, report_path)
-        console.print(f"\n[bold yellow]Still blocked[/] — {len(state.checklist.unmet_required())} "
-                      "required item(s) remain.")
-        console.print(
-            f"Edit [cyan]{report_path}[/] (or add [cyan]--accept-as-is[/]) and re-run the "
-            "checklist command."
-        )
-        return
-
-    _print_summary(state)
-    _print_review(state)
-    if auto_approve:
-        _print_cvpa(state)
-        _print_temporal(state)
-        _print_temporal_code(state)
-    console.print(
-        f"\n[bold green]Checklist cleared[/] {state.workflow_id}  stage={state.stage.value}"
-    )
-    if not auto_approve:
-        console.print(
-            f"Review the graph, then run: "
-            f"[cyan]workflow-compiler approve {state.workflow_id}[/]"
-        )
-    _write_diagram(state, out)
-    _write_code(state, out_dir)
-
-
 async def _run_approve(
     workflow_id: str,
     reviewer: str | None,
@@ -860,92 +563,6 @@ async def _run_show(workflow_id: str) -> None:
         f"\n[bold]stage[/]: {state.stage.value}  "
         f"[bold]approval[/]: {state.approval_status.value}"
     )
-
-
-@app.command(name="inspect")
-def inspect(
-    document: Path = typer.Argument(
-        ..., exists=True, readable=True, help="Path to a business workflow document."
-    ),
-    provider: str = typer.Option(
-        None,
-        "--provider",
-        help="Override the LLM provider (e.g. 'mock'). Defaults to settings (.env).",
-    ),
-    model: str = typer.Option(
-        None, "--model", help="Override the model id. Defaults to settings (.env)."
-    ),
-    timeout: float = typer.Option(
-        120.0, "--timeout", help="Per-request timeout in seconds."
-    ),
-    out: Path = typer.Option(
-        None, "--out", help="Write the generated Mermaid diagram to this file."
-    ),
-) -> None:
-    """Preview the pipeline: ingest -> discover -> facts -> graph (no approval).
-
-    Runs the implemented stages end-to-end so the generated graph and Mermaid
-    diagram can be inspected before downstream stages are built. Uses the
-    configured LLM provider (Nemotron via NVIDIA_API_KEY in .env by default).
-    """
-    import asyncio
-
-    asyncio.run(_run_inspect(document, provider, model, timeout, out))
-
-
-async def _run_inspect(
-    document: Path,
-    provider_name: str | None,
-    model: str | None,
-    timeout: float,
-    out: Path | None,
-) -> None:
-    from workflow_compiler.agents import (
-        FactExtractionAgent,
-        GraphBuilderAgent,
-        WorkflowDiscoveryAgent,
-    )
-    from workflow_compiler.config import get_settings
-    from workflow_compiler.ingestion import DocumentParserFactory
-    from workflow_compiler.llm import ProviderFactory
-    from workflow_compiler.models import WorkflowState
-
-    console.print(f"[bold]Ingesting[/] {document} ...")
-    content = DocumentParserFactory().parse(document)
-    state = WorkflowState(document_text=content.text)
-    console.print(
-        f"  format={content.document_format.value} "
-        f"chars={content.metadata.char_count} sections={len(content.sections)}"
-    )
-
-    settings = get_settings()
-    name = provider_name or settings.llm_provider
-    factory = ProviderFactory()
-    if name == "mock":
-        provider = factory.create("mock")
-    else:
-        provider = factory.create(name, model=model or settings.llm_model, timeout=timeout)
-    chosen_model = getattr(getattr(provider, "config", None), "model", "-")
-    console.print(f"[bold]Provider[/]: {provider.name} (model={chosen_model})")
-
-    try:
-        console.print("[bold]Discovering metadata[/] ...")
-        state = await WorkflowDiscoveryAgent(provider).run(state)
-        console.print("[bold]Extracting facts[/] ...")
-        state = await FactExtractionAgent(provider).run(state)
-    finally:
-        aclose = getattr(provider, "aclose", None)
-        if aclose is not None:
-            await aclose()
-
-    console.print("[bold]Building graph[/] (deterministic) ...")
-    state = await GraphBuilderAgent().run(state)
-
-    _print_summary(state)
-
-    if out is not None and state.mermaid_diagram is not None:
-        out.write_text(state.mermaid_diagram.source, encoding="utf-8")
-        console.print(f"[green]Mermaid diagram written to[/] {out}")
 
 
 def _print_summary(state: object) -> None:

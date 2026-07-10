@@ -44,34 +44,12 @@ class Settings(BaseSettings):
         default=True, description="Block downstream artifacts until the graph is approved."
     )
 
-    ensemble_enabled: bool = Field(
-        default=False,
-        description="Run selected LLM stages N times and consensus-merge the candidates.",
-    )
-    ensemble_n: int = Field(
-        default=3, ge=1, le=8, description="Number of ensemble candidates per stage."
-    )
-    ensemble_temperatures: list[float] = Field(
-        default_factory=lambda: [0.2, 0.5, 0.8],
-        description="Sampling temperatures used to diversify ensemble candidates.",
-    )
-    ensemble_stages: set[str] = Field(
-        default_factory=lambda: {"discovery", "facts"},
-        description="Which LLM stages get the consensus-merge ensemble.",
-    )
-    ensemble_per_candidate_timeout: float = Field(
-        default=300.0, gt=0.0, description="Per-candidate timeout in seconds."
-    )
-    ensemble_overall_timeout: float = Field(
-        default=480.0, gt=0.0, description="Overall ensemble budget in seconds."
-    )
-
     review_enabled: bool = Field(
         default=True,
         description=(
             "Generate one canonical output per LLM stage and improve it with three "
             "sequential review passes (completeness, grounding, consistency). On by "
-            "default; the ensemble takes precedence on any stage it is enabled for."
+            "default."
         ),
     )
     review_stages: set[str] = Field(

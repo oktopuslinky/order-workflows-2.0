@@ -3,50 +3,29 @@
 Compile free-form **business workflow documents** into structured, canonical artifacts through a
 deterministic, reviewable pipeline.
 
-Given a `.docx`, `.pdf`, `.md`, `.html`, or `.txt` description of a business process,
-`workflow-compiler` produces:
+Given a `.docx`, `.pdf`, `.md`, `.html`, or `.txt` description of a business process (one workflow
+or many), `workflow-compiler` produces:
 
-- **Workflow metadata** — name, purpose, actors, systems, triggers, start/end states.
-- **Workflow facts** — atomic, categorized statements extracted from the source (13 categories:
-  inputs, outputs, activities, decisions, rules, events, APIs, systems, exceptions, state
-  transitions, timers, retries, compensation candidates).
+- **Editable workflow specifications** — one human-reviewed spec Markdown file per workflow,
+  holding metadata, facts (activities, decisions, exceptions, compensations, events, …),
+  assumptions, ambiguities, open questions, cross-workflow dependencies, and triggers.
 - **Canonical workflow graph** — a normalized directed graph (NetworkX-backed), built
-  **deterministically** from the facts (no LLM).
-- **Mermaid diagram** — a renderable diagram of the graph.
+  **deterministically** from the approved spec (no LLM).
+- **Mermaid diagram** — a renderable diagram of the graph (CVPA-colored after classification).
 - **Review report** — structural health check (orphans, dead-ends, unreachable nodes, missing
   branches, unintended cycles, …) with a health score.
 - **CVPA classification** — every node mapped to exactly one **Capture / Validate / Process /
   Activate** phase, with rationale and confidence.
 - **Temporal design** — an architecture-only Temporal blueprint (workflow definition, activities,
-  signals, queries, child workflows, timers, retries, compensation activities). *No executable
-  code is generated.*
+  signals, queries, child workflows, timers, retries, compensation activities).
+- **Runnable Temporal Python code** — a standalone bundle per workflow, rendered
+  deterministically from the approved design.
 - **Confidence scores** — per-stage and overall.
 
-A human-in-the-loop **review / approval gate** sits between graph generation and downstream
-artifact production: CVPA and Temporal artifacts are only produced once a graph is approved.
+The human-in-the-loop gate is the **spec**: you edit the spec files and validate them as many
+times as you like; code is only generated from what you approved.
 
 ## Pipeline
-
-```
-Document ─▶ Parser ─▶ Workflow Discovery ─▶ Fact Extraction ─▶ Graph Builder ─▶ Review
-                                                                                   │
-                                                                          ┌────────┴────────┐
-                                                                       approve            reject
-                                                                          │                  │
-                                                          CVPA Classification          (pipeline halts)
-                                                                          │
-                                                                  Temporal Design ─▶ COMPLETED
-```
-
-By default the **Workflow Discovery** and **Fact Extraction** stages each generate one canonical
-output and then run three sequential **review passes** (completeness → grounding → consistency) that
-patch it in place; this is on by default and toggled with `--review` / `--no-review` (see below).
-
-### Spec-centric mode (multi-workflow documents)
-
-For large documents — especially ones describing **several** workflows — the compiler can first
-normalize everything into **human-reviewed workflow specification files** and only then compile
-each workflow independently:
 
 ```
 Document ─▶ Segmentation (every workflow + its sections) ─▶ per-workflow Fact Extraction
@@ -55,14 +34,23 @@ Document ─▶ Segmentation (every workflow + its sections) ─▶ per-workflow
                             ─▶ CVPA ─▶ Temporal Design ─▶ Temporal Code
 ```
 
+A document that describes a **single** workflow yields one segment holding the full document
+text, so single-workflow documents flow through the same pipeline unchanged.
+
 The structured spec model is the source of truth; the Markdown files are a deterministic
 projection of it. Your edits are parsed back deterministically (no re-extraction), recorded with
 provenance (`document-grounded` / `inferred` / `human-provided`), and re-checked for referential
-integrity. The old graph-approval gate becomes automatic: a workflow whose graph review health
-score meets `WORKFLOW_COMPILER_GRAPH_HEALTH_THRESHOLD` (default `0.9`) proceeds straight to code;
-below it, the workflow halts for manual review. Enter this mode with `compile --spec-dir` (below).
+integrity. The graph gate is automatic: a workflow whose graph review health score meets
+`WORKFLOW_COMPILER_GRAPH_HEALTH_THRESHOLD` (default `0.9`) proceeds straight to code; below it,
+the workflow halts for manual review (`approve` / `reject` are the manual override).
 
-See [`docs/architecture.md`](docs/architecture.md) for component and sequence diagrams.
+The readiness checklist (single explicit trigger, declared inputs, both branches on every
+decision, bound compensations, …) is applied during fact extraction and surfaced as each spec's
+**Open Questions** section — answer the questions in the spec file itself. Unanswered *required*
+questions block `approve-spec` (override with `--accept-incomplete`).
+
+See [`docs/architecture.md`](docs/architecture.md) for component and sequence diagrams and
+[`docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md) for the full design.
 
 ## Stack
 
@@ -83,201 +71,44 @@ This installs the package and the `workflow-compiler` console script.
 ## Configure
 
 Copy `.env.example` to `.env` and set your NVIDIA API key (only needed for the LLM-backed stages —
-discovery, fact extraction, CVPA, Temporal):
+segmentation, discovery, fact extraction, spec validation, CVPA, Temporal design):
 
 ```dotenv
 NVIDIA_API_KEY=nvapi-xxxxxxxx
 WORKFLOW_COMPILER_LLM_PROVIDER=nemotron
 WORKFLOW_COMPILER_LLM_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
 WORKFLOW_COMPILER_STATE_STORE_PATH=.workflow_state
+WORKFLOW_COMPILER_GRAPH_HEALTH_THRESHOLD=0.9
 ```
 
 State is persisted as JSON under `WORKFLOW_COMPILER_STATE_STORE_PATH` (default `.workflow_state/`).
 
 ## Use — CLI
 
-Eight commands. `compile`, `checklist`, `validate`, `approve-spec`, `approve`, and `inspect` use
-the LLM (set `NVIDIA_API_KEY`, or pass `--provider mock` — the mock answers every stage with a
-scripted demo workflow, so every command runs offline); `reject` and `show` need no LLM.
-`--version` prints the version, and `workflow-compiler <command> --help` is always the
-authoritative reference.
+Six commands. `compile`, `validate`, `approve-spec`, and `approve` use the LLM (set
+`NVIDIA_API_KEY`, or pass `--provider mock` — the mock answers every stage with a scripted demo
+workflow, so every command runs offline); `reject` and `show` need no LLM. `--version` prints the
+version, and `workflow-compiler <command> --help` is always the authoritative reference.
 
-### `compile <document>` — run discovery → facts → **checklist** → graph → review, stop at the gate
+### `compile <document>` — segment into editable specs, stop at the spec gate
 
-After fact extraction the compiler validates the document against a **pre-generation readiness
-checklist** (derived from `examples/ideal_temporal_workflow.md`). If a *required* item is unmet it
-**halts before building the graph**, writes a fill-in form (`<document>.checklist.md`), and prints
-how to resume. Documents that already satisfy the checklist flow straight through unchanged. Pass
-`--no-checklist` to disable the gate.
+Discovers **every** workflow in the document, extracts facts per workflow (with the sequential
+review pipeline), and writes one editable spec file per workflow plus an `overview.md` to
+`--spec-dir`:
 
 | Flag | Default | Description |
 |---|---|---|
 | `--provider NAME` | from `.env` | Override the LLM provider (e.g. `mock`). |
 | `--model ID` | from `.env` | Override the model id. |
 | `--timeout SECONDS` | `120` | Per-request timeout. |
-| `--auto-approve` | off | Skip the human gate and run the **whole** pipeline (CVPA → Temporal design → Temporal code) in one call. |
-| `--persist` / `--no-persist` | persist | Whether to save the resulting state to the store. |
-| `--out PATH` | — | Write the Mermaid diagram to a file (CVPA-colored when `--auto-approve`). |
-| `--out-dir DIR` | — | Write the generated Temporal code bundle (only produced with `--auto-approve`). |
-| `--checklist` / `--no-checklist` | checklist | Enforce the readiness gate; halt and write a form if a required item is unmet. |
-| `--checklist-out PATH` | `<document>.checklist.md` | Where to write the checklist form. |
-| `--ensemble` | off | Run discovery + fact extraction N times and consensus-merge the candidates (see below). |
-| `--ensemble-n N` | `0` | Number of ensemble candidates (`0` = configured default of 3). |
-| `--review` / `--no-review` | review | Sequential review passes (completeness → grounding → consistency) over discovery + facts (see below). On any stage where `--ensemble` is active, the ensemble takes precedence. |
-
-```bash
-workflow-compiler compile examples/order_workflow.md                       # → prints a workflow_id, stops at gate
-workflow-compiler compile examples/order_workflow.md --provider mock       # → offline, no API key
-workflow-compiler compile examples/order_workflow.md --auto-approve \
-    --out workflow.mmd --out-dir ./generated                               # → full pipeline + colored diagram + code
-workflow-compiler compile examples/order_workflow.md --ensemble --ensemble-n 3   # → 3-way consensus on discovery+facts
-workflow-compiler compile examples/order_workflow.md --no-review                 # → skip the default review passes
-```
-
-#### Regenerating the example bundles
-
-To regenerate a Temporal code bundle end-to-end (e.g. the subscription-upgrade example):
-
-```bash
-workflow-compiler compile examples/subscription_upgrade_workflow.md \
-    --review --timeout 300.0 --auto-approve \
-    --out example_workflow_04.mmd --out-dir ./generated
-```
-
-Two gotchas worth knowing:
-
-- **Windows console encoding.** The progress/table output contains Unicode (e.g. `→`).
-  On a legacy `cp1252` console this raises `UnicodeEncodeError`. Run with UTF-8 mode:
-  `set PYTHONUTF8=1` (PowerShell: `$env:PYTHONUTF8=1`), or prefix `PYTHONUTF8=1` on a
-  POSIX-style shell. This is a console-rendering issue only — it does not affect the
-  generated code.
-- **Nemotron latency.** The reasoning model can be slow; bump `--timeout` (e.g. `300.0`)
-  to avoid `ProviderTimeoutError` on a slow request. `--no-review` also cuts the call count.
-
-The generated `workflow.py`, `activities.py`, and `shared.py` always use **consistent
-identifiers**: activity/child names are normalized once (PascalCase, word boundaries
-preserved) and every call site resolves back to the declared symbol, so the run body never
-references an undefined `snake_case`/`PascalCase` variant. The run body also logs each step
-(`workflow.logger.info("Running step: …")`) so a live run shows what is executing.
-
-### `checklist <workflow_id>` — answer the readiness form and resume a halted run
-
-When `compile` halts at the checklist gate, edit the generated form (fill in the `ANSWER:` lines)
-and pass it back here. Answers are folded in as **deterministic local amendments** (no re-extraction,
-no extra LLM cost); the checklist is re-validated and, once every required item is satisfied, the
-run continues to graph + review (and to code with `--auto-approve`). The form is also the place to
-**confirm or correct** the discovered workflow and facts — it lists what was found.
-
-| Flag | Default | Description |
-|---|---|---|
-| `--answers PATH` | — | The filled-in checklist form to read answers from. |
-| `--accept-as-is` | off | Proceed while accepting any remaining unmet items (the explicit override). |
-| `--auto-approve` | off | Run end-to-end through code generation once the gate clears. |
-| `--out PATH` / `--out-dir DIR` | — | Same outputs as `compile`. |
-| `--checklist-out PATH` | `<id>.checklist.md` | Where to re-write the form if items still remain. |
-
-```bash
-# 1. compile halts and writes examples/my_workflow.md.checklist.md
-workflow-compiler compile examples/my_workflow.md
-# 2. edit that file's ANSWER: lines, then resume (loop until satisfied):
-workflow-compiler checklist <workflow_id> --answers examples/my_workflow.md.checklist.md
-# or force past remaining gaps:
-workflow-compiler checklist <workflow_id> --answers <form> --accept-as-is --auto-approve --out-dir ./generated
-```
-
-### `approve <workflow_id>` — clear the gate, produce CVPA + Temporal design + Temporal code
-
-| Flag | Default | Description |
-|---|---|---|
-| `--reviewer NAME` | — | Reviewer identity recorded on the approval. |
-| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
-| `--out PATH` | — | Write the CVPA-colored Mermaid diagram to a file. |
-| `--out-dir DIR` | — | Write the generated Temporal Python code bundle to a directory. |
-
-```bash
-workflow-compiler approve <workflow_id> --reviewer alice
-workflow-compiler approve <workflow_id> --out workflow.mmd --out-dir ./generated
-```
-
-### `reject <workflow_id>` — halt the pipeline (no LLM)
-
-| Flag | Default | Description |
-|---|---|---|
-| `--reviewer NAME` | — | Reviewer identity. |
-| `--reason TEXT` | — | Why the graph was rejected (recorded in the report). |
-
-```bash
-workflow-compiler reject <workflow_id> --reason "missing cancellation branch"
-```
-
-### `show <workflow_id>` — display a stored workflow (no LLM, no flags)
-
-```bash
-workflow-compiler show <workflow_id>
-```
-
-### `inspect <document>` — preview discovery → facts → graph without saving
-
-| Flag | Default | Description |
-|---|---|---|
-| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
-| `--out PATH` | — | Write the generated Mermaid diagram to a file. |
-
-```bash
-workflow-compiler inspect examples/order_workflow.md --out workflow.mmd
-```
-
-### Sequential review pipeline (default-on)
-
-The **default** quality lever on the **discovery** and **fact-extraction** stages. Rather than
-trusting a single sample, it follows a compiler discipline: **generate one canonical output, then
-improve it with three sequential review passes** — *completeness* (add elements explicitly in the
-document but missing), *grounding* (remove/flag elements not supported by the document), and
-*consistency* (merge duplicates, rename to a canonical label, fix relations). Each pass emits
-**minimal deterministic patches or `no_change`** (never a rewrite), and a pure applier folds them in
-— dropping any addition that duplicates an existing element or isn't grounded in the document, which
-makes the passes **idempotent**. It raises grounding/consistency, not certified truth (the human gate
-stays the oracle). See [§7.11 of `docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md). On by default; toggle
-with `--review` / `--no-review` or via `.env`:
-
-```dotenv
-WORKFLOW_COMPILER_REVIEW_ENABLED=true                  # default; --no-review overrides to off
-WORKFLOW_COMPILER_REVIEW_STAGES=["discovery","facts"]  # which stages get the review pipeline
-```
-
-> Precedence per stage is **ensemble → review → plain**: if `--ensemble` is enabled for a stage the
-> ensemble runs there; otherwise the review pipeline runs; otherwise the plain agent runs.
-
-### Consensus-merge ensemble (`--ensemble`)
-
-Opt-in accuracy mode: runs the **discovery** and **fact-extraction** stages N times at varied
-temperatures and **merges the candidates' parts** instead of trusting one sample — a part that
-appears in most candidates is kept, a single-candidate part is kept only if it grounds in the
-document (and is flagged low-confidence), and conflicts are resolved by vote. It suppresses
-hallucinations but never certifies truth (the human gate stays the oracle). See
-[§7.10 of `docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md). Defaults are configurable via `.env`:
-
-```dotenv
-WORKFLOW_COMPILER_ENSEMBLE_ENABLED=true            # same as passing --ensemble
-WORKFLOW_COMPILER_ENSEMBLE_N=3                      # candidates per stage
-WORKFLOW_COMPILER_ENSEMBLE_TEMPERATURES=[0.2,0.5,0.8]
-WORKFLOW_COMPILER_ENSEMBLE_STAGES=["discovery","facts"]
-WORKFLOW_COMPILER_ENSEMBLE_PER_CANDIDATE_TIMEOUT=300
-WORKFLOW_COMPILER_ENSEMBLE_OVERALL_TIMEOUT=480
-```
-
-> Cost note: the ensemble multiplies the discovery + facts LLM calls by N (run in parallel), which
-> is why it is opt-in and off by default.
-
-### `compile <document> --spec-dir <dir>` — spec-centric mode
-
-Discovers **every** workflow in the document, extracts facts per workflow (with the same review
-pipeline), and writes one editable spec file per workflow plus an `overview.md` to `<dir>`,
-stopping at the **spec gate**:
+| `--persist` / `--no-persist` | persist | Whether to save the resulting project to the store. |
+| `--review` / `--no-review` | review | Sequential review passes (completeness → grounding → consistency) over the LLM stages. |
+| `--spec-dir DIR` | `./specs` | Where to write the spec files. |
 
 ```bash
 workflow-compiler compile big_business_doc.docx --spec-dir ./specs
 # → specs/overview.md, specs/customer-onboarding.md, specs/account-provisioning.md, ...
+workflow-compiler compile examples/order_workflow.md --provider mock   # offline, no API key
 ```
 
 Each spec file contains the workflow's metadata, activities/decisions/exceptions/compensations
@@ -353,22 +184,74 @@ The generated `test_stepthrough.py` runs the bundle under a time-skipping test e
 with the stub activities (triggers mocked) and prints those queries — the quickest way to see
 which branch a conditional actually takes.
 
+### `approve <workflow_id>` — manual override for a below-threshold graph
+
+When a workflow's graph health lands below the auto-approve threshold at `approve-spec`, it is
+left pending. Inspect it (`show`), then approve it manually to produce CVPA + Temporal design +
+code:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--reviewer NAME` | — | Reviewer identity recorded on the approval. |
+| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
+| `--out PATH` | — | Write the CVPA-colored Mermaid diagram to a file. |
+| `--out-dir DIR` | — | Write the generated Temporal Python code bundle to a directory. |
+
+```bash
+workflow-compiler approve <workflow_id> --reviewer alice --out workflow.mmd --out-dir ./generated
+```
+
+### `reject <workflow_id>` — halt a pending workflow (no LLM)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--reviewer NAME` | — | Reviewer identity. |
+| `--reason TEXT` | — | Why the graph was rejected (recorded in the report). |
+
+```bash
+workflow-compiler reject <workflow_id> --reason "missing cancellation branch"
+```
+
+### `show <workflow_id>` — display a stored workflow (no LLM, no flags)
+
+```bash
+workflow-compiler show <workflow_id>
+```
+
+### Sequential review pipeline (default-on)
+
+The **default** quality lever on the LLM stages (segmentation, discovery, fact extraction).
+Rather than trusting a single sample, it follows a compiler discipline: **generate one canonical
+output, then improve it with three sequential review passes** — *completeness* (add elements
+explicitly in the document but missing), *grounding* (remove/flag elements not supported by the
+document), and *consistency* (merge duplicates, rename to a canonical label, fix relations). Each
+pass emits **minimal deterministic patches or `no_change`** (never a rewrite), and a pure applier
+folds them in — dropping any addition that duplicates an existing element or isn't grounded in
+the document, which makes the passes **idempotent**. It raises grounding/consistency, not
+certified truth (the spec gate stays the oracle). See
+[§7.10 of `docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md). On by default; toggle with `--review` /
+`--no-review` or via `.env`:
+
+```dotenv
+WORKFLOW_COMPILER_REVIEW_ENABLED=true                  # default; --no-review overrides to off
+WORKFLOW_COMPILER_REVIEW_STAGES=["discovery","facts"]  # which per-workflow stages get the review pipeline
+```
+
+### Windows console note
+
+The progress/table output contains Unicode (e.g. `→`). On a legacy `cp1252` console this raises
+`UnicodeEncodeError`. Run with UTF-8 mode: `set PYTHONUTF8=1` (PowerShell: `$env:PYTHONUTF8=1`).
+This is a console-rendering issue only — it does not affect the generated code. Nemotron's
+reasoning models can also be slow; bump `--timeout` (e.g. `300.0`) to avoid
+`ProviderTimeoutError` on a slow request.
+
 ## Use — HTTP API
 
 ```bash
 uvicorn workflow_compiler.api.app:app --reload
 ```
 
-| Method | Path                | Body / Params                              | Purpose                                   |
-|--------|---------------------|--------------------------------------------|-------------------------------------------|
-| POST   | `/compile`          | `{document_text, persist?, auto_approve?}` | Compile to a review-ready state.          |
-| POST   | `/approve`          | `{workflow_id, reviewer?}`                 | Approve → run CVPA + Temporal.            |
-| POST   | `/reject`           | `{workflow_id, reviewer?, reason?}`        | Reject a graph.                           |
-| GET    | `/workflow/{id}`    | —                                          | Load a stored workflow state.             |
-| GET    | `/workflows`        | —                                          | List stored workflow ids.                 |
-| GET    | `/health`           | —                                          | Liveness probe.                           |
-
-Spec-centric project endpoints (mirror the `--spec-dir` CLI flow; spec files travel as
+Project endpoints (the compile → validate → approve pipeline; spec files travel as
 `spec_markdown: {slug: markdown}`):
 
 | Method | Path                        | Body                                        | Purpose                                        |
@@ -380,10 +263,20 @@ Spec-centric project endpoints (mirror the `--spec-dir` CLI flow; spec files tra
 | POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes.   |
 | POST   | `/projects/{id}/approve`    | `{workflows?, reviewer?, spec_markdown?, accept_incomplete?, allow_unconfirmed_references?}` | Approve specs, compile every workflow. |
 
+Per-workflow endpoints (viewing plus the manual override for below-threshold graphs):
+
+| Method | Path                | Body / Params                              | Purpose                                   |
+|--------|---------------------|--------------------------------------------|-------------------------------------------|
+| POST   | `/approve`          | `{workflow_id, reviewer?}`                 | Approve → run CVPA + Temporal.            |
+| POST   | `/reject`           | `{workflow_id, reviewer?, reason?}`        | Reject a graph.                           |
+| GET    | `/workflow/{id}`    | —                                          | Load a stored workflow state.             |
+| GET    | `/workflows`        | —                                          | List stored workflow ids.                 |
+| GET    | `/health`           | —                                          | Liveness probe.                           |
+
 Interactive docs are served at `/docs`. Example:
 
 ```bash
-curl -s localhost:8000/compile \
+curl -s localhost:8000/projects/compile \
   -H 'content-type: application/json' \
   -d '{"document_text": "When a customer submits an order, validate payment, then ship it."}'
 ```
@@ -404,6 +297,10 @@ async def main():
 asyncio.run(main())
 ```
 
+For the spec-centric project flow, use `ProjectCompiler` (`workflow_compiler.project_compiler`)
+— it wraps a `WorkflowCompiler` and exposes `compile_document`, `update_specs`, `validate_specs`,
+and `approve_spec`.
+
 For tests / offline work, inject a `MockProvider` and an `InMemoryStateStore`:
 
 ```python
@@ -418,25 +315,28 @@ compiler = WorkflowCompiler(llm_provider=MockProvider(structured=[...]),
 
 ```
 src/workflow_compiler/
-  models/        Pydantic v2 domain models (WorkflowState + every artifact)
+  models/        Pydantic v2 domain models (WorkflowState, CompilationProject + every artifact)
   interfaces/    Abstract contracts (BaseParser, BaseAgent, BaseLLMProvider, StateStore, ReviewManager)
   ingestion/     Document parsers (DOCX/PDF/TXT/Markdown/HTML) + DocumentParserFactory
   llm/           Provider-agnostic LLM layer (ProviderFactory, Nemotron, mock)
   prompts/       Markdown prompt templates + PromptManager
   agents/        Discovery, FactExtraction, GraphBuilder, Review, CVPAClassifier, TemporalGenerator
-                 (+ review_pipeline: default-on sequential review; ensemble: opt-in consensus merge;
+                 (+ review_pipeline: default-on sequential review;
                   segmentation: multi-workflow discovery for the spec-centric front-end)
   spec/          Spec projection layer: deterministic Markdown renderer, parse-back ingestion,
                  provenance-aware spec validator
+  checklist/     Readiness rules (validator) + deterministic answer fold-back (amend),
+                 surfaced as the spec's Open Questions
   graph/         Deterministic NetworkX graph builder, Mermaid renderer, structural reviewer
   review/        DefaultReviewManager (approval gate) + GraphEditor (validated edits)
   storage/       FileStateStore (JSON on disk) + InMemoryStateStore (+ project stores)
-  compiler.py    WorkflowCompiler — end-to-end orchestration
-  project_compiler.py  ProjectCompiler — spec-centric front-end (segment → specs → gate → compile)
+  compiler.py    WorkflowCompiler — per-workflow pipeline engine
+  project_compiler.py  ProjectCompiler — the pipeline front-end (segment → specs → gate → compile)
+  codegen/       Deterministic Temporal Python code generation (Jinja2)
   api/           FastAPI application
   cli/           Typer command-line interface
 examples/        Sample business workflow documents
-docs/            Architecture diagrams
+docs/            Architecture + design docs
 tests/           Pytest suite (unit + integration)
 ```
 

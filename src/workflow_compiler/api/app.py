@@ -1,15 +1,6 @@
 """FastAPI application exposing the workflow compiler.
 
-Endpoints (per the project spec):
-
-- ``POST /compile``           — compile a document into a review-ready state.
-- ``POST /approve``           — approve a graph and run downstream artifacts.
-- ``POST /reject``            — reject a graph.
-- ``GET  /workflow/{id}``     — load a stored workflow state.
-- ``GET  /workflows``         — list stored workflow ids.
-- ``GET  /health``            — liveness probe.
-
-Spec-centric project endpoints:
+Project endpoints (the compile → validate → approve pipeline):
 
 - ``POST /projects/compile``        — segment a document into reviewed specs.
 - ``GET  /projects``                — list stored project ids.
@@ -17,6 +8,15 @@ Spec-centric project endpoints:
 - ``PUT  /projects/{id}/spec``      — fold edited spec Markdown back in (no LLM).
 - ``POST /projects/{id}/validate``  — run the spec validator passes.
 - ``POST /projects/{id}/approve``   — approve specs, compile every workflow.
+
+Per-workflow endpoints (viewing plus the manual override for workflows whose
+graph health fell below the auto-approve threshold):
+
+- ``POST /approve``           — approve a graph and run downstream artifacts.
+- ``POST /reject``            — reject a graph.
+- ``GET  /workflow/{id}``     — load a stored workflow state.
+- ``GET  /workflows``         — list stored workflow ids.
+- ``GET  /health``            — liveness probe.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ from workflow_compiler import __version__
 from workflow_compiler.api.dependencies import get_compiler, get_project_compiler
 from workflow_compiler.api.schemas import (
     ApproveRequest,
-    CompileRequest,
     ProjectApproveRequest,
     ProjectCompileRequest,
     ProjectIdList,
@@ -77,21 +76,6 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         """Liveness probe."""
         return {"status": "ok", "version": __version__}
-
-    @app.post("/compile", response_model=WorkflowStateResponse, tags=["workflows"])
-    async def compile_document(
-        request: CompileRequest,
-        compiler: WorkflowCompiler = Depends(get_compiler),
-    ) -> WorkflowStateResponse:
-        """Compile a workflow document into a review-ready state."""
-        state = await _guard(
-            compiler.compile_document(
-                request.document_text,
-                review_mode=not request.auto_approve,
-                persist=request.persist,
-            )
-        )
-        return WorkflowStateResponse(state=state)
 
     @app.post("/approve", response_model=WorkflowStateResponse, tags=["workflows"])
     async def approve_workflow(

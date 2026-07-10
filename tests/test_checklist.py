@@ -1,24 +1,17 @@
-"""Tests for the pre-generation readiness checklist gate.
+"""Tests for the readiness checklist.
 
-Covers the deterministic validator, the markdown report round-trip, the
-local-amendment path, and the compiler's halt/resume behavior — all offline.
+Covers the deterministic validator and the local-amendment path (the machinery
+behind the spec's Open Questions) — all offline.
 """
 
 from __future__ import annotations
 
-import pytest
-
-from workflow_compiler import WorkflowCompiler
 from workflow_compiler.checklist import ChecklistValidator
 from workflow_compiler.checklist import amend as checklist_amend
-from workflow_compiler.checklist import report as checklist_report
-from workflow_compiler.compiler import ReviewConfig
-from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import (
     ActivityNode,
     ChecklistStatus,
     CompensationNode,
-    CompilationStage,
     DecisionNode,
     EventNode,
     ExceptionNode,
@@ -30,7 +23,6 @@ from workflow_compiler.models import (
     WorkflowStructure,
 )
 from workflow_compiler.models.checklist import ChecklistSeverity
-from workflow_compiler.storage import InMemoryStateStore
 
 
 def _fact(category: FactCategory, statement: str, index: int = 1) -> WorkflowFact:
@@ -123,31 +115,6 @@ def test_non_snake_input_names_need_confirmation() -> None:
     assert "customerId" in (names.evidence or "")
 
 
-# -- report round-trip ------------------------------------------------------
-
-
-def test_report_renders_form_and_parses_answers_back() -> None:
-    state = _broken_state()
-    state.checklist = ChecklistValidator().validate(state)
-    text = checklist_report.render(state)
-    assert "Workflow readiness checklist" in text
-    assert "ANSWER:" in text
-    assert state.workflow_id in text
-
-    # Fill in the first real answer line (the prose mentions `ANSWER:` too, which
-    # must be ignored because it sits under no item heading).
-    filled = text.replace("\nANSWER:", "\nANSWER: order.received", 1)
-    parsed = checklist_report.parse(filled)
-    assert parsed == {"R1-trigger": "order.received"}
-
-
-def test_parse_ignores_blank_answers() -> None:
-    state = _broken_state()
-    state.checklist = ChecklistValidator().validate(state)
-    parsed = checklist_report.parse(checklist_report.render(state))
-    assert parsed == {}
-
-
 # -- amendment --------------------------------------------------------------
 
 
@@ -183,44 +150,3 @@ def test_accept_as_is_clears_remaining_required_items() -> None:
     # Answer only the trigger; accept the rest as-is.
     result = checklist_amend.apply(state, {"R1-trigger": "order.received"}, accept_as_is=True)
     assert result.checklist.is_satisfied()
-
-
-# -- compiler halt / resume (offline) --------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_resume_from_checklist_builds_graph_when_cleared() -> None:
-    # Seed a state halted at the gate: ideal structure but a missing trigger.
-    state = _ideal_state()
-    state.workflow_metadata = state.workflow_metadata.model_copy(update={"trigger_events": []})
-    state.checklist = ChecklistValidator().validate(state)
-    state.stage = CompilationStage.CHECKLISTED
-    assert not state.checklist.is_satisfied()
-
-    store = InMemoryStateStore()
-    await store.save(state)
-    compiler = WorkflowCompiler(
-        llm_provider=MockProvider(), state_store=store, review=ReviewConfig(enabled=False)
-    )
-
-    # Resuming with the trigger answer clears the gate; graph build is deterministic.
-    result = await compiler.resume_from_checklist(
-        state.workflow_id, {"R1-trigger": "order.received"}, review_mode=True
-    )
-    assert result.stage == CompilationStage.REVIEWED
-    assert result.workflow_graph is not None
-
-
-@pytest.mark.asyncio
-async def test_resume_stays_halted_when_required_items_unmet() -> None:
-    state = _broken_state()
-    state.checklist = ChecklistValidator().validate(state)
-    state.stage = CompilationStage.CHECKLISTED
-
-    store = InMemoryStateStore()
-    await store.save(state)
-    compiler = WorkflowCompiler(llm_provider=MockProvider(), state_store=store)
-
-    result = await compiler.resume_from_checklist(state.workflow_id, {}, review_mode=True)
-    assert result.stage == CompilationStage.CHECKLISTED
-    assert result.workflow_graph is None

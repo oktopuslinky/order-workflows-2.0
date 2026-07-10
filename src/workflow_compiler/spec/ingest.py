@@ -28,6 +28,7 @@ from workflow_compiler.models import (
     CompensationNode,
     CrossReference,
     DecisionNode,
+    EventKind,
     EventNode,
     ExceptionNode,
     FactCategory,
@@ -97,7 +98,7 @@ _TAIL_FIELDS: dict[str, dict[str, str]] = {
     "decision": {"after": "after", "yes": "yes_target", "no": "no_target"},
     "exception": {"raised by": "raised_by"},
     "compensation": {"compensates": "compensates"},
-    "event": {"emitted by": "emitted_by"},
+    "event": {"kind": "kind", "emitted by": "emitted_by"},
 }
 _ENTITY_SECTIONS: dict[str, str] = {
     ACTIVITIES_SECTION: "activity",
@@ -364,10 +365,35 @@ def _entity_label_field(kind: str) -> str:
     return {"decision": "question", "exception": "reason"}.get(kind, "name")
 
 
-def _build_entity(kind: str, entity_id: str, label: str, fields: dict[str, str | None]):
+def _build_entity(
+    kind: str,
+    entity_id: str,
+    label: str,
+    fields: dict[str, str | None],
+    warnings: list[str] | None = None,
+):
     common: dict[str, object] = {"id": entity_id, _entity_label_field(kind): label}
     for key, field_name in _TAIL_FIELDS[kind].items():
         common[field_name] = fields.get(key)
+    if kind == "event":
+        # ``kind`` is an enum with a default: normalize a user-typed value
+        # (``signal-wait`` / ``Signal Wait`` → ``signal_wait``) and drop an
+        # absent/invalid one so the model default (or the preserved old value,
+        # see _merge_structure) applies instead of a validation error.
+        raw = common.get("kind")
+        if raw is None:
+            common.pop("kind", None)
+        else:
+            normalized = str(raw).strip().lower().replace("-", "_").replace(" ", "_")
+            if normalized in {k.value for k in EventKind}:
+                common["kind"] = normalized
+            else:
+                if warnings is not None:
+                    warnings.append(
+                        f"event {entity_id}: unknown kind '{raw}' ignored "
+                        f"(expected one of: {', '.join(k.value for k in EventKind)})."
+                    )
+                common.pop("kind", None)
     factory = {
         "activity": ActivityNode,
         "decision": DecisionNode,
@@ -410,7 +436,12 @@ def _merge_structure(
             entity_id = entry.id
             if entity_id and entity_id in old_items:
                 old = old_items[entity_id]
-                updated = _build_entity(kind, entity_id, entry.label, entry.fields)
+                updated = _build_entity(kind, entity_id, entry.label, entry.fields, warnings)
+                if kind == "event" and entry.fields.get("kind") is None:
+                    # The line carries no explicit kind — preserve the stored
+                    # classification (trigger / signal_wait / output_emit)
+                    # instead of resetting it to the model default.
+                    updated = updated.model_copy(update={"kind": old.kind})
                 if updated != old:
                     changes.append(f"modified {kind} {entity_id}")
                 new_lists[kind].append(updated)
@@ -425,7 +456,7 @@ def _merge_structure(
                 if prov != Provenance.DOCUMENT_GROUNDED:
                     provenance[f"{kind}:{entity_id}"] = prov
                 new_lists[kind].append(
-                    _build_entity(kind, entity_id, entry.label, entry.fields)
+                    _build_entity(kind, entity_id, entry.label, entry.fields, warnings)
                 )
                 changes.append(f"added {kind} {entity_id} '{entry.label}' ({prov.value})")
             seen_ids.add(entity_id)

@@ -241,20 +241,21 @@ class WorkflowStructure(WorkflowBaseModel):
             for t in self.triggers
         ]
 
-        # Strip parallel-group membership from activities whose control flow is
-        # gated by a decision (its anchor or a branch target). Such activities
-        # have ordering/data dependencies and must not be folded into a fork —
-        # this is what stops dependent steps being mis-parallelized.
+        # Strip parallel-group membership from activities that are a decision's
+        # *anchor* (``after``): the decision consumes that activity's result, so
+        # it is ordered and must not be folded into a fork. A decision *branch
+        # target* keeps its group — routing to a member of a parallel group means
+        # the decision gates the whole group (the graph builder redirects the
+        # branch edge to the group's fork node).
         gated: set[str] = set()
         for d in decisions:
-            for ref in (d.after, d.yes_target, d.no_target):
-                if ref in activities:
-                    gated.add(ref)
+            if d.after in activities:
+                gated.add(d.after)
         normalized_activities: list[ActivityNode] = []
         for a in self.activities:
             if a.parallel_group is not None and a.id in gated:
                 warnings.append(
-                    f"activity {a.id} is gated by a decision — removed from parallel group."
+                    f"activity {a.id} anchors a decision — removed from parallel group."
                 )
                 normalized_activities.append(a.model_copy(update={"parallel_group": None}))
             else:

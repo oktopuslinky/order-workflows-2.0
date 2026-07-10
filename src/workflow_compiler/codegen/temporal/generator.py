@@ -982,33 +982,64 @@ class _RunBodyEmitter:
         r"^\s*(\w+)\s*(==|!=)\s*('[^']*'|\"[^\"]*\"|\d+(?:\.\d+)?|True|False|None)\s*$"
     )
 
+    #: A bare ``<identifier>`` predicate (e.g. ``is_settleable``) — resolvable
+    #: when it names a step result variable or a workflow input field.
+    _BARE_PREDICATE = re.compile(r"^\s*(\w+)\s*$")
+
     def _predicate_expr(self, step: TemporalStep) -> str | None:
         """Render the branch predicate as code when it resolves to known data.
 
-        Only the conservative ``<ident> ==/!= <literal>`` shape is emitted, and
-        only when the identifier is a step result variable or a workflow input
-        field — anything else stays a TODO placeholder rather than guessing.
+        Two conservative shapes are emitted: ``<ident> ==/!= <literal>`` and a
+        bare ``<ident>`` (truthiness), and only when the identifier is a step
+        result variable or a workflow input field — anything else stays a TODO
+        placeholder rather than guessing.
         """
         if not step.predicate:
             return None
         match = self._SIMPLE_PREDICATE.match(step.predicate)
-        if match is None:
-            return None
-        ident, op, literal = match.group(1), match.group(2), match.group(3)
+        if match is not None:
+            ident, op, literal = match.group(1), match.group(2), match.group(3)
+            resolved = self._resolve_identifier(ident)
+            return f"{resolved} {op} {literal}" if resolved is not None else None
+        bare = self._BARE_PREDICATE.match(step.predicate)
+        if bare is not None:
+            resolved = self._resolve_identifier(bare.group(1))
+            return f"bool({resolved})" if resolved is not None else None
+        return None
+
+    def _resolve_identifier(self, ident: str) -> str | None:
+        """Resolve a predicate identifier to a result variable or input field."""
         snake = _snake(ident)
         if snake in self._result_vars.values() or snake in self._result_by_ref.values():
-            return f"{snake} {op} {literal}"
+            return snake
         var = self._result_by_ref.get(snake) or self._result_by_ref.get(_squash(ident))
         if var is not None:
-            return f"{var} {op} {literal}"
+            return var
         if any(_snake(p.name) == snake for p in self._design.workflow_inputs):
-            return f"arg.{snake} {op} {literal}"
+            return f"arg.{snake}"
         return None
 
     # -- helpers ------------------------------------------------------------
 
     def _input_expr(self, input_class: str, step: TemporalStep) -> str:
-        """Construct the input dataclass, binding params that have a source."""
+        """Construct the input dataclass, binding params that have a source.
+
+        When the plan carries no bindings for the step, fall back to binding
+        each of the activity's declared params whose name matches a workflow
+        input field (name-identical only — never a guess), so a first step like
+        ``ValidateOrder(order_id)`` is not emitted with an empty input.
+        """
+        if not step.bindings:
+            activity = self._activities.get(self._ref_name(step.ref, step.id))
+            if activity is not None:
+                input_names = {_snake(p.name) for p in self._design.workflow_inputs}
+                kwargs = [
+                    f"{_snake(param.name)}=arg.{_snake(param.name)}"
+                    for param in activity.effective_params()
+                    if _snake(param.name) in input_names
+                ]
+                if kwargs:
+                    return f"{input_class}({', '.join(kwargs)})"
         return self._input_expr_from_bindings(input_class, step.bindings)
 
     def _input_expr_from_bindings(self, input_class: str, bindings) -> str:  # type: ignore[no-untyped-def]

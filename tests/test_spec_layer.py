@@ -22,6 +22,7 @@ from workflow_compiler.models import (
     CompensationNode,
     CrossReference,
     DecisionNode,
+    EventKind,
     EventNode,
     ExceptionNode,
     FactCategory,
@@ -167,8 +168,38 @@ class TestRoundTrip:
         markdown = render_spec(spec, refs)
         result = ingest_spec_markdown(spec, markdown, _DOC, refs)
         assert result.triggers == []
+
+    def test_event_kind_survives_round_trip(self) -> None:
+        """trigger / signal_wait kinds must not decay to the output_emit default."""
+        spec, refs = _full_spec(), _refs()
+        spec.facts.structure.events[0] = spec.facts.structure.events[0].model_copy(
+            update={"kind": EventKind.SIGNAL_WAIT}
+        )
+        markdown = render_spec(spec, refs)
+        assert "kind: signal_wait" in markdown
+        result = ingest_spec_markdown(spec, markdown, _DOC, refs)
+        assert result.spec.facts.structure.events[0].kind is EventKind.SIGNAL_WAIT
         assert result.changes == []
-        assert result.warnings == []
+
+    def test_event_kind_preserved_when_line_omits_it(self) -> None:
+        """A legacy/edited event line without `kind:` keeps the stored kind."""
+        spec, refs = _full_spec(), _refs()
+        spec.facts.structure.events[0] = spec.facts.structure.events[0].model_copy(
+            update={"kind": EventKind.TRIGGER}
+        )
+        markdown = render_spec(spec, refs).replace("kind: trigger; ", "")
+        result = ingest_spec_markdown(spec, markdown, _DOC, refs)
+        assert result.spec.facts.structure.events[0].kind is EventKind.TRIGGER
+
+    def test_event_kind_user_edit_applies(self) -> None:
+        """Editing the kind tail reclassifies the event deterministically."""
+        spec, refs = _full_spec(), _refs()
+        markdown = render_spec(spec, refs).replace(
+            "kind: output_emit", "kind: signal-wait"  # hyphen variant normalizes
+        )
+        result = ingest_spec_markdown(spec, markdown, _DOC, refs)
+        assert result.spec.facts.structure.events[0].kind is EventKind.SIGNAL_WAIT
+        assert any("modified event v1" in c for c in result.changes)
 
     def test_editing_a_trigger_condition_is_reconstructed(self) -> None:
         spec, refs, triggers = _full_spec(), _refs(), _triggers()

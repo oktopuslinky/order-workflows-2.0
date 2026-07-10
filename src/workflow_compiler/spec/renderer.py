@@ -219,7 +219,7 @@ def render_spec(
         EVENTS_SECTION,
         [
             f"- [{v.id}] {v.name}"
-            + _tail([("emitted by", v.emitted_by)])
+            + _tail([("kind", v.kind.value), ("emitted by", v.emitted_by)])
             + _marker(spec, f"event:{v.id}")
             for v in structure.events
         ],

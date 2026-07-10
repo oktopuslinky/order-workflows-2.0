@@ -296,6 +296,54 @@ def test_branch_predicate_resolves_to_step_result() -> None:
     assert "= True  # TODO: set from a real condition" not in src
 
 
+def test_bare_identifier_predicate_resolves_to_step_result() -> None:
+    """A bare-identifier predicate naming a step result is emitted as bool(var)."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Settle",
+        activities=[
+            TemporalActivityDesign(name="ValidateOrder"),
+            TemporalActivityDesign(name="ReserveInventory"),
+        ],
+        plan=[
+            TemporalStep(
+                id="v",
+                kind=StepKind.ACTIVITY,
+                ref="ValidateOrder",
+                result_name="is_settleable",
+            ),
+            TemporalStep(
+                id="b",
+                kind=StepKind.BRANCH,
+                predicate="is_settleable",
+                lanes=[
+                    [TemporalStep(id="r", kind=StepKind.ACTIVITY, ref="ReserveInventory")],
+                    [],
+                ],
+            ),
+        ],
+    )
+    src = _workflow_src(design)
+    assert "= bool(is_settleable)  # branch condition: is_settleable" in src
+    assert "= True  # TODO: set from a real condition" not in src
+
+
+def test_unbound_step_inputs_fall_back_to_matching_workflow_inputs() -> None:
+    """A step with no bindings binds activity params that name workflow inputs."""
+    design = TemporalWorkflowDesign(
+        workflow_name="Settle",
+        workflow_inputs=[TemporalParam(name="order_id", type="str")],
+        activities=[
+            TemporalActivityDesign(
+                name="ValidateOrder",
+                params=[TemporalParam(name="order_id", type="str")],
+            )
+        ],
+        plan=[TemporalStep(id="v", kind=StepKind.ACTIVITY, ref="ValidateOrder")],
+    )
+    src = _workflow_src(design)
+    assert "ValidateOrderInput(order_id=arg.order_id)" in src
+
+
 def _graph() -> WorkflowGraph:
     return WorkflowGraph(
         nodes=[

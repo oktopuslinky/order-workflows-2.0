@@ -47,8 +47,10 @@ def _node_by_label(graph, label):  # type: ignore[no-untyped-def]
 # --- Upstream normalization: parallel / decision / orphan guardrails ---------
 
 
-def test_validated_strips_parallel_group_from_decision_gated_activity() -> None:
-    """An activity gated by a decision must not stay folded into a parallel group."""
+def test_validated_strips_parallel_group_from_decision_anchor_only() -> None:
+    """A decision's anchor is ordered (its result feeds the decision) and must
+    leave its parallel group; a branch *target* keeps its group — the decision
+    gates the whole group (the builder routes the branch edge to the fork)."""
     structure = WorkflowStructure(
         activities=[
             ActivityNode(id="a1", name="Reprovision", parallel_group="g"),
@@ -62,7 +64,7 @@ def test_validated_strips_parallel_group_from_decision_gated_activity() -> None:
     clean, warnings = structure.validated()
     groups = {a.id: a.parallel_group for a in clean.activities}
     assert groups["a1"] is None  # gated as the decision anchor
-    assert groups["a2"] is None  # gated as a branch target
+    assert groups["a2"] == "g"  # branch target: the decision gates the group
     assert groups["a3"] == "g"  # genuinely parallel — left intact
     assert any("parallel group" in w for w in warnings)
 

@@ -151,6 +151,7 @@ class WorkflowGraphBuilder:
         self._state_counter = 0
         self._edge_counter = 0
         self._gateway_counter = 0
+        self._fork_of_node: dict[str, str] = {}
 
         self._add_node(_START, "Start", NodeType.START)
         self._add_node(_END, "End", NodeType.END)
@@ -286,6 +287,10 @@ class WorkflowGraphBuilder:
             )
             specs.append(_EdgeSpec(prev_out, fork, EdgeType.SEQUENCE))
             for node_id in node_ids:
+                # A decision branch that targets a group member routes to the
+                # whole group — remember each member's fork so the weave can
+                # redirect the branch edge there.
+                self._fork_of_node[node_id] = fork
                 specs.append(_EdgeSpec(fork, node_id, EdgeType.SEQUENCE, label="parallel"))
                 specs.append(_EdgeSpec(node_id, join, EdgeType.SEQUENCE, label="parallel"))
             prev_out = join
@@ -300,9 +305,17 @@ class WorkflowGraphBuilder:
         yes_target: str | None,
         no_target: str | None,
     ) -> None:
-        """Insert ``decision`` after ``anchor`` with explicit yes/no branch targets."""
+        """Insert ``decision`` after ``anchor`` with explicit yes/no branch targets.
+
+        A branch that targets a member of a parallel group gates the whole
+        group, so the edge is redirected to the group's fork node.
+        """
         index = self._find_sequence(specs, anchor)
         follower = specs[index].target if index is not None else _END
+        if yes_target is not None:
+            yes_target = self._fork_of_node.get(yes_target, yes_target)
+        if no_target is not None:
+            no_target = self._fork_of_node.get(no_target, no_target)
         replacement = [
             _EdgeSpec(anchor, decision, EdgeType.SEQUENCE),
             _EdgeSpec(decision, yes_target or follower, EdgeType.CONDITIONAL, condition="yes"),

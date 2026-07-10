@@ -198,6 +198,12 @@ class GraphReviewer:
         for node in graph.nodes:
             if node.node_type is NodeType.END or node.id in isolated:
                 continue
+            # Terminal EVENT nodes are intentional: the builder wires an
+            # output-emit as ``activity -> event`` with no continuation (the
+            # event is data leaving the workflow, not control flow). Signal
+            # waits are NodeType.SIGNAL and stay subject to this check.
+            if node.node_type is NodeType.EVENT:
+                continue
             if nx_graph.out_degree(node.id) == 0:
                 issues.append(
                     ReviewIssue(

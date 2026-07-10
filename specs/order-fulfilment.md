@@ -1,4 +1,4 @@
-# Order Management Operations
+# Order Fulfilment
 
 <!--
   workflow-compiler specification (v1) — slug: order-fulfilment
@@ -9,122 +9,74 @@
 -->
 
 ## Purpose
-Manages the lifecycle of an order from placement through fulfillment to potential return, ensuring inventory, payment, and shipping processes are executed correctly.
+The Order Fulfilment workflow ships a placed order and captures its payment by picking items, packing the shipment, dispatching it, and capturing the previously-authorised payment.
 
 ## Metadata
 - domain: 
 - owner: 
 - version: 0.1.0
-- actors: Shopper, Order Operations, Warehouse Operator, Fulfillment Operations, Returns Operations, Customer
-- systems: Order Service, Catalogue Service, Inventory Service, Payment Gateway, Fulfillment Service, Warehouse Service, Carrier Service, Returns Service
-- triggers: checkout.submitted, order.fulfil, return.requested
-- start states: Cart submitted for checkout, Order placed, Return requested
-- end states: Order placed or rejected, Order fulfilled or cancelled, Return processed or rejected
+- actors: Warehouse Operator, Fulfilment Operations
+- systems: Fulfilment Service, Warehouse Service, Carrier Service, Payment Gateway
+- triggers: Order placed and order.fulfil request received by Fulfilment Service
+- start states: placed
+- end states: shipped, cancelled
 - tags: 
 
 ## Inputs
-- cart_id
-- customer_id
-- amount
-- currency
-- order_id
-- shipment_id
-- reason_code
-
-## Outputs
 - order_id
 - authorization_id
-- placement_status
+
+## Outputs
 - shipment_id
 - payment_id
 - fulfilment_status
-- return_id
-- refund_id
-- return_status
 
 ## Business Rules
-- BR-2: Inventory must be reserved before payment is authorised
-- BR-3: Payment must be authorised before the order is created
-- BR-2: The shipment must be packed before it is dispatched
-- BR-3: Payment is captured only after the carrier confirms pickup
-- BR-2: The returned item must be received before the refund is issued
-- BR-3: A refund may not exceed the captured payment amount
+- BR-1: Order must be in placed state for fulfilment
+- BR-2: Shipment must be packed before dispatch
+- BR-3: Payment capture only after carrier pickup confirmation
 
 ## API Interfaces
-- /orders/validate-cart
-- /inventory/reserve
-- /payments/authorize
-- /orders/create
-- /warehouse/pick
-- /warehouse/pack
-- /carrier/dispatch
-- /payments/capture
-- /returns/authorize
-- /warehouse/receive
-- /payments/refund
+- Warehouse Service /warehouse/pick
+- Warehouse Service /warehouse/pack
+- Carrier Service /carrier/dispatch
+- Payment Gateway /payments/capture
 
 ## Systems Involved
-- Order Service
-- Catalogue Service
-- Inventory Service
-- Payment Gateway
 - Fulfilment Service
 - Warehouse Service
 - Carrier Service
-- Returns Service
+- Payment Gateway
 
 ## Timers and SLAs
-- Validate the cart must complete within 5 seconds
-- Authorise payment must complete within 30 seconds
-- Dispatch the shipment must complete within 60 seconds
-- Carrier pickup confirmation must arrive within 12 hours
-- Authorise the return must complete within 10 seconds
-- Issue the refund must complete within 30 seconds
+- Dispatch shipment within 60 seconds
+- Carrier pickup confirmation within 12 hours
 
 ## Retries
-- Reserve inventory: retry up to 3 times with exponential backoff starting at 2 seconds
-- Authorise payment: retry up to 2 times with a fixed 5-second delay
-- Dispatch the shipment: retry up to 3 times with exponential backoff starting at 2 seconds
-- Capture payment: retry up to 5 times with exponential backoff starting at 1 second
-- Receive the returned item: retry up to 3 times with exponential backoff starting at 2 seconds
-- Issue the refund: retry up to 5 times with exponential backoff starting at 1 second
+- Dispatch shipment: up to 3 times with exponential backoff (start 2 seconds)
+- Capture payment: up to 5 times with exponential backoff (start 1 second)
 
 ## Activities
-- [a1] Validate Cart
-- [a2] Reserve Inventory
-- [a3] Authorise Payment
-- [a4] Create Order
-- [a5] Pick Items
-- [a6] Pack Shipment
-- [a7] Dispatch Shipment
-- [a8] Capture Payment
-- [a9] Authorise Return
-- [a10] Receive Returned Item
-- [a11] Issue Refund
+- [a1] Pick items
+- [a2] Pack shipment
+- [a3] Dispatch shipment
+- [a4] Wait for carrier pickup confirmation
+- [a5] Capture payment
 
 ## Decisions
-- [d1] Is Cart Eligible? — after: a1; yes: a2; no: e1
-- [d2] Is Payment Authorised? — after: a3; yes: a4; no: e2
-- [d3] Is Dispatch Accepted? — after: a7; yes: a8; no: e3
-- [d4] Is Return Eligible? — after: a9; yes: a10; no: e4
+- [d1] Dispatch accepted? — after: a3; yes: a4; no: e1
 
 ## Exceptions
-- [e1] CartNotEligible
-- [e2] PaymentDeclined — raised by: a3
-- [e3] CarrierRejected — raised by: a7
-- [e4] ReturnNotEligible
-- [e5] PickupTimeout — raised by: a7
-- [e6] RefundFailed — raised by: a11
+- [e1] CarrierRejected — raised by: a3
+- [e2] PickupTimeout — raised by: a4
 
 ## Compensations
-- [c1] Release Inventory — compensates: a2
-- [c2] Unpack Shipment — compensates: a6
+- [c1] Unpack shipment — compensates: a2
 
 ## Events
-- [v1] [ev1] checkout.submitted — emitted by: start
-- [v2] [ev2] order.fulfil — emitted by: a4
-- [v3] [ev3] return.requested — emitted by: start
-- [v4] [ev4] carrier.picked_up — emitted by: a7
+- [v1] order.fulfil request — emitted by: start
+- [v3] shipment_id — emitted by: a3 [human]
+- [v4] payment_id — emitted by: a5 [human]
 
 ## State Transitions
 <!-- none -->
@@ -139,8 +91,12 @@ Manages the lifecycle of an order from placement through fulfillment to potentia
 <!-- none -->
 
 ## Open Questions
-<!-- none -->
+- [x] (R9-state-transitions) Confirm these state transitions are descriptive only (they will be ignored by code generation).
+  Answer: Yes — descriptive only. Removed from the spec; control flow is modelled by the Activities, Decisions, Exceptions, and Compensations sections
 
 ## Cross-Workflow Dependencies
-- [x] uses output `orderid` of `order-placement` as input `orderid` — Order Fulfilment consumes the order_id produced by Order Placement
-- [x] provides output `shipmentid` to `order-return` input `shipmentid` — Order Return consumes the shipment_id produced by Order Fulfilment
+- [x] uses output `order_id` of `order-placement` as input `order_id` — Order Fulfilment consumes the order_id produced by Order Placement
+- [x] provides output `shipment_id` to `order-return` input `shipment_id` — Order Return consumes the shipment_id produced by Order Fulfilment
+
+## Triggers
+<!-- none -->

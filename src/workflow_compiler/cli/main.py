@@ -542,9 +542,21 @@ def _print_project(project: object, spec_dir: Path) -> None:
         )
     for warning in project.warnings:
         console.print(f"  [yellow]warning[/]: {warning}")
+    from workflow_compiler.models import Severity
+
+    colors = {
+        Severity.BLOCKING: "bold red",
+        Severity.WARNING: "yellow",
+        Severity.INFO: "dim",
+    }
     for slug, findings in project.validation_findings.items():
         for finding in findings:
-            console.print(f"  [yellow]{slug}[/]: {finding}")
+            color = colors.get(finding.severity, "yellow")
+            loc = f" {finding.location}" if finding.location else ""
+            suffix = f" ([italic]{finding.suggestion}[/])" if finding.suggestion else ""
+            console.print(
+                f"  [{color}]{finding.tag}[/] [cyan]{slug}[/]{loc}: {finding.message}{suffix}"
+            )
 
 
 async def _run_compile_spec(
@@ -620,6 +632,12 @@ async def _run_validate(
 
     compiler.write_spec_files(project, spec_dir)
     _print_project(project, spec_dir)
+    if project.has_blocking_findings():
+        console.print(
+            "\n[bold red]Blocking findings must be resolved before generation.[/] "
+            "Fix the [bold red]BLOCK[/] items above in the spec files and re-run validate."
+        )
+        raise typer.Exit(code=1)
     console.print(
         "\nSpec files re-written with the validator's fixes. Review the findings, "
         "edit again if needed, then run "
@@ -688,6 +706,7 @@ async def _write_project_code(compiler: object, project: object, out_dir: Path |
     assert isinstance(project, CompilationProject)
     if out_dir is None:
         return
+    designs = {}
     for slug, workflow_id in project.workflow_ids.items():
         state = await compiler.workflow_compiler.load_state(workflow_id)
         package_dir_name = slug.replace("-", "_")
@@ -697,8 +716,23 @@ async def _write_project_code(compiler: object, project: object, out_dir: Path |
             _write_diagram(state, workflow_dir / "diagram.mmd")
         if state.stage is CompilationStage.COMPLETED:
             _write_code(state, out_dir, package_dir_name=package_dir_name)
+            if state.temporal_design is not None:
+                designs[slug] = state.temporal_design
         else:
             console.print(f"  [yellow]{slug}[/]: not completed, no code written")
+
+    # Project glue: shared contracts + trigger topology next to the bundles.
+    if len(designs) > 1 or project.triggers:
+        from workflow_compiler.codegen.temporal.project_generator import (
+            generate_project_files,
+        )
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for generated in generate_project_files(designs, project.triggers):
+            (out_dir / generated.path).write_text(generated.content, encoding="utf-8")
+        console.print(
+            f"  [green]project[/]: wrote contracts.py + README.md to {out_dir}"
+        )
 
 
 async def _run_checklist(

@@ -45,6 +45,7 @@ from workflow_compiler.models import (
     TemporalParam,
     TemporalStep,
     TemporalTimerDesign,
+    TemporalTriggerDesign,
     TemporalWorkflowDesign,
     WorkflowGraph,
     pair_gate_timer,
@@ -60,6 +61,13 @@ _DEFAULT_TIMEOUT_SECONDS = 60.0
 
 #: Timeout used when executing saga compensation activities.
 _COMPENSATION_TIMEOUT_SECONDS = 60.0
+
+#: Start-to-close timeout for a fire-and-forget trigger activity (start only).
+_TRIGGER_START_TIMEOUT_SECONDS = 60.0
+
+#: Start-to-close timeout for a blocking trigger activity — generous, because
+#: the activity stays open for the *target workflow's* full duration.
+_TRIGGER_BLOCKING_TIMEOUT_SECONDS = 3600.0
 
 _INDENT = "    "
 
@@ -172,6 +180,25 @@ class _Child:
 
 
 @dataclass(frozen=True)
+class _Trigger:
+    activity_name: str
+    fn_name: str
+    input_class: str
+    target_workflow_name: str
+    task_queue: str
+    blocking: bool
+    result_type: str
+    id_expr: str
+    description: str | None
+
+
+def _trigger_fn_name(trigger: TemporalTriggerDesign) -> str:
+    """The start-activity function name for a trigger, keyed by wait mode."""
+    prefix = "start_and_await_" if trigger.mode == "blocking" else "start_"
+    return prefix + _snake(trigger.target_workflow_name)
+
+
+@dataclass(frozen=True)
 class _Signal:
     method: str
     attr: str
@@ -197,8 +224,10 @@ class _Timer:
 class TemporalPythonCodeGenerator:
     """Render a :class:`TemporalWorkflowDesign` into a :class:`TemporalCodeBundle`."""
 
-    def __init__(self) -> None:
-        """Configure the Jinja environment over the bundled templates."""
+    def __init__(self, *, stepwise: bool = False) -> None:
+        """Configure the Jinja environment; ``stepwise`` gates every plan step
+        behind an ``advance`` signal (opt-in interactive step-through)."""
+        self._stepwise = stepwise
         self._env = Environment(
             loader=FileSystemLoader(str(_TEMPLATE_DIR)),
             undefined=StrictUndefined,
@@ -226,9 +255,14 @@ class TemporalPythonCodeGenerator:
         signals = self._signals(design)
         queries = self._queries(design)
         timers = self._timers(design)
+        triggers = self._trigger_contexts(design)
 
-        plan = design.plan or self._synthesize_plan(design, graph)
-        body = _RunBodyEmitter(design).emit(plan)
+        # A plan holding only injected trigger steps (the design LLM emitted no
+        # plan of its own) still needs the activity spine synthesized in front.
+        plan = design.plan
+        if not plan or all(self._trigger_only(step) for step in plan):
+            plan = [*self._synthesize_plan(design, graph), *plan]
+        body = _RunBodyEmitter(design, stepwise=self._stepwise).emit(plan)
 
         context: dict[str, object] = {
             "workflow_class": workflow_class,
@@ -246,6 +280,9 @@ class TemporalPythonCodeGenerator:
             "uses_asyncio": body.uses_asyncio,
             "activity_fn_names": [a.fn_name for a in activities],
             "child_class_names": [c.class_name for c in children],
+            "triggers": triggers,
+            "trigger_fn_names": _dedupe([t.fn_name for t in triggers]),
+            "stepwise": self._stepwise,
         }
 
         files = [
@@ -253,9 +290,21 @@ class TemporalPythonCodeGenerator:
             GeneratedFile(
                 path="activities.py", content=self._render("activities.py.jinja", context)
             ),
+        ]
+        if triggers:
+            files.append(
+                GeneratedFile(
+                    path="triggers.py", content=self._render("triggers.py.jinja", context)
+                )
+            )
+        files += [
             GeneratedFile(path="workflow.py", content=self._render("workflow.py.jinja", context)),
             GeneratedFile(path="worker.py", content=self._render("worker.py.jinja", context)),
             GeneratedFile(path="starter.py", content=self._render("starter.py.jinja", context)),
+            GeneratedFile(
+                path="test_stepthrough.py",
+                content=self._render("test_stepthrough.py.jinja", context),
+            ),
             GeneratedFile(
                 path="README.md",
                 language="markdown",
@@ -345,7 +394,58 @@ class TemporalPythonCodeGenerator:
             add(comp.name, comp.effective_params())
         for child in design.child_workflows:
             add(child.name, child.effective_params())
+        for trigger in design.triggers:
+            add(trigger.name, trigger.params)
         return list(classes.values())
+
+    @staticmethod
+    def _trigger_contexts(design: TemporalWorkflowDesign) -> list[_Trigger]:
+        """Template context for the generated cross-workflow start activities."""
+        out: list[_Trigger] = []
+        seen: set[str] = set()
+        for trigger in design.triggers:
+            fn = _trigger_fn_name(trigger)
+            if fn in seen:
+                continue  # two triggers to the same target share one activity
+            seen.add(fn)
+            slug_text = trigger.target_slug or _snake(
+                trigger.target_workflow_name
+            ).replace("_", "-")
+            first = _snake(trigger.params[0].name) if trigger.params else None
+            # Deterministic target workflow id: a business key from the input
+            # map when one exists, else the calling workflow's id — either way
+            # activity retries produce the same id, which USE_EXISTING dedupes.
+            id_expr = (
+                f'f"{slug_text}-{{arg.{first}}}"'
+                if first
+                else f'f"{slug_text}-from-{{activity.info().workflow_id}}"'
+            )
+            out.append(
+                _Trigger(
+                    activity_name=_pascal(fn),
+                    fn_name=fn,
+                    input_class=f"{_pascal(trigger.name)}Input",
+                    target_workflow_name=trigger.target_workflow_name,
+                    task_queue=trigger.target_task_queue
+                    or f"{trigger.target_workflow_name}-task-queue",
+                    blocking=trigger.mode == "blocking",
+                    result_type=trigger.result_type or "str",
+                    id_expr=id_expr,
+                    description=trigger.description,
+                )
+            )
+        return out
+
+    @classmethod
+    def _trigger_only(cls, step: TemporalStep) -> bool:
+        """True when ``step`` is a trigger (or a branch containing only triggers)."""
+        if step.kind is StepKind.TRIGGER:
+            return True
+        if step.kind is StepKind.BRANCH:
+            return all(
+                cls._trigger_only(inner) for lane in step.lanes for inner in lane
+            )
+        return False
 
     def _workflow_input_fields(self, design: TemporalWorkflowDesign) -> list[_Field]:
         """Typed fields for the top-level ``WorkflowInput`` dataclass."""
@@ -486,8 +586,9 @@ class _Body:
 class _RunBodyEmitter:
     """Emit the full body of ``@workflow.run`` from a plan (IR)."""
 
-    def __init__(self, design: TemporalWorkflowDesign) -> None:
+    def __init__(self, design: TemporalWorkflowDesign, *, stepwise: bool = False) -> None:
         self._design = design
+        self._stepwise = stepwise
         self._activities = {a.name: a for a in design.activities}
         self._children = {c.name: c for c in design.child_workflows}
         # Indexes so a plan-step ``ref`` resolves to the *declared* activity/child
@@ -506,6 +607,10 @@ class _RunBodyEmitter:
             self._child_by_key.setdefault(_squash(c.name), c)
         self._signals = {_snake(s.name): s for s in design.signals}
         self._timers = {_snake(t.name): t for t in design.timers}
+        self._triggers_by_key: dict[str, TemporalTriggerDesign] = {}
+        for t in design.triggers:
+            self._triggers_by_key[_snake(t.name)] = t
+            self._triggers_by_key.setdefault(_squash(t.name), t)
         self._comps_by_activity = self._compensations_by_activity(design)
         # step id -> variable name holding its result.
         self._result_vars: dict[str, str] = {}
@@ -549,7 +654,7 @@ class _RunBodyEmitter:
 
     def _index_result_vars(self, steps: list[TemporalStep]) -> None:
         for step in steps:
-            if step.kind in (StepKind.ACTIVITY, StepKind.CHILD_WORKFLOW):
+            if step.kind in (StepKind.ACTIVITY, StepKind.CHILD_WORKFLOW, StepKind.TRIGGER):
                 var = (
                     _snake(step.result_name) if step.result_name else f"{_snake(step.id)}_result"
                 )
@@ -566,7 +671,18 @@ class _RunBodyEmitter:
 
     def _emit_steps(self, steps: list[TemporalStep], *, depth: int) -> list[str]:
         out: list[str] = []
+        pad = _INDENT * depth
         for step in steps:
+            # Read-only debug surface: expose which plan step is executing.
+            out.append(f"{pad}self._current_step = {step.id!r}")
+            if self._stepwise and depth == 1:
+                # Opt-in step gate: each top-level step waits for an `advance`
+                # signal (wait_condition + signal — deterministic by design).
+                out.append(f"{pad}self._step_index += 1")
+                out.append(
+                    f"{pad}await workflow.wait_condition("
+                    "lambda: self._advance_to >= self._step_index)"
+                )
             out.extend(self._emit_step(step, depth=depth))
         return out
 
@@ -583,6 +699,8 @@ class _RunBodyEmitter:
             return self._emit_parallel(step, depth=depth)
         if step.kind is StepKind.BRANCH:
             return self._emit_branch(step, depth=depth)
+        if step.kind is StepKind.TRIGGER:
+            return self._emit_trigger(step, depth=depth)
         return []
 
     def _ref_name(self, ref: str | None, step_id: str) -> str:
@@ -672,6 +790,46 @@ class _RunBodyEmitter:
             lines.append(
                 f"{pad}await workflow.wait_condition(lambda: True)  # TODO: real condition"
             )
+        return lines
+
+    def _emit_trigger(self, step: TemporalStep, *, depth: int) -> list[str]:
+        """Emit a cross-workflow trigger as an ``execute_activity`` call.
+
+        The activity (generated into ``triggers.py``) is what talks to the
+        Temporal client — workflow code stays deterministic. Blocking triggers
+        assign the target's awaited result; fire-and-forget return immediately
+        after the start.
+        """
+        pad = _INDENT * depth
+        trigger: TemporalTriggerDesign | None = None
+        for key in (_snake(step.ref or step.id), _squash(step.ref or step.id)):
+            trigger = self._triggers_by_key.get(key)
+            if trigger is not None:
+                break
+        if trigger is None:
+            return [f"{pad}pass  # TODO: unknown trigger ref {step.ref!r}"]
+        blocking = trigger.mode == "blocking"
+        fn = _trigger_fn_name(trigger)
+        input_class = f"{_pascal(trigger.name)}Input"
+        var = self._result_vars.get(step.id)
+        timeout = (
+            _TRIGGER_BLOCKING_TIMEOUT_SECONDS if blocking else _TRIGGER_START_TIMEOUT_SECONDS
+        )
+        verb = "Triggering and awaiting" if blocking else "Triggering"
+        lines = [
+            f'{pad}workflow.logger.info("{verb} workflow: {trigger.target_workflow_name}")'
+        ]
+        assign = f"{var} = " if var else ""
+        lines.append(f"{pad}{assign}await workflow.execute_activity(")
+        lines.append(f"{pad}{_INDENT}{fn},")
+        lines.append(f"{pad}{_INDENT}{self._input_expr(input_class, step)},")
+        comment = "  # generous: spans the target's full run" if blocking else ""
+        lines.append(
+            f"{pad}{_INDENT}start_to_close_timeout={_timeout_expr(timeout)},{comment}"
+        )
+        lines.append(f"{pad})")
+        # Read-only debug surface: record the trigger once it has fired.
+        lines.append(f"{pad}self._triggers_fired.append({trigger.name!r})")
         return lines
 
     def _gate_timer(
@@ -798,11 +956,17 @@ class _RunBodyEmitter:
             flag = f"should_{_snake(predicate)}"
             lines.append(f"{pad}{flag} = True  # TODO: set from a real condition: {predicate}")
             lines.append(f"{pad}if {flag}:")
-        then_body = self._emit_steps(then_lane, depth=depth + 1)
-        lines.extend(then_body or [f"{pad}{_INDENT}pass"])
-        if else_lane:
-            lines.append(f"{pad}else:")
-            lines.extend(self._emit_steps(else_lane, depth=depth + 1))
+        # Read-only debug surface: record every branch decision as it is taken.
+        track = (
+            "self._decisions_taken.append("
+            "{'branch': %r, 'predicate': %r, 'taken': %s})"
+        )
+        inner = pad + _INDENT
+        lines.append(inner + track % (step.id, predicate, "True"))
+        lines.extend(self._emit_steps(then_lane, depth=depth + 1))
+        lines.append(f"{pad}else:")
+        lines.append(inner + track % (step.id, predicate, "False"))
+        lines.extend(self._emit_steps(else_lane, depth=depth + 1))
         return lines
 
     def _branch_bound_expr(self, step: TemporalStep) -> str | None:
@@ -902,7 +1066,10 @@ def _pascal_key(name: str) -> str:
 
 
 def to_temporal_python(
-    design: TemporalWorkflowDesign, *, graph: WorkflowGraph | None = None
+    design: TemporalWorkflowDesign,
+    *,
+    graph: WorkflowGraph | None = None,
+    stepwise: bool = False,
 ) -> TemporalCodeBundle:  # noqa: F821
     """Convenience wrapper around :class:`TemporalPythonCodeGenerator`."""
-    return TemporalPythonCodeGenerator().generate(design, graph=graph)
+    return TemporalPythonCodeGenerator(stepwise=stepwise).generate(design, graph=graph)

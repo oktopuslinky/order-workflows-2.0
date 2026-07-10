@@ -29,6 +29,13 @@ with workflow.unsafe.imports_passed_through():
 {% endfor %}
     )
 {% endif %}
+{% if trigger_fn_names %}
+    from triggers import (
+{% for fn in trigger_fn_names %}
+        {{ fn }},
+{% endfor %}
+    )
+{% endif %}
 
 TASK_QUEUE = "{{ task_queue }}"
 
@@ -40,7 +47,7 @@ async def main() -> None:
         client,
         task_queue=TASK_QUEUE,
         workflows=[{{ workflow_class }}{% for c in child_class_names %}, {{ c }}{% endfor %}],
-        activities=[{% for fn in activity_fn_names %}{{ fn }}{% if not loop.last %}, {% endif %}{% endfor %}],
+        activities=[{% for fn in activity_fn_names %}{{ fn }}{% if not loop.last %}, {% endif %}{% endfor %}{% for fn in trigger_fn_names %}{% if activity_fn_names or not loop.first %}, {% endif %}{{ fn }}{% endfor %}],
     )
     print(f"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.")
     await worker.run()

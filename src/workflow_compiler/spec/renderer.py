@@ -18,18 +18,23 @@ Line grammar (what the parser relies on):
   provenance marker.
 * Open questions: ``- [ ] (<ref>) <question>`` + an indented ``Answer:`` line.
 * Cross-references: ``- [ ] uses output `x` of `slug` as input `y` — <desc>``.
+* Triggers: ``- [ ] triggers `slug` (<mode>) when `<condition>``` with indented
+  ``  result: <name>`` and ``  input <field>: <source> `ref` (<type>)`` lines.
 """
 
 from __future__ import annotations
 
 from workflow_compiler.models import (
+    BindingSource,
     CrossReference,
     FactCategory,
     Provenance,
     SpecItem,
+    TriggerMode,
     WorkflowFacts,
     WorkflowSpec,
     WorkflowStructure,
+    WorkflowTrigger,
 )
 
 #: Section titles, shared with the parser. Order here is render order.
@@ -53,6 +58,20 @@ AMBIGUITIES_SECTION = "Ambiguities"
 QUESTIONS_SECTION = "Open Questions"
 SUGGESTIONS_SECTION = "Suggested Edits"
 DEPENDENCIES_SECTION = "Cross-Workflow Dependencies"
+TRIGGERS_SECTION = "Triggers"
+
+#: Trigger mode ⇄ rendered text (shared with the parser).
+TRIGGER_MODE_TEXT: dict[TriggerMode, str] = {
+    TriggerMode.BLOCKING: "blocking",
+    TriggerMode.FIRE_AND_FORGET: "fire-and-forget",
+}
+
+#: Input-binding source ⇄ rendered text (shared with the parser).
+BINDING_SOURCE_TEXT: dict[BindingSource, str] = {
+    BindingSource.WORKFLOW_INPUT: "workflow input",
+    BindingSource.STEP_OUTPUT: "step output",
+    BindingSource.CONSTANT: "constant",
+}
 
 #: Scalar fact sections and their category (shared with the parser).
 SCALAR_SECTIONS: dict[str, FactCategory] = {
@@ -122,8 +141,13 @@ def _item_line(item: SpecItem) -> str:
     return f"- {item.text}" + (f" {marker}" if marker else "")
 
 
-def render_spec(spec: WorkflowSpec, cross_references: list[CrossReference]) -> str:
-    """Render ``spec`` (plus its project cross-references) to Markdown."""
+def render_spec(
+    spec: WorkflowSpec,
+    cross_references: list[CrossReference],
+    triggers: list[WorkflowTrigger] | None = None,
+) -> str:
+    """Render ``spec`` (plus its project cross-references and triggers) to Markdown."""
+    triggers = triggers or []
     facts: WorkflowFacts = spec.facts
     structure = facts.structure or WorkflowStructure()
     lines: list[str] = [f"# {spec.metadata.name}", ""]
@@ -237,5 +261,25 @@ def render_spec(spec: WorkflowSpec, cross_references: list[CrossReference]) -> s
         suffix = f" — {reference.description}" if reference.description else ""
         dependency_lines.append(f"- [{box}] {text}{suffix}")
     section(DEPENDENCIES_SECTION, dependency_lines)
+
+    trigger_lines: list[str] = []
+    for trigger in triggers:
+        if trigger.source_workflow != spec.slug:
+            continue
+        box = "x" if trigger.user_confirmed else " "
+        mode = TRIGGER_MODE_TEXT[trigger.mode]
+        head = f"- [{box}] triggers `{trigger.target_workflow}` ({mode})"
+        if trigger.condition:
+            head += f" when `{trigger.condition}`"
+        trigger_lines.append(head)
+        if trigger.result_binding:
+            trigger_lines.append(f"  result: {trigger.result_binding}")
+        for binding in trigger.input_map:
+            source = BINDING_SOURCE_TEXT[binding.source]
+            ref = f" `{binding.source_ref}`" if binding.source_ref else ""
+            trigger_lines.append(
+                f"  input {binding.target_input}: {source}{ref} ({binding.type})"
+            )
+    section(TRIGGERS_SECTION, trigger_lines)
 
     return "\n".join(lines).rstrip() + "\n"

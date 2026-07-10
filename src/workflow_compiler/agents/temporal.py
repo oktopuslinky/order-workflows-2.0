@@ -32,9 +32,12 @@ from workflow_compiler.models import (
     TemporalSignalDesign,
     TemporalStep,
     TemporalTimerDesign,
+    TemporalTriggerDesign,
     TemporalWorkflowDesign,
+    TriggerMode,
     WorkflowGraph,
     WorkflowState,
+    WorkflowTrigger,
     pair_gate_timer,
 )
 from workflow_compiler.prompts import PromptManager
@@ -273,6 +276,8 @@ class TemporalGeneratorAgent(BaseAgent):
         result = await self._llm.structured(prompt, TemporalDesignOutput, system=_SYSTEM)
 
         design = self._to_design(result, state)
+        if state.outgoing_triggers:
+            design = self._inject_triggers(design, state.outgoing_triggers)
         confidence = self._score(result, design)
 
         state.temporal_design = design
@@ -323,6 +328,70 @@ class TemporalGeneratorAgent(BaseAgent):
         if state.workflow_graph is not None:
             design = self._prune_ungrounded_signal_gates(design, state.workflow_graph)
         return design
+
+    # -- deterministic cross-workflow trigger injection ----------------------
+
+    @staticmethod
+    def _inject_triggers(
+        design: TemporalWorkflowDesign, triggers: list[WorkflowTrigger]
+    ) -> TemporalWorkflowDesign:
+        """Fold the workflow's confirmed cross-workflow triggers into the design.
+
+        Deterministic (never LLM-designed): the triggers come from the
+        human-approved spec. Each becomes a :class:`TemporalTriggerDesign`
+        declaration plus a plan step — conditional triggers wrapped in a
+        ``BRANCH`` whose then-lane holds the ``TRIGGER`` step, reusing the
+        existing branch machinery. When the LLM emitted no plan, the appended
+        steps leave it trigger-only; the code generator recognizes that and
+        synthesizes the activity spine in front of them.
+        """
+        declarations = list(design.triggers)
+        steps: list[TemporalStep] = []
+        for index, trigger in enumerate(triggers, start=1):
+            target_name = _slug(trigger.target_workflow, fallback="Target")
+            name = f"Start{target_name}"
+            declarations.append(
+                TemporalTriggerDesign(
+                    name=name,
+                    target_workflow_name=target_name,
+                    target_slug=trigger.target_workflow,
+                    target_task_queue=f"{target_name}-task-queue",
+                    mode=trigger.mode.value,
+                    params=[
+                        TemporalParam(name=b.target_input, type=b.type or "str")
+                        for b in trigger.input_map
+                    ],
+                    description=(
+                        f"Fires when {trigger.condition}" if trigger.condition else None
+                    ),
+                )
+            )
+            step = TemporalStep(
+                id=f"trigger_{index}",
+                kind=StepKind.TRIGGER,
+                ref=name,
+                description=f"Start the standalone '{trigger.target_workflow}' workflow",
+                bindings=[
+                    InputBinding(param=b.target_input, source=b.source, ref=b.source_ref)
+                    for b in trigger.input_map
+                ],
+                result_name=(
+                    trigger.result_binding
+                    if trigger.mode is TriggerMode.BLOCKING
+                    else None
+                ),
+            )
+            if trigger.condition:
+                step = TemporalStep(
+                    id=f"branch_trigger_{index}",
+                    kind=StepKind.BRANCH,
+                    predicate=trigger.condition,
+                    lanes=[[step], []],
+                )
+            steps.append(step)
+        return design.model_copy(
+            update={"triggers": declarations, "plan": [*design.plan, *steps]}
+        )
 
     # -- Stage A/B: deterministic gate guard --------------------------------
 

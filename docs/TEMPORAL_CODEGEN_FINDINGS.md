@@ -117,3 +117,29 @@ Codegen is not "done" until the bundle: (a) imports without error, (b) passes a 
 `WorkflowEnvironment` time-skipping test that runs the workflow with mocked activities and asserts
 the happy path completes and a forced mid-workflow failure triggers compensations in reverse
 (`temporal-py-testing`). This converts "looks plausible" into "provably runs".
+
+---
+
+## 6. Cross-workflow triggers: why not child workflows
+
+Child workflows create parent/child *ownership*: the child's lifetime, retries, and visibility
+are tied to the parent, and the child cannot be started on its own without a separate code
+path. That violates this project's hard constraint — **every discovered workflow must run
+standalone**. So cross-workflow relationships compile to **explicit external starts**:
+
+- Workflow code may not call the Temporal client (non-deterministic on replay), and
+  `get_external_workflow_handle` can only signal/cancel an *already running* workflow — it
+  cannot start one. Therefore each trigger is a generated **activity** (`triggers.py`) that
+  connects a `Client` (from `TEMPORAL_ADDRESS`) and calls
+  `client.start_workflow("<TargetType>", payload, id=..., task_queue=..., id_conflict_policy=USE_EXISTING)`.
+- **Idempotency:** the target workflow id is deterministic (a business key from the trigger's
+  input map, else the calling workflow's id), so an activity retry produces the same id and
+  `USE_EXISTING` attaches to the already-started run instead of double-starting.
+- **Blocking mode** awaits `handle.result()` inside the start activity ("activity-await"): the
+  callee stays 100% pristine, at the cost of one activity slot held for the target's duration
+  (generous 1h `start_to_close_timeout`). For long-running targets the documented upgrade is
+  fire-and-forget plus a completion callback signal.
+- **Typing without coupling:** the payload is a locally generated dataclass structurally
+  identical to the target's `WorkflowInput` — Temporal's JSON payload conversion makes the
+  hand-off compatible without importing the target's bundle, so bundles never depend on each
+  other. The project-level `contracts.py` documents every input shape in one place.

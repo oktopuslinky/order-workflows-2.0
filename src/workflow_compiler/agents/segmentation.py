@@ -33,11 +33,15 @@ from workflow_compiler.agents.review_pipeline import (
 from workflow_compiler.exceptions import CompilationError
 from workflow_compiler.interfaces.llm import BaseLLMProvider
 from workflow_compiler.models import (
+    BindingSource,
     CrossReference,
     Patch,
     PatchAction,
     ReviewResult,
+    TriggerInputBinding,
+    TriggerMode,
     WorkflowSegment,
+    WorkflowTrigger,
 )
 from workflow_compiler.prompts import PromptManager
 
@@ -90,6 +94,25 @@ class DiscoveredDependency(BaseModel):
     description: str = Field(default="")
 
 
+class DiscoveredTrigger(BaseModel):
+    """An explicit (possibly conditional) trigger between two discovered workflows.
+
+    Optional LLM output: where a :class:`DiscoveredDependency` is a data hint,
+    a trigger says "when <condition>, workflow A starts workflow B". The
+    deterministic assembler turns these — plus data dependencies — into
+    :class:`~workflow_compiler.models.spec.WorkflowTrigger` scaffolds the human
+    confirms. Input maps are left for the human/back-end (hard to infer safely).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    source_workflow: str = Field(default="")
+    target_workflow: str = Field(default="")
+    condition: str = Field(default="")  # empty = unconditional
+    mode: str = Field(default="")  # "blocking" | "fire_and_forget" | ""
+    description: str = Field(default="")
+
+
 class WorkflowsDiscovery(BaseModel):
     """Structured LLM output: every workflow plus cross-workflow dependencies."""
 
@@ -97,6 +120,7 @@ class WorkflowsDiscovery(BaseModel):
 
     workflows: list[DiscoveredWorkflow] = Field(default_factory=list)
     dependencies: list[DiscoveredDependency] = Field(default_factory=list)
+    triggers: list[DiscoveredTrigger] = Field(default_factory=list)
     confidence: float = Field(default=0.5)
 
 
@@ -364,13 +388,13 @@ class WorkflowSegmentationAgent:
 
     async def run(
         self, document_text: str
-    ) -> tuple[list[WorkflowSegment], list[CrossReference], list[str]]:
+    ) -> tuple[list[WorkflowSegment], list[CrossReference], list[WorkflowTrigger], list[str]]:
         """Discover workflows, review the discovery, and assemble segments.
 
-        Returns ``(segments, cross_references, warnings)``. A document that
-        describes a single workflow yields one segment holding the full document
-        text, so the single-workflow path is byte-identical to compiling the
-        document directly.
+        Returns ``(segments, cross_references, triggers, warnings)``. A document
+        that describes a single workflow yields one segment holding the full
+        document text, so the single-workflow path is byte-identical to compiling
+        the document directly.
         """
         if self._llm is None:
             raise CompilationError("WorkflowSegmentationAgent requires an LLM provider.")
@@ -415,7 +439,7 @@ class WorkflowSegmentationAgent:
 
     def assemble(
         self, discovery: WorkflowsDiscovery, document_text: str
-    ) -> tuple[list[WorkflowSegment], list[CrossReference], list[str]]:
+    ) -> tuple[list[WorkflowSegment], list[CrossReference], list[WorkflowTrigger], list[str]]:
         """Deterministically slice the document per discovered workflow."""
         workflows = [w for w in discovery.workflows if _norm(w.name)]
         if not workflows:
@@ -495,7 +519,76 @@ class WorkflowSegmentationAgent:
                 )
             )
 
-        return segments, cross_references, warnings
+        triggers = self._assemble_triggers(
+            discovery, cross_references, slug_by_name, warnings
+        )
+        return segments, cross_references, triggers, warnings
+
+    @staticmethod
+    def _assemble_triggers(
+        discovery: WorkflowsDiscovery,
+        cross_references: list[CrossReference],
+        slug_by_name: dict[str, str],
+        warnings: list[str],
+    ) -> list[WorkflowTrigger]:
+        """Build executable trigger scaffolds from explicit triggers + data deps.
+
+        Explicit LLM triggers become conditional/blocking triggers (no input map
+        — that is left for human/back-end wiring). Each data dependency then
+        becomes, or contributes an input-map row to, an unconditional
+        fire-and-forget trigger between the same two workflows. Every trigger is
+        left ``user_confirmed=False`` for the human review gate.
+        """
+        triggers: list[WorkflowTrigger] = []
+        by_key: dict[tuple[str, str, str], WorkflowTrigger] = {}
+
+        for trig in discovery.triggers:
+            source = slug_by_name.get(_norm(trig.source_workflow).lower())
+            target = slug_by_name.get(_norm(trig.target_workflow).lower())
+            if source is None or target is None or source == target:
+                warnings.append(
+                    f"Trigger '{trig.source_workflow} -> {trig.target_workflow}' references "
+                    "an unknown workflow — dropped."
+                )
+                continue
+            condition = _norm(trig.condition) or None
+            mode = (
+                TriggerMode.BLOCKING
+                if _norm(trig.mode).lower() in {"blocking", "block"}
+                else TriggerMode.FIRE_AND_FORGET
+            )
+            key = (source, target, condition or "")
+            if key in by_key:
+                continue
+            trigger = WorkflowTrigger(
+                source_workflow=source, target_workflow=target, mode=mode, condition=condition
+            )
+            by_key[key] = trigger
+            triggers.append(trigger)
+
+        for ref in cross_references:
+            key = (ref.source_workflow, ref.target_workflow, "")
+            binding = TriggerInputBinding(
+                target_input=ref.input_field,
+                source=BindingSource.STEP_OUTPUT,
+                source_ref=ref.output_field,
+                type=ref.input_type,
+            )
+            existing = by_key.get(key)
+            if existing is not None:
+                if not any(b.target_input == binding.target_input for b in existing.input_map):
+                    existing.input_map.append(binding)
+                continue
+            trigger = WorkflowTrigger(
+                source_workflow=ref.source_workflow,
+                target_workflow=ref.target_workflow,
+                mode=TriggerMode.FIRE_AND_FORGET,
+                input_map=[binding],
+            )
+            by_key[key] = trigger
+            triggers.append(trigger)
+
+        return triggers
 
     @staticmethod
     def _segment_text(

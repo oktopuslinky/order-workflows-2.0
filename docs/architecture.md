@@ -82,9 +82,32 @@ Key invariants:
 - **Workflows compile independently**, but typed **output→input cross-references** between them
   are discovered, carried on the project, and must be user-confirmed (checkbox in the spec file)
   before approval unless explicitly overridden.
+- **Cross-workflow triggers, not parent/child.** Executable relationships are
+  `WorkflowTrigger`s (`models/spec.py`): source/target slugs, mode (`blocking` /
+  `fire_and_forget`), an optional LLM-drafted human-confirmed `condition`, and a typed
+  `input_map` that assembles the target's full `WorkflowInput` at start. Segmentation scaffolds
+  them (explicit "A starts B" statements + data dependencies); they render in a **Triggers**
+  spec section and round-trip through ingest. Temporal child workflows are deliberately avoided:
+  every target stays a standalone workflow, started by name from a generated **activity**
+  (workflow code may not call the client) with `id_conflict_policy=USE_EXISTING` for idempotent
+  retries; blocking mode awaits `handle.result()` inside that activity. At approval,
+  `_seed_state` copies the slug's outgoing triggers onto `WorkflowState.outgoing_triggers`,
+  injects `TriggerNode`s into the structure (the graph shows `NodeType.TRIGGER` nodes), and the
+  design agent deterministically folds them into the design as `TemporalTriggerDesign`
+  declarations + plan `TRIGGER` steps (conditional → a `BRANCH` whose then-lane triggers).
+- **Two-tier validation findings.** `validate_specs` produces structured `SpecFinding`s
+  (`models/findings.py`): `BLOCKING` (unknown trigger target, undeclared input field,
+  unisolated segment, unmet checklist) vs `WARNING` (type mismatch, unconfirmed predicate,
+  missing result binding) vs `INFO` (ingest change log). `validate` exits non-zero on blocking;
+  `approve_spec` refuses while blocking findings remain (`accept_incomplete` overrides).
+- **Debug surface.** Every generated bundle exposes read-only queries (`current_step`,
+  `decisions_taken`, `triggers_fired`) plus a `test_stepthrough.py` harness; the
+  `WORKFLOW_COMPILER_STEPWISE` setting gates every top-level step behind an `advance` signal
+  (`wait_condition` + signal — deterministic).
 
 Projects persist via `storage/project_store.py` (`<state-root>/projects/<id>.json`, same atomic
-write pattern); per-workflow states are unchanged apart from an optional `project_id` back-link.
+write pattern); per-workflow states are unchanged apart from an optional `project_id` back-link
+and `outgoing_triggers`.
 
 ## Relational fact extraction → semantic graph wiring
 

@@ -184,7 +184,17 @@ class WorkflowGraphBuilder:
             )
             for i, v in enumerate(structure.events, start=1)
         }
-        target_map: dict[str, str] = {**amap, **xmap, **vmap}
+        tmap = {
+            t.id: self._add_node(
+                f"trigger_{i}",
+                f"Trigger {t.target_workflow}",
+                NodeType.TRIGGER,
+                target_workflow=t.target_workflow,
+                mode=t.mode,
+            )
+            for i, t in enumerate(structure.triggers, start=1)
+        }
+        target_map: dict[str, str] = {**amap, **xmap, **vmap, **tmap}
         default_anchor = ordered[-1][0] if ordered else _START
 
         specs = self._structure_spine(ordered)
@@ -204,6 +214,18 @@ class WorkflowGraphBuilder:
             self._attach_structure_compensation(specs, comp, cmap, xmap, amap, structure)
         for event in structure.events:
             self._attach_structure_event(specs, event, vmap[event.id], amap, ordered)
+        for trig in structure.triggers:
+            node = tmap[trig.id]
+            if any(spec.target == node for spec in specs):
+                continue  # already wired as a decision branch target
+            anchor = amap.get(trig.after or "") or default_anchor
+            if trig.condition:
+                specs.append(
+                    _EdgeSpec(anchor, node, EdgeType.CONDITIONAL,
+                              label="triggers", condition=trig.condition)
+                )
+            else:
+                specs.append(_EdgeSpec(anchor, node, EdgeType.SEQUENCE, label="triggers"))
         for transition in structure.transitions:
             source = self._get_or_create_state(transition.source)
             target = self._get_or_create_state(transition.target)

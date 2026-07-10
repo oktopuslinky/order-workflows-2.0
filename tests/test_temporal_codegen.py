@@ -365,6 +365,7 @@ def test_generate_produces_expected_files() -> None:
         "workflow.py",
         "worker.py",
         "starter.py",
+        "test_stepthrough.py",
         "README.md",
     ]
 

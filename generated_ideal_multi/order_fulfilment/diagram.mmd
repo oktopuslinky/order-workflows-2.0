@@ -1,0 +1,35 @@
+flowchart TD
+    start(["Start"])
+    end_node(["End"])
+    activity_1["Pick items"]
+    activity_2["Pack shipment"]
+    activity_3["Dispatch shipment"]
+    activity_4["Capture payment"]
+    activity_5["Wait for carrier pickup confirmation"]
+    decision_1{"Dispatch successful?"}
+    exception_1(["CarrierRejected"])
+    exception_2(["PickupTimeout"])
+    compensation_1["Unpack shipment"]
+    event_1(["[ev1] carrier.picked_up"])
+    state_1["placed"]
+    state_2["fulfilment_in_progress"]
+    state_3["shipped"]
+    state_4["cancelled"]
+    start --> activity_1
+    activity_1 --> activity_2
+    activity_2 --> activity_3
+    activity_3 --> decision_1
+    decision_1 -->|yes| activity_4
+    decision_1 -->|no| exception_1
+    activity_4 --> activity_5
+    activity_5 --> end_node
+    activity_3 -.->|on error| exception_1
+    activity_5 -.->|on error| exception_2
+    activity_2 -.->|compensate| compensation_1
+    compensation_1 --> end_node
+    activity_5 -.->|emits| event_1
+    state_1 -->|transition| state_2
+    state_2 -->|transition| state_3
+    state_2 -->|transition| state_4
+    exception_2 -->|terminates| end_node
+    exception_1 -->|terminates| end_node

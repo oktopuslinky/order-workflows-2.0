@@ -173,6 +173,7 @@ class WorkflowCompiler:
         prompt_manager: PromptManager | None = None,
         ensemble: EnsembleConfig | None = None,
         review: ReviewConfig | None = None,
+        stepwise: bool = False,
     ) -> None:
         """Wire the compiler to its collaborators, defaulting the rest.
 
@@ -198,7 +199,9 @@ class WorkflowCompiler:
         self._post_approval_agents = (
             list(post_approval_agents)
             if post_approval_agents is not None
-            else self._default_post_approval_agents(llm_provider, self._prompt_manager)
+            else self._default_post_approval_agents(
+                llm_provider, self._prompt_manager, stepwise=stepwise
+            )
         )
         self._review_manager = review_manager or DefaultReviewManager()
         self._state_store = state_store or FileStateStore()
@@ -226,11 +229,13 @@ class WorkflowCompiler:
         store = state_store or FileStateStore(resolved.state_store_path)
         ensemble = kwargs.pop("ensemble", None) or EnsembleConfig.from_settings(resolved)
         review = kwargs.pop("review", None) or ReviewConfig.from_settings(resolved)
+        stepwise = bool(kwargs.pop("stepwise", None) or resolved.stepwise)
         return cls(  # type: ignore[arg-type]
             llm_provider=provider,
             state_store=store,
             ensemble=ensemble,
             review=review,
+            stepwise=stepwise,
             **kwargs,
         )
 
@@ -315,13 +320,17 @@ class WorkflowCompiler:
 
     @staticmethod
     def _default_post_approval_agents(
-        llm: BaseLLMProvider | None, prompts: PromptManager
+        llm: BaseLLMProvider | None, prompts: PromptManager, *, stepwise: bool = False
     ) -> list[BaseAgent]:
         """Build the post-approval CVPA → Temporal design → code pipeline."""
+        from workflow_compiler.codegen.temporal import TemporalPythonCodeGenerator
+
         return [
             CVPAClassifierAgent(llm, prompt_manager=prompts),
             TemporalGeneratorAgent(llm, prompt_manager=prompts),
-            TemporalCodeGeneratorAgent(),
+            TemporalCodeGeneratorAgent(
+                generator=TemporalPythonCodeGenerator(stepwise=stepwise)
+            ),
         ]
 
     @property

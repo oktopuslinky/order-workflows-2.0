@@ -818,6 +818,52 @@ CLI: `compile <doc> --spec-dir <dir>` → edit the files → `validate <project-
 `approve-spec <project-id> [--out-dir gen]`. HTTP: `POST /projects/compile`,
 `GET/PUT /projects/{id}/spec`, `POST /projects/{id}/validate`, `POST /projects/{id}/approve`.
 
+### Cross-workflow triggers (standalone workflows, explicit starts)
+
+When one workflow starts another ("if the application is approved, provisioning begins"), the
+relationship compiles to an **explicit trigger between independent workflows** — never a
+Temporal child workflow. The full path:
+
+1. **Discovery.** Segmentation extracts explicit triggers (source, target, condition, mode)
+   alongside data dependencies; deterministic assembly turns both into `WorkflowTrigger`
+   scaffolds (a data dependency contributes a typed `input_map` row to its pair's trigger).
+2. **Review.** Triggers render in each source workflow's **Triggers** spec section (checkbox =
+   confirmed, ``when `…` `` = the predicate, indented `input` lines = the typed hand-off) and
+   round-trip through ingest like everything else.
+3. **Validation (deterministic, no LLM).** Unknown target or an `input_map` field the target
+   doesn't declare → `BLOCKING`; type mismatch / unconfirmed predicate / blocking trigger with
+   no result binding → `WARNING`. `validate` exits non-zero on blocking findings and
+   `approve-spec` refuses while they remain.
+4. **Design.** Approval copies the slug's triggers to `WorkflowState.outgoing_triggers` and
+   injects `TriggerNode`s into the structure (graph: `NodeType.TRIGGER`). The design agent
+   deterministically appends `TemporalTriggerDesign` declarations + plan `TRIGGER` steps —
+   a conditional trigger becomes a `BRANCH` whose then-lane holds the trigger step.
+5. **Codegen.** The *source* bundle gains `triggers.py`: one activity per target that connects
+   a client (`TEMPORAL_ADDRESS`) and calls `client.start_workflow("<TargetType>", payload,
+   id=<deterministic business key>, task_queue=<target queue>,
+   id_conflict_policy=USE_EXISTING)`. Blocking mode also `await handle.result()` inside the
+   activity. The workflow body calls it via `workflow.execute_activity(...)`.
+
+**Temporal limitations this design answers:** workflow code may not start another workflow
+(non-deterministic) → the start lives in an activity; `get_external_workflow_handle` can only
+signal/cancel an already-running workflow → starting is always by client;
+activity retries could double-start → deterministic workflow id + `USE_EXISTING` dedupes;
+a blocking trigger's activity stays open for the target's whole run → it gets a generous
+`start_to_close_timeout` (1h) — for longer-running targets, prefer fire-and-forget plus a
+callback signal (documented future upgrade). Targets remain byte-identical whether or not
+anything triggers them — every workflow always starts standalone via its own `starter.py`.
+
+### Debug surface (inspecting branches and triggers)
+
+Every generated workflow tracks `self._current_step`, `self._decisions_taken`
+(`{branch, predicate, taken}` per branch) and `self._triggers_fired`, exposed via read-only
+queries `current_step` / `decisions_taken` / `triggers_fired` — no I/O, no wall-clock, safe in
+production. The always-generated `test_stepthrough.py` runs the bundle under
+`WorkflowEnvironment.start_time_skipping()` with the stub activities (trigger activities
+mocked) and prints those queries — run it to see exactly which branch a conditional takes.
+Opt into interactive gating with `WORKFLOW_COMPILER_STEPWISE=1`: every top-level plan step then
+waits on an `advance` signal (`wait_condition` + signal, so determinism is preserved).
+
 ## 9. The three entry points (same engine, three faces)
 
 ### 9.1 Library

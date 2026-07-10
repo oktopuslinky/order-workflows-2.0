@@ -20,6 +20,7 @@ from pydantic import Field
 from workflow_compiler.models.base import WorkflowBaseModel
 from workflow_compiler.models.facts import WorkflowFacts
 from workflow_compiler.models.metadata import WorkflowMetadata
+from workflow_compiler.models.temporal import BindingSource
 
 
 class Provenance(StrEnum):
@@ -66,13 +67,92 @@ class CrossReference(WorkflowBaseModel):
 
     source_workflow: str = Field(..., description="Slug of the workflow producing the output.")
     output_field: str = Field(..., description="Name of the produced output field.")
+    output_type: str = Field(
+        default="str", description="Python type of the produced output (LLM-inferred, editable)."
+    )
     target_workflow: str = Field(..., description="Slug of the workflow consuming the value.")
     input_field: str = Field(..., description="Name of the consuming input field.")
+    input_type: str = Field(
+        default="str", description="Python type of the consumed input (LLM-inferred, editable)."
+    )
     description: str | None = Field(
         default=None, description="Plain-language explanation of the dependency."
     )
     user_confirmed: bool = Field(
         default=False, description="True once the user has validated this link."
+    )
+
+
+class TriggerMode(StrEnum):
+    """How a source workflow relates to a workflow it triggers.
+
+    * ``BLOCKING`` — the caller awaits the triggered workflow's result (bound to
+      ``result_binding``) before continuing.
+    * ``FIRE_AND_FORGET`` — the caller starts the target and moves on.
+    """
+
+    BLOCKING = "blocking"
+    FIRE_AND_FORGET = "fire_and_forget"
+
+
+class TriggerInputBinding(WorkflowBaseModel):
+    """One field of the triggered workflow's input and where its value comes from.
+
+    A :class:`WorkflowTrigger` carries a *list* of these — together they assemble
+    the full typed ``WorkflowInput`` the standalone target receives at start.
+    """
+
+    target_input: str = Field(..., description="Field on the target workflow's WorkflowInput.")
+    source: BindingSource = Field(
+        default=BindingSource.CONSTANT,
+        description="Where the value comes from (caller input / earlier step / constant).",
+    )
+    source_ref: str | None = Field(
+        default=None,
+        description=(
+            "For WORKFLOW_INPUT: the caller's WorkflowInput field name. "
+            "For STEP_OUTPUT: the producing step id. For CONSTANT: ignored."
+        ),
+    )
+    type: str = Field(default="str", description="Python type of the handed-off value.")
+
+
+class WorkflowTrigger(WorkflowBaseModel):
+    """An executable cross-workflow trigger: one workflow starts another.
+
+    Where a :class:`CrossReference` is advisory data-dependency metadata, a
+    trigger compiles to runtime wiring: the standalone ``source_workflow`` starts
+    the standalone ``target_workflow``, passing a full typed input assembled from
+    ``input_map``. ``condition`` (when set) makes the trigger conditional and is
+    LLM-drafted then human-confirmed; ``mode`` decides whether the caller awaits
+    the target's result (which BLOCKING binds to ``result_binding``). Both
+    workflows remain independently runnable — the trigger only adds glue.
+    """
+
+    source_workflow: str = Field(..., description="Slug of the workflow that fires the trigger.")
+    target_workflow: str = Field(
+        ..., description="Slug of the standalone workflow being started."
+    )
+    mode: TriggerMode = Field(
+        default=TriggerMode.FIRE_AND_FORGET,
+        description="Whether the caller awaits the target's result or moves on.",
+    )
+    condition: str | None = Field(
+        default=None,
+        description=(
+            "Predicate gating the trigger; None = unconditional. LLM-drafted, "
+            "human-confirmed (mirrors branch-predicate provenance)."
+        ),
+    )
+    input_map: list[TriggerInputBinding] = Field(
+        default_factory=list, description="Full typed input record for the target workflow."
+    )
+    result_binding: str | None = Field(
+        default=None,
+        description="BLOCKING only: variable name the target's result is bound to.",
+    )
+    user_confirmed: bool = Field(
+        default=False, description="True once the user has validated this trigger."
     )
 
 

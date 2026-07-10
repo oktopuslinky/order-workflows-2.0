@@ -24,6 +24,7 @@ from workflow_compiler.agents.review_pipeline import _grounded, _norm, rebuild_f
 from workflow_compiler.exceptions import CompilationError
 from workflow_compiler.models import (
     ActivityNode,
+    BindingSource,
     CompensationNode,
     CrossReference,
     DecisionNode,
@@ -33,12 +34,16 @@ from workflow_compiler.models import (
     Provenance,
     SpecItem,
     TransitionEdge,
+    TriggerInputBinding,
+    TriggerMode,
     WorkflowFact,
     WorkflowSpec,
     WorkflowStructure,
+    WorkflowTrigger,
 )
 from workflow_compiler.spec.renderer import (
     ACTIVITIES_SECTION,
+    BINDING_SOURCE_TEXT,
     COMPENSATIONS_SECTION,
     DECISIONS_SECTION,
     DEPENDENCIES_SECTION,
@@ -52,6 +57,8 @@ from workflow_compiler.spec.renderer import (
     QUESTIONS_SECTION,
     SCALAR_SECTIONS,
     TRANSITIONS_SECTION,
+    TRIGGER_MODE_TEXT,
+    TRIGGERS_SECTION,
 )
 
 _H1 = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
@@ -59,7 +66,7 @@ _H2 = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _BULLET = re.compile(r"^(?:-|\d+\.)\s+(.*)$")
 _COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _MARKER = re.compile(r"\s*\[(human|inferred)\]\s*$")
-_ENTITY = re.compile(r"^\[(?P<id>[A-Za-z]\d+)\]\s*(?P<rest>.*)$")
+_ENTITY = re.compile(r"^\[(?P<id>[A-Za-z]+\d+)\]\s*(?P<rest>.*)$")
 _CHECKBOX = re.compile(r"^\[(?P<box>[ xX])\]\s*(?:\((?P<ref>[^)]+)\)\s*)?(?P<text>.*)$")
 _ANSWER = re.compile(r"^\s+Answer:\s*(.*)$")
 _TRANSITION = re.compile(
@@ -69,6 +76,20 @@ _USES = re.compile(r"uses output `(?P<out>[^`]+)` of `(?P<other>[^`]+)` as input
 _PROVIDES = re.compile(
     r"provides output `(?P<out>[^`]+)` to `(?P<other>[^`]+)` input `(?P<inp>[^`]+)`"
 )
+_TRIGGER_HEAD = re.compile(
+    r"^triggers `(?P<target>[^`]+)` \((?P<mode>[^)]+)\)(?:\s+when `(?P<cond>[^`]+)`)?$"
+)
+_TRIGGER_RESULT = re.compile(r"^\s+result:\s*(?P<name>.+?)\s*$")
+_TRIGGER_INPUT = re.compile(
+    r"^\s+input\s+(?P<field>[^:]+):\s*(?P<source>.+?)"
+    r"(?:\s+`(?P<ref>[^`]+)`)?\s*\((?P<type>[^)]+)\)\s*$"
+)
+
+#: Rendered text ⇄ enum, derived from the renderer's maps so they never drift.
+_MODE_BY_TEXT: dict[str, TriggerMode] = {text: mode for mode, text in TRIGGER_MODE_TEXT.items()}
+_SOURCE_BY_TEXT: dict[str, BindingSource] = {
+    text: source for source, text in BINDING_SOURCE_TEXT.items()
+}
 
 #: Tail keys per entity kind → model field name.
 _TAIL_FIELDS: dict[str, dict[str, str]] = {
@@ -103,6 +124,7 @@ class IngestResult:
 
     spec: WorkflowSpec
     cross_references: list[CrossReference]
+    triggers: list[WorkflowTrigger] = field(default_factory=list)
     changes: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -178,12 +200,17 @@ def ingest_spec_markdown(
     markdown: str,
     document_text: str,
     cross_references: list[CrossReference],
+    triggers: list[WorkflowTrigger] | None = None,
 ) -> IngestResult:
     """Merge an edited spec Markdown file onto ``old_spec``.
 
     Returns the merged spec, the (possibly confirmation-updated) project
-    cross-references, a human-readable change list, and parser warnings.
+    cross-references and triggers, a human-readable change list, and parser
+    warnings. ``triggers`` fired by this spec's slug are reconstructed from the
+    file (a full round trip, since every trigger field is rendered); triggers
+    fired by other workflows pass through untouched.
     """
+    triggers = triggers or []
     name, sections = _sections(markdown)
     changes: list[str] = []
     warnings: list[str] = []
@@ -213,8 +240,9 @@ def ingest_spec_markdown(
         }
     )
     references = _merge_references(spec.slug, sections, cross_references, changes, warnings)
-    return IngestResult(spec=spec, cross_references=references, changes=changes,
-                        warnings=warnings)
+    merged_triggers = _merge_triggers(spec.slug, sections, triggers, changes, warnings)
+    return IngestResult(spec=spec, cross_references=references, triggers=merged_triggers,
+                        changes=changes, warnings=warnings)
 
 
 ASSUMPTIONS_KEY = "Assumptions"
@@ -362,7 +390,10 @@ def _merge_structure(
     old_structure = old_spec.facts.structure or WorkflowStructure()
     old_lists = _entity_lists(old_structure)
     new_structure = WorkflowStructure(
-        transitions=_parse_transitions(sections, old_structure)
+        # Structure-level triggers are injected at approval (never rendered in
+        # the spec file), so they pass through ingestion untouched.
+        triggers=[t.model_copy() for t in old_structure.triggers],
+        transitions=_parse_transitions(sections, old_structure),
     )
     new_lists = _entity_lists(new_structure)
 
@@ -596,3 +627,91 @@ def _merge_references(
                 f"confirmed dependency {key[0]}.{key[1]} -> {key[2]}.{key[3]}"
             )
     return updated
+
+
+def _parse_triggers(
+    slug: str, lines: list[str], warnings: list[str]
+) -> list[WorkflowTrigger]:
+    """Parse the Triggers section into fully reconstructed WorkflowTriggers.
+
+    A trigger spans a checkbox head line plus indented ``result:`` / ``input``
+    continuation lines; every field is rendered, so parse is an exact inverse of
+    render (no merge against old triggers is needed).
+    """
+    triggers: list[WorkflowTrigger] = []
+    current: WorkflowTrigger | None = None
+    for raw in lines:
+        bullet = _BULLET.match(raw.strip())
+        if bullet is not None:
+            box_match = _CHECKBOX.match(bullet.group(1).strip())
+            head = _TRIGGER_HEAD.match(box_match.group("text").strip()) if box_match else None
+            if box_match is None or head is None:
+                warnings.append(f"Unrecognized trigger line: {raw.strip()!r}")
+                current = None
+                continue
+            mode = _MODE_BY_TEXT.get(_norm(head.group("mode")).lower())
+            if mode is None:
+                warnings.append(f"Unknown trigger mode in line: {raw.strip()!r}")
+                current = None
+                continue
+            current = WorkflowTrigger(
+                source_workflow=slug,
+                target_workflow=_norm(head.group("target")),
+                mode=mode,
+                condition=_norm(head.group("cond") or "") or None,
+                user_confirmed=box_match.group("box").lower() == "x",
+            )
+            triggers.append(current)
+            continue
+        result_match = _TRIGGER_RESULT.match(raw)
+        if result_match is not None and current is not None:
+            current.result_binding = _norm(result_match.group("name")) or None
+            continue
+        input_match = _TRIGGER_INPUT.match(raw)
+        if input_match is not None and current is not None:
+            source = _SOURCE_BY_TEXT.get(_norm(input_match.group("source")).lower())
+            if source is None:
+                warnings.append(f"Unknown input source in trigger line: {raw.strip()!r}")
+                continue
+            current.input_map.append(
+                TriggerInputBinding(
+                    target_input=_norm(input_match.group("field")),
+                    source=source,
+                    source_ref=_norm(input_match.group("ref") or "") or None,
+                    type=_norm(input_match.group("type")) or "str",
+                )
+            )
+    return triggers
+
+
+def _merge_triggers(
+    slug: str,
+    sections: dict[str, list[str]],
+    triggers: list[WorkflowTrigger],
+    changes: list[str],
+    warnings: list[str],
+) -> list[WorkflowTrigger]:
+    """Replace ``slug``'s outgoing triggers with the ones parsed from its file.
+
+    Triggers fired by other workflows keep their original position; the parsed
+    block for this slug is spliced in where the slug's first trigger was (or
+    appended if it had none), preserving overall order for a clean round trip.
+    """
+    if TRIGGERS_SECTION not in sections:
+        return list(triggers)
+    parsed = _parse_triggers(slug, sections[TRIGGERS_SECTION], warnings)
+    old_for_slug = [t for t in triggers if t.source_workflow == slug]
+    if parsed != old_for_slug:
+        changes.append(f"updated triggers for {slug} ({len(parsed)} trigger(s))")
+    result: list[WorkflowTrigger] = []
+    inserted = False
+    for trigger in triggers:
+        if trigger.source_workflow == slug:
+            if not inserted:
+                result.extend(parsed)
+                inserted = True
+        else:
+            result.append(trigger)
+    if not inserted:
+        result.extend(parsed)
+    return result

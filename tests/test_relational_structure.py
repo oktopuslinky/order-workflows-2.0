@@ -309,3 +309,67 @@ async def test_agent_builds_validated_structure() -> None:
     # Flat facts are still derived for downstream consumers.
     comps = [f.statement for f in state.workflow_facts.by_category(FactCategory.COMPENSATION)]
     assert "Release stock compensates Reserve stock" in comps
+
+
+def test_trigger_nodes_wire_into_graph() -> None:
+    """TriggerNodes appear as NodeType.TRIGGER, wired off their anchor —
+    conditional triggers with a CONDITIONAL edge, unconditional with SEQUENCE —
+    and decisions may target trigger ids directly."""
+    from workflow_compiler.models import TriggerNode
+
+    structure = WorkflowStructure(
+        activities=[ActivityNode(id="a1", name="Validate order")],
+        decisions=[
+            DecisionNode(id="d1", question="Escalate?", after="a1",
+                         yes_target="t1", no_target="t2"),
+        ],
+        triggers=[
+            TriggerNode(id="t1", target_workflow="escalation", mode="blocking"),
+            TriggerNode(id="t2", target_workflow="archival",
+                        condition="order.value < 10", after="a1"),
+        ],
+    )
+    graph, _ = WorkflowGraphBuilder().build_from_structure(structure)
+    by_label = {n.label: n for n in graph.nodes}
+    esc = by_label["Trigger escalation"]
+    arc = by_label["Trigger archival"]
+    assert esc.node_type is NodeType.TRIGGER and arc.node_type is NodeType.TRIGGER
+    assert esc.attributes["target_workflow"] == "escalation"
+    assert esc.attributes["mode"] == "blocking"
+    # Both trigger nodes are decision branch targets (yes → t1, no → t2), so the
+    # standalone attach loop must not add duplicate inbound edges.
+    decision = by_label["Escalate?"]
+    yes = [e for e in graph.edges if e.source == decision.id and e.condition == "yes"]
+    no = [e for e in graph.edges if e.source == decision.id and e.condition == "no"]
+    assert yes[0].target == esc.id and no[0].target == arc.id
+    assert len([e for e in graph.edges if e.target == esc.id]) == 1
+
+
+def test_unanchored_conditional_trigger_gets_conditional_edge() -> None:
+    from workflow_compiler.models import EdgeType, TriggerNode
+
+    structure = WorkflowStructure(
+        activities=[ActivityNode(id="a1", name="Process")],
+        triggers=[
+            TriggerNode(id="t1", target_workflow="reporting",
+                        condition="total > 100", after="a1"),
+        ],
+    )
+    graph, _ = WorkflowGraphBuilder().build_from_structure(structure)
+    by_label = {n.label: n for n in graph.nodes}
+    edge = next(e for e in graph.edges if e.target == by_label["Trigger reporting"].id)
+    assert edge.edge_type is EdgeType.CONDITIONAL
+    assert edge.condition == "total > 100"
+    assert edge.source == by_label["Process"].id
+
+
+def test_validated_nulls_dangling_trigger_anchor() -> None:
+    from workflow_compiler.models import TriggerNode
+
+    structure = WorkflowStructure(
+        activities=[ActivityNode(id="a1", name="Work")],
+        triggers=[TriggerNode(id="t1", target_workflow="x", after="a99")],
+    )
+    clean, warnings = structure.validated()
+    assert clean.triggers[0].after is None
+    assert any("trigger t1" in w for w in warnings)

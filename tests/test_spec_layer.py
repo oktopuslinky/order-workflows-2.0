@@ -18,6 +18,7 @@ from workflow_compiler.agents.segmentation import (
 )
 from workflow_compiler.models import (
     ActivityNode,
+    BindingSource,
     CompensationNode,
     CrossReference,
     DecisionNode,
@@ -29,10 +30,13 @@ from workflow_compiler.models import (
     Provenance,
     SpecItem,
     TransitionEdge,
+    TriggerInputBinding,
+    TriggerMode,
     WorkflowFact,
     WorkflowMetadata,
     WorkflowSpec,
     WorkflowStructure,
+    WorkflowTrigger,
 )
 from workflow_compiler.spec import ingest_spec_markdown, render_spec
 from workflow_compiler.spec.validator import SpecPatchApplier
@@ -96,6 +100,43 @@ def _refs() -> list[CrossReference]:
     ]
 
 
+def _triggers() -> list[WorkflowTrigger]:
+    return [
+        WorkflowTrigger(
+            source_workflow="order-settlement",
+            target_workflow="reporting",
+            mode=TriggerMode.BLOCKING,
+            condition="order.amount > 100",
+            input_map=[
+                TriggerInputBinding(
+                    target_input="settlement_id",
+                    source=BindingSource.STEP_OUTPUT,
+                    source_ref="a2",
+                    type="str",
+                ),
+                TriggerInputBinding(
+                    target_input="order_id",
+                    source=BindingSource.WORKFLOW_INPUT,
+                    source_ref="order_id",
+                    type="str",
+                ),
+                TriggerInputBinding(
+                    target_input="region",
+                    source=BindingSource.CONSTANT,
+                    type="str",
+                ),
+            ],
+            result_binding="reporting_result",
+            user_confirmed=True,
+        ),
+        WorkflowTrigger(
+            source_workflow="order-settlement",
+            target_workflow="audit",
+            mode=TriggerMode.FIRE_AND_FORGET,
+        ),
+    ]
+
+
 class TestRoundTrip:
     def test_render_then_ingest_is_identity(self) -> None:
         spec, refs = _full_spec(), _refs()
@@ -111,6 +152,47 @@ class TestRoundTrip:
         original_confidences = [f.confidence for f in spec.facts.facts]
         result = ingest_spec_markdown(spec, render_spec(spec, refs), _DOC, refs)
         assert [f.confidence for f in result.spec.facts.facts] == original_confidences
+
+    def test_triggers_render_then_ingest_is_identity(self) -> None:
+        spec, refs, triggers = _full_spec(), _refs(), _triggers()
+        markdown = render_spec(spec, refs, triggers)
+        result = ingest_spec_markdown(spec, markdown, _DOC, refs, triggers)
+        assert result.triggers == triggers
+        assert result.cross_references == refs
+        assert result.changes == []
+        assert result.warnings == []
+
+    def test_empty_triggers_round_trip_is_identity(self) -> None:
+        spec, refs = _full_spec(), _refs()
+        markdown = render_spec(spec, refs)
+        result = ingest_spec_markdown(spec, markdown, _DOC, refs)
+        assert result.triggers == []
+        assert result.changes == []
+        assert result.warnings == []
+
+    def test_editing_a_trigger_condition_is_reconstructed(self) -> None:
+        spec, refs, triggers = _full_spec(), _refs(), _triggers()
+        markdown = render_spec(spec, refs, triggers).replace(
+            "when `order.amount > 100`", "when `order.amount > 500`"
+        )
+        result = ingest_spec_markdown(spec, markdown, _DOC, refs, triggers)
+        edited = next(t for t in result.triggers if t.target_workflow == "reporting")
+        assert edited.condition == "order.amount > 500"
+        assert any("updated triggers for order-settlement" in c for c in result.changes)
+
+    def test_other_workflows_triggers_pass_through(self) -> None:
+        spec, refs = _full_spec(), _refs()
+        foreign = WorkflowTrigger(
+            source_workflow="another-workflow",
+            target_workflow="order-settlement",
+            mode=TriggerMode.FIRE_AND_FORGET,
+        )
+        triggers = [foreign, *_triggers()]
+        markdown = render_spec(spec, refs, triggers)
+        result = ingest_spec_markdown(spec, markdown, _DOC, refs, triggers)
+        assert foreign in result.triggers
+        assert result.triggers == triggers
+        assert result.changes == []
 
 
 class TestHumanEdits:
@@ -250,11 +332,11 @@ class TestSegmentation:
     def test_single_workflow_gets_full_document(self) -> None:
         agent = WorkflowSegmentationAgent(llm=None)
         discovery = WorkflowsDiscovery(workflows=[DiscoveredWorkflow(name="Only One")])
-        segments, refs, warnings = agent.assemble(discovery, "full document text")
+        segments, refs, triggers, warnings = agent.assemble(discovery, "full document text")
         assert len(segments) == 1
         assert segments[0].text == "full document text"
         assert segments[0].sliced
-        assert refs == [] and warnings == []
+        assert refs == [] and triggers == [] and warnings == []
 
     def test_assemble_slices_by_title_lines_without_heading_markers(self) -> None:
         """Parsed .docx/.pdf plain text has no ``#`` markers — headings survive
@@ -287,7 +369,7 @@ class TestSegmentation:
                 ),
             ]
         )
-        segments, _refs, warnings = agent.assemble(discovery, document)
+        segments, _refs, _triggers, warnings = agent.assemble(discovery, document)
         assert warnings == []
         placement, fulfilment = segments
         assert placement.sliced and fulfilment.sliced
@@ -305,7 +387,7 @@ class TestSegmentation:
                 DiscoveredWorkflow(name="Beta", section_titles=["Missing Beta"]),
             ]
         )
-        segments, _refs, warnings = agent.assemble(discovery, "no headings at all here")
+        segments, _refs, _triggers, warnings = agent.assemble(discovery, "no headings at all here")
         assert all(not s.sliced for s in segments)
         assert any("Could not locate" in w for w in warnings)
         assert any("identical text" in w for w in warnings)

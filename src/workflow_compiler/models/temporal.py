@@ -38,6 +38,7 @@ class StepKind(StrEnum):
     TIMER = "timer"
     PARALLEL = "parallel"
     BRANCH = "branch"
+    TRIGGER = "trigger"
 
 
 class BindingSource(StrEnum):
@@ -213,6 +214,39 @@ class TemporalChildWorkflowDesign(WorkflowBaseModel):
         return [TemporalParam(name=name) for name in self.inputs]
 
 
+class TemporalTriggerDesign(WorkflowBaseModel):
+    """A cross-workflow trigger: this workflow starts another, standalone one.
+
+    Deliberately **not** a child workflow: the target runs as an independent
+    Temporal workflow on its own task queue, started by a generated activity
+    (workflow code may not call the client directly). ``mode='blocking'`` means
+    the start activity also awaits the target's result; ``'fire_and_forget'``
+    returns after the start. The target stays fully standalone — this design
+    only describes the caller's glue.
+    """
+
+    name: str = Field(..., description="Trigger name (e.g. 'StartAccountProvisioning').")
+    target_workflow_name: str = Field(
+        ..., description="Temporal workflow type name of the standalone target."
+    )
+    target_slug: str = Field(
+        default="", description="Project slug of the target workflow (codegen linkage)."
+    )
+    target_task_queue: str | None = Field(
+        default=None, description="Task queue the target's worker listens on."
+    )
+    mode: str = Field(
+        default="fire_and_forget", description="'blocking' or 'fire_and_forget'."
+    )
+    params: list[TemporalParam] = Field(
+        default_factory=list, description="Typed fields of the target's WorkflowInput."
+    )
+    result_type: str = Field(
+        default="str", description="Target workflow result type (blocking mode)."
+    )
+    description: str | None = Field(default=None, description="Why the trigger fires.")
+
+
 class TemporalCompensationDesign(WorkflowBaseModel):
     """A compensation (saga rollback) activity that undoes a prior activity."""
 
@@ -273,6 +307,9 @@ class TemporalWorkflowDesign(WorkflowBaseModel):
         default_factory=list, description="Child workflow designs."
     )
     timers: list[TemporalTimerDesign] = Field(default_factory=list, description="Timer designs.")
+    triggers: list[TemporalTriggerDesign] = Field(
+        default_factory=list, description="Cross-workflow trigger designs (external starts)."
+    )
     compensation_activities: list[TemporalCompensationDesign] = Field(
         default_factory=list, description="Compensation (saga rollback) activity designs."
     )

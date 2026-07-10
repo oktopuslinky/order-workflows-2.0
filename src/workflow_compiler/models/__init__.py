@@ -27,6 +27,7 @@ from workflow_compiler.models.enums import (
     ReviewSeverity,
 )
 from workflow_compiler.models.facts import SourceSpan, WorkflowFact, WorkflowFacts
+from workflow_compiler.models.findings import Severity, SpecFinding
 from workflow_compiler.models.graph import WorkflowEdge, WorkflowGraph, WorkflowNode
 from workflow_compiler.models.mermaid import MermaidDiagram
 from workflow_compiler.models.metadata import WorkflowMetadata
@@ -46,7 +47,10 @@ from workflow_compiler.models.spec import (
     CrossReference,
     Provenance,
     SpecItem,
+    TriggerInputBinding,
+    TriggerMode,
     WorkflowSpec,
+    WorkflowTrigger,
 )
 from workflow_compiler.models.state import WorkflowState
 from workflow_compiler.models.structure import (
@@ -56,6 +60,7 @@ from workflow_compiler.models.structure import (
     EventNode,
     ExceptionNode,
     TransitionEdge,
+    TriggerNode,
     WorkflowStructure,
 )
 from workflow_compiler.models.temporal import (
@@ -73,6 +78,7 @@ from workflow_compiler.models.temporal import (
     TemporalSignalDesign,
     TemporalStep,
     TemporalTimerDesign,
+    TemporalTriggerDesign,
     TemporalWorkflowDesign,
     pair_gate_timer,
 )
@@ -88,7 +94,13 @@ __all__ = [
     "CrossReference",
     "Provenance",
     "SpecItem",
+    "TriggerInputBinding",
+    "TriggerMode",
     "WorkflowSpec",
+    "WorkflowTrigger",
+    # validation findings
+    "Severity",
+    "SpecFinding",
     # checklist (pre-generation readiness gate)
     "ChecklistItem",
     "ChecklistSeverity",
@@ -107,6 +119,7 @@ __all__ = [
     "EventNode",
     "ExceptionNode",
     "TransitionEdge",
+    "TriggerNode",
     "WorkflowStructure",
     # graph
     "WorkflowEdge",
@@ -137,6 +150,7 @@ __all__ = [
     "TemporalSignalDesign",
     "TemporalStep",
     "TemporalTimerDesign",
+    "TemporalTriggerDesign",
     "TemporalWorkflowDesign",
     "pair_gate_timer",
     # temporal code generation

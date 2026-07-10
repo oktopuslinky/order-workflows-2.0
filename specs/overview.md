@@ -1,48 +1,28 @@
 # Workflow Specification Project
 
-- project id: `44a7f79a-4bf6-4c4a-9997-0c5ea5d0a55a`
-- stage: needs_attention
+- project id: `8356bd4b-cea9-49b8-bf55-a87999b9675e`
+- stage: completed
 - spec approval: approved
 
 ## Workflows
-- `order-placement.md` — Order Management Operations
-- `order-fulfilment.md` — Order Management Operations
-- `order-return.md` — Order Return Workflow — 1 open question(s)
+- `order-placement.md` — Order Placement Workflow
+- `order-fulfilment.md` — Order Fulfilment
+- `order-return.md` — Order Return Workflow
 
 ## Cross-Workflow Dependencies
-- order-placement.`orderid` → order-fulfilment.`orderid` (confirmed)
-- order-placement.`orderid` → order-return.`orderid` (confirmed)
-- order-fulfilment.`shipmentid` → order-return.`shipmentid` (confirmed)
-
-## Warnings
-- Could not locate document sections for workflow 'Order Placement' — using the full document as its segment.
-- Could not locate document sections for workflow 'Order Fulfilment' — using the full document as its segment.
+- order-placement.`order_id` → order-fulfilment.`order_id` (confirmed)
+- order-placement.`order_id` → order-return.`order_id` (confirmed)
+- order-fulfilment.`shipment_id` → order-return.`shipment_id` (confirmed)
 
 ## Latest Validation Findings
 ### order-placement
-- ingest: added event v1 '[ev1] checkout.submitted' (document_grounded)
-- ingest: added event v2 '[ev2] order.fulfil' (document_grounded)
-- ingest: added event v3 '[ev3] return.requested' (document_grounded)
-- ingest: added event v4 '[ev4] carrier.picked_up' (document_grounded)
-- ingest: removed event ev1 'checkout.submitted'
-- ingest: removed event ev2 'order.fulfil'
-- ingest: removed event ev3 'return.requested'
-- ingest: removed event ev4 'carrier.picked_up'
+- [WARN] grounding: events:v1: Lack of explicit evidence in the source document for the 'checkout.submitted' event's emission by the start of the workflow
+- [WARN] grounding: events:v3: The 'authorization_id' event is marked as [human] but lacks explicit support in the source document for its emission by 'a3
 ### order-fulfilment
-- ingest: added event v1 '[ev1] checkout.submitted' (document_grounded)
-- ingest: added event v2 '[ev2] order.fulfil' (document_grounded)
-- ingest: added event v3 '[ev3] return.requested' (document_grounded)
-- ingest: added event v4 '[ev4] carrier.picked_up' (document_grounded)
-- ingest: removed event ev1 'checkout.submitted'
-- ingest: removed event ev2 'order.fulfil'
-- ingest: removed event ev3 'return.requested'
-- ingest: removed event ev4 'carrier.picked_up'
-- grounding: actors: The source document lists 'Shopper', 'Order Operations', 'Warehouse Operator', 'Fulfillment Operations', 'Returns Operations', and 'Customer' as actors across the three workflows, but the specification aggregates them without explicit source backing for the combined list
-- grounding: systems: Similar to actors, the systems are aggregated from the three workflows without a single source section explicitly listing all together
+- [WARN] grounding: events:v3: Human-provided event without explicit source document evidence
+- [WARN] grounding: events:v4: Human-provided event without explicit source document evidence
 ### order-return
-- ingest: added event v1 '[ev1] return.requested' (document_grounded)
-- ingest: removed event ev1 'return.requested'
-- blocked: unmet required checklist items ['R5-compensations'] — answer the open questions in the spec file or approve with accept_incomplete
+- none
 
 ## How to proceed
 

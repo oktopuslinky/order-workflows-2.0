@@ -16,17 +16,30 @@ from workflow_compiler import ProjectCompiler, WorkflowCompiler
 from workflow_compiler.agents import FactExtraction, WorkflowDiscovery
 from workflow_compiler.agents.segmentation import (
     DiscoveredDependency,
+    DiscoveredTrigger,
     DiscoveredWorkflow,
     WorkflowsDiscovery,
+    WorkflowSegmentationAgent,
 )
 from workflow_compiler.compiler import ReviewConfig
 from workflow_compiler.exceptions import ApprovalError
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import (
     ApprovalStatus,
+    BindingSource,
+    CompilationProject,
     CompilationStage,
+    FactCategory,
     ProjectStage,
     ReviewResult,
+    Severity,
+    TriggerInputBinding,
+    TriggerMode,
+    WorkflowFact,
+    WorkflowFacts,
+    WorkflowMetadata,
+    WorkflowSpec,
+    WorkflowTrigger,
 )
 from workflow_compiler.storage import InMemoryStateStore
 from workflow_compiler.storage.project_store import InMemoryProjectStore
@@ -256,7 +269,135 @@ async def test_approve_blocks_on_unanswered_required_questions() -> None:
     assert project.workflow_ids == {}
     for slug in ("customer-onboarding", "account-provisioning"):
         findings = project.validation_findings.get(slug, [])
-        assert any("unmet required checklist items" in f for f in findings), slug
+        assert any(
+            "unmet required checklist items" in f.message for f in findings
+        ), slug
+        assert any(f.severity is Severity.BLOCKING for f in findings), slug
+
+
+class TestTriggerAssembly:
+    """Segmentation → executable trigger scaffolds (deterministic)."""
+
+    def test_dependency_becomes_fire_and_forget_trigger_with_input_map(self) -> None:
+        agent = WorkflowSegmentationAgent(llm=None)
+        _segments, refs, triggers, _warnings = agent.assemble(_segmentation(), _DOCUMENT)
+        assert len(refs) == 1 and len(triggers) == 1
+        trigger = triggers[0]
+        assert trigger.source_workflow == "customer-onboarding"
+        assert trigger.target_workflow == "account-provisioning"
+        assert trigger.mode is TriggerMode.FIRE_AND_FORGET
+        assert trigger.condition is None and not trigger.user_confirmed
+        [binding] = trigger.input_map
+        assert binding.target_input == "customer_record_id"
+        assert binding.source is BindingSource.STEP_OUTPUT
+        assert binding.source_ref == "customer_record_id"
+
+    def test_explicit_conditional_trigger_absorbs_dependency_binding(self) -> None:
+        discovery = _segmentation()
+        discovery.triggers = [
+            DiscoveredTrigger(
+                source_workflow="Customer Onboarding",
+                target_workflow="Account Provisioning",
+                condition="application approved",
+                mode="blocking",
+            ),
+            DiscoveredTrigger(  # unknown endpoint → dropped with a warning
+                source_workflow="Customer Onboarding",
+                target_workflow="Nonexistent",
+            ),
+        ]
+        agent = WorkflowSegmentationAgent(llm=None)
+        _segments, _refs, triggers, warnings = agent.assemble(discovery, _DOCUMENT)
+        assert any("unknown workflow" in w for w in warnings)
+        # The conditional trigger and the dependency-derived unconditional one
+        # have different conditions, so both exist; only the unconditional one
+        # carries the data-dependency input row.
+        conditional = next(t for t in triggers if t.condition == "application approved")
+        assert conditional.mode is TriggerMode.BLOCKING and conditional.input_map == []
+        unconditional = next(t for t in triggers if t.condition is None)
+        assert unconditional.input_map[0].target_input == "customer_record_id"
+
+
+def _project_with(
+    triggers: list[WorkflowTrigger], *, target_inputs: list[str] | None = None
+) -> CompilationProject:
+    """A two-workflow project for exercising the deterministic validation pass."""
+    target_facts = WorkflowFacts(
+        facts=[
+            WorkflowFact(id=f"input-{i}", statement=name,
+                         category=FactCategory.INPUT, confidence=0.9)
+            for i, name in enumerate(target_inputs or [], start=1)
+        ]
+    )
+    return CompilationProject(
+        document_text="doc",
+        specs=[
+            WorkflowSpec(slug="source-wf", metadata=WorkflowMetadata(name="Source")),
+            WorkflowSpec(
+                slug="target-wf", metadata=WorkflowMetadata(name="Target"),
+                facts=target_facts,
+            ),
+        ],
+        triggers=triggers,
+    )
+
+
+class TestTriggerValidation:
+    """The no-LLM validate_triggers_and_dependencies classification."""
+
+    def test_unknown_target_is_blocking(self) -> None:
+        project = _project_with([
+            WorkflowTrigger(source_workflow="source-wf", target_workflow="ghost-wf",
+                            user_confirmed=True)
+        ])
+        findings = ProjectCompiler._validate_triggers_and_dependencies(project)
+        [finding] = findings
+        assert finding.severity is Severity.BLOCKING
+        assert "not in this project" in finding.message
+
+    def test_undeclared_target_input_is_blocking(self) -> None:
+        project = _project_with(
+            [
+                WorkflowTrigger(
+                    source_workflow="source-wf", target_workflow="target-wf",
+                    input_map=[TriggerInputBinding(target_input="missing_field")],
+                    user_confirmed=True,
+                )
+            ],
+            target_inputs=["customer_id"],
+        )
+        findings = ProjectCompiler._validate_triggers_and_dependencies(project)
+        assert any(
+            f.severity is Severity.BLOCKING and "does not declare" in f.message
+            for f in findings
+        )
+
+    def test_soft_issues_are_warnings(self) -> None:
+        project = _project_with([
+            WorkflowTrigger(
+                source_workflow="source-wf", target_workflow="target-wf",
+                mode=TriggerMode.BLOCKING,  # no result_binding → warning
+                condition="amount > 100",  # unconfirmed predicate → warning
+            )
+        ])
+        findings = ProjectCompiler._validate_triggers_and_dependencies(project)
+        assert findings and all(f.severity is Severity.WARNING for f in findings)
+        assert any("result binding" in f.message for f in findings)
+        assert any("not confirmed" in f.message for f in findings)
+
+    def test_clean_confirmed_trigger_yields_no_findings(self) -> None:
+        project = _project_with(
+            [
+                WorkflowTrigger(
+                    source_workflow="source-wf", target_workflow="target-wf",
+                    mode=TriggerMode.BLOCKING, result_binding="result",
+                    input_map=[TriggerInputBinding(target_input="customer_id")],
+                    user_confirmed=True,
+                )
+            ],
+            target_inputs=["customer_id"],
+        )
+        assert ProjectCompiler._validate_triggers_and_dependencies(project) == []
 
 
 async def test_compile_prepared_threshold_gate() -> None:

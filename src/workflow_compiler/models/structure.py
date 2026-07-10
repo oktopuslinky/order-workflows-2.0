@@ -94,6 +94,29 @@ class EventNode(WorkflowBaseModel):
     )
 
 
+class TriggerNode(WorkflowBaseModel):
+    """A point in the flow where this workflow starts another workflow.
+
+    Injected deterministically from the project's confirmed
+    :class:`~workflow_compiler.models.spec.WorkflowTrigger`s at approval (never
+    LLM-extracted), so the graph and Temporal design see the cross-workflow
+    start as a first-class node. ``condition`` mirrors the trigger's predicate;
+    a :class:`DecisionNode` may also target a trigger id directly.
+    """
+
+    id: str = Field(..., description="Stable id (e.g. 't1').")
+    target_workflow: str = Field(..., description="Slug of the workflow being started.")
+    mode: str = Field(
+        default="fire_and_forget", description="'blocking' or 'fire_and_forget'."
+    )
+    condition: str | None = Field(
+        default=None, description="Predicate gating the trigger (None = unconditional)."
+    )
+    after: str | None = Field(
+        default=None, description="Activity id this trigger fires after (default: last)."
+    )
+
+
 class TransitionEdge(WorkflowBaseModel):
     """A state transition between two named states."""
 
@@ -110,6 +133,7 @@ class WorkflowStructure(WorkflowBaseModel):
     exceptions: list[ExceptionNode] = Field(default_factory=list)
     compensations: list[CompensationNode] = Field(default_factory=list)
     events: list[EventNode] = Field(default_factory=list)
+    triggers: list[TriggerNode] = Field(default_factory=list)
     transitions: list[TransitionEdge] = Field(default_factory=list)
 
     def is_empty(self) -> bool:
@@ -120,6 +144,7 @@ class WorkflowStructure(WorkflowBaseModel):
             or self.exceptions
             or self.compensations
             or self.events
+            or self.triggers
             or self.transitions
         )
 
@@ -133,6 +158,7 @@ class WorkflowStructure(WorkflowBaseModel):
             self.activity_ids()
             | {e.id for e in self.exceptions}
             | {v.id for v in self.events}
+            | {t.id for t in self.triggers}
         )
 
     def all_ids(self) -> set[str]:
@@ -143,6 +169,7 @@ class WorkflowStructure(WorkflowBaseModel):
             | {e.id for e in self.exceptions}
             | {c.id for c in self.compensations}
             | {v.id for v in self.events}
+            | {t.id for t in self.triggers}
         )
 
     def validated(self) -> tuple[WorkflowStructure, list[str]]:
@@ -209,6 +236,10 @@ class WorkflowStructure(WorkflowBaseModel):
             v.model_copy(update={"emitted_by": keep_target(v.emitted_by, f"event {v.id}")})
             for v in self.events
         ]
+        triggers = [
+            t.model_copy(update={"after": keep_activity(t.after, f"trigger {t.id}")})
+            for t in self.triggers
+        ]
 
         # Strip parallel-group membership from activities whose control flow is
         # gated by a decision (its anchor or a branch target). Such activities
@@ -249,6 +280,7 @@ class WorkflowStructure(WorkflowBaseModel):
                 "exceptions": exceptions,
                 "compensations": compensations,
                 "events": events,
+                "triggers": triggers,
                 "transitions": transitions,
             }
         )

@@ -282,9 +282,24 @@ workflow-compiler compile big_business_doc.docx --spec-dir ./specs
 
 Each spec file contains the workflow's metadata, activities/decisions/exceptions/compensations
 (with stable `[ids]`), plus **Assumptions**, **Ambiguities**, **Open Questions** (the readiness
-checklist rendered as fill-in questions), and **Cross-Workflow Dependencies** (output→input links
-you confirm by ticking their checkbox). Edit the files in any editor — keep the `[id]` markers on
-lines you modify; new lines you add are recorded as *human-provided*.
+checklist rendered as fill-in questions), **Cross-Workflow Dependencies** (output→input links
+you confirm by ticking their checkbox), and **Triggers** (executable cross-workflow starts).
+Edit the files in any editor — keep the `[id]` markers on lines you modify; new lines you add
+are recorded as *human-provided*.
+
+A **Triggers** entry says this workflow *starts* another (always standalone) workflow:
+
+```markdown
+## Triggers
+- [x] triggers `account-provisioning` (blocking) when `application approved`
+  result: provisioning_result
+  input customer_record_id: step output `a2` (str)
+```
+
+The mode is `blocking` (the caller awaits the target's result, bound to the `result:` name) or
+`fire-and-forget`; the optional ``when `…` `` predicate makes the trigger conditional (LLM-drafted
+— review it and tick the checkbox to confirm); each indented `input` line maps one field of the
+target's typed input from your workflow's input, an earlier step's output, or a constant.
 
 ### `validate <project-id>` — fold edits back in and re-check the specs
 
@@ -293,10 +308,20 @@ workflow-compiler validate <project-id> --spec-dir ./specs
 ```
 
 Deterministically parses your edits back onto the structured spec, then runs three LLM review
-passes against the original document (completeness / grounding / consistency). Machine-extracted
-statements without support are removed; **your** additions are only ever *flagged* for
+passes against the original document (completeness / grounding / consistency) plus a
+**deterministic cross-workflow integrity pass** over every trigger and dependency. Machine-
+extracted statements without support are removed; **your** additions are only ever *flagged* for
 confirmation, never deleted. The files are re-written with the fixes and findings. Iterate
 edit ⇄ validate until you are satisfied.
+
+Findings are two-tier and printed with precise refs (`TAG slug Section > field: message`):
+
+- `BLOCK` (red) — structural breakage that prevents generation: a trigger targeting a workflow
+  not in the project, an input map naming a field the target does not declare, an unisolated
+  document segment, unmet required checklist items. **`validate` exits non-zero while any
+  blocking finding remains**, and `approve-spec` refuses (override with `--accept-incomplete`).
+- `WARN` (yellow) — should be confirmed but doesn't block: type mismatches on a hand-off,
+  unconfirmed trigger predicates, a blocking trigger with no result binding.
 
 ### `approve-spec <project-id>` — compile every workflow through to code
 
@@ -311,6 +336,22 @@ remains the manual override). Unanswered required questions block a workflow unl
 `--accept-incomplete`; unconfirmed dependencies block approval unless you pass
 `--allow-unconfirmed`. Each completed workflow's runnable Temporal bundle is written under
 `--out-dir`.
+
+**Every workflow generates as a standalone Temporal workflow** — its own `workflow.py`,
+`activities.py`, `shared.py`, `worker.py`, `starter.py`, and a `test_stepthrough.py` local
+harness. Confirmed triggers additionally generate a `triggers.py` in the *source* workflow's
+bundle: activities that start the target by workflow-type name on the target's own task queue
+(`id_conflict_policy=USE_EXISTING` keeps retries idempotent; blocking triggers await
+`handle.result()`). The target's bundle is untouched — it always runs independently. Multi-
+workflow projects also get a top-level `contracts.py` (every workflow's typed input) and a
+project `README.md` documenting the trigger topology and task queues.
+
+Every generated workflow exposes **read-only debug queries** (`current_step`,
+`decisions_taken`, `triggers_fired`) — safe in production. Opt into interactive step-through
+with `WORKFLOW_COMPILER_STEPWISE=1`: each top-level step then waits for an `advance` signal.
+The generated `test_stepthrough.py` runs the bundle under a time-skipping test environment
+with the stub activities (triggers mocked) and prints those queries — the quickest way to see
+which branch a conditional actually takes.
 
 ## Use — HTTP API
 

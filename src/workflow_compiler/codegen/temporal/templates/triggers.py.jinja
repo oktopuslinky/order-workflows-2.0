@@ -1,0 +1,59 @@
+"""Cross-workflow trigger activities for the {{ workflow_class }} workflow.
+
+Temporal workflow code may not start another workflow directly (that would be
+non-deterministic), so each trigger below is an **activity** that talks to the
+Temporal client. The target workflows stay fully standalone: they are started
+by workflow-type name on their own task queues, and
+``id_conflict_policy=USE_EXISTING`` makes activity retries idempotent — a retry
+attaches to the already-started run instead of double-starting it.
+
+The client address comes from ``TEMPORAL_ADDRESS`` (default ``localhost:7233``).
+"""
+
+from __future__ import annotations
+
+import os
+
+from temporalio import activity
+from temporalio.client import Client
+from temporalio.common import WorkflowIDConflictPolicy
+
+from shared import (
+{% for t in triggers %}
+    {{ t.input_class }},
+{% endfor %}
+)
+
+_client: Client | None = None
+
+
+async def _get_client() -> Client:
+    """Connect (once per worker process) to the Temporal server."""
+    global _client
+    if _client is None:
+        _client = await Client.connect(
+            os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+        )
+    return _client
+
+{% for t in triggers %}
+
+@activity.defn(name="{{ t.activity_name }}")
+async def {{ t.fn_name }}(arg: {{ t.input_class }}) -> {{ t.result_type if t.blocking else 'str' }}:
+    """{{ t.description or ("Start the standalone '" + t.target_workflow_name + "' workflow" + (" and await its result." if t.blocking else ".")) }}"""
+    client = await _get_client()
+    handle = await client.start_workflow(
+        "{{ t.target_workflow_name }}",
+        arg,
+        id={{ t.id_expr }},
+        task_queue="{{ t.task_queue }}",
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+{% if t.blocking %}
+    activity.logger.info("Awaiting result of %s", handle.id)
+    return await handle.result()
+{% else %}
+    activity.logger.info("Started workflow %s", handle.id)
+    return handle.id
+{% endif %}
+{% endfor %}

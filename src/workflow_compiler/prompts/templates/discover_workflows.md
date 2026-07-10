@@ -35,11 +35,24 @@ dependency provide:
 - input_field: the consuming input (use the document's own field name).
 - description: one sentence explaining the dependency.
 
-Only report workflows and dependencies that are supported by the document. Do
-not invent workflows, sections, or field names.
+Also identify triggers: cases where the document says one workflow STARTS
+another (e.g. "when X completes, Y begins", "if the order exceeds 100 units,
+escalate to the review workflow"). For each trigger provide:
+
+- source_workflow: name of the workflow that fires the trigger.
+- target_workflow: name of the workflow being started.
+- condition: the document's own wording of the condition, or "" when the
+  trigger is unconditional.
+- mode: "blocking" when the source waits for the target to finish before
+  continuing, otherwise "fire_and_forget".
+- description: one sentence explaining the trigger.
+
+Only report workflows, dependencies, and triggers that are supported by the
+document. Do not invent workflows, sections, conditions, or field names.
 
 Return a single JSON object of the form
-{"workflows": [...], "dependencies": [...], "confidence": <0.0-1.0>}
+{"workflows": [...], "dependencies": [...], "triggers": [...],
+ "confidence": <0.0-1.0>}
 and nothing else.
 
 DOCUMENT:

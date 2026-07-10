@@ -90,6 +90,14 @@ class Settings(BaseSettings):
         ),
     )
 
+    stepwise: bool = Field(
+        default=False,
+        description=(
+            "Generate step-gated Temporal bundles: every top-level plan step waits "
+            "for an `advance` signal (interactive step-through debugging)."
+        ),
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

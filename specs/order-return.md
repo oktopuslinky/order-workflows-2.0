@@ -9,7 +9,7 @@
 -->
 
 ## Purpose
-Processes a customer's return for a shipped order, including authorisation, receiving the item back, and refunding the payment.
+Processes a customer's return for a shipped order, including authorisation, receiving the item, and refunding the payment. Ensures returns are escalated if refunds fail.
 
 ## Metadata
 - domain: 
@@ -19,7 +19,7 @@ Processes a customer's return for a shipped order, including authorisation, rece
 - systems: Returns Service, Warehouse Service, Payment Gateway
 - triggers: Customer requests a return (return.requested reaches Returns Service)
 - start states: shipped
-- end states: Refund issued (refunded), Return rejected (rejected), Return escalated to Returns Operations (RefundFailed)
+- end states: Rejected (ReturnNotEligible), Refunded (successful refund), Escalated (RefundFailed)
 - tags: 
 
 ## Inputs
@@ -33,9 +33,9 @@ Processes a customer's return for a shipped order, including authorisation, rece
 - return_status
 
 ## Business Rules
-- BR-1: Return authorised only for orders in shipped state
-- BR-2: Returned item must be received before refund
-- BR-3: Refund cannot exceed captured payment amount
+- BR-1: Return authorised only for shipped orders
+- BR-2: Item received before refund issued
+- BR-3: Refund not exceeding captured payment
 
 ## API Interfaces
 - Returns Service /returns/authorize
@@ -52,28 +52,28 @@ Processes a customer's return for a shipped order, including authorisation, rece
 - Issue refund: 30 seconds
 
 ## Retries
-- Receive Returned Item: retry up to 3 times with exponential backoff starting at 2 seconds
-- Issue the refund: retry up to 5 times with exponential backoff starting at 1 second
+- Receive returned item: up to 3 times with exponential backoff (2s start)
+- Issue refund: up to 5 times with exponential backoff (1s start)
 
 ## Activities
 - [a1] Authorise Return
 - [a2] Receive Returned Item
 - [a3] Issue Refund
-- [a4] Escalate to Returns Operations
 
 ## Decisions
 - [d1] Is Return Eligible? — after: a1; yes: a2; no: e1
-- [d2] Is Refund Successful? — after: a3; yes: end; no: e2
 
 ## Exceptions
 - [e1] ReturnNotEligible
-- [e2] RefundFailed
+- [e2] RefundFailed — raised by: a3
 
 ## Compensations
-- [c1] Manual Handling by Returns Operations
+<!-- none -->
 
 ## Events
-- [v1] [ev1] return.requested — emitted by: start
+- [v1] return.requested — emitted by: start
+- [v2] return_id — emitted by: a2 [human]
+- [v3] refund_id — emitted by: a3 [human]
 
 ## State Transitions
 <!-- none -->
@@ -88,11 +88,11 @@ Processes a customer's return for a shipped order, including authorisation, rece
 <!-- none -->
 
 ## Open Questions
-- [ ] (R5-compensations) Which activity does each flagged compensation reverse (use the exact activity name)?
-  Answer: 
-- [x] (R8-retries) Which activities should retry, how many times, and with what backoff?
-  Answer: i am not sure, please
+<!-- none -->
 
 ## Cross-Workflow Dependencies
-- [x] uses output `orderid` of `order-placement` as input `orderid` — Order Return consumes the order_id produced by Order Placement
-- [x] uses output `shipmentid` of `order-fulfilment` as input `shipmentid` — Order Return consumes the shipment_id produced by Order Fulfilment
+- [x] uses output `order_id` of `order-placement` as input `order_id` — Order Return consumes the order_id produced by Order Placement
+- [x] uses output `shipment_id` of `order-fulfilment` as input `shipment_id` — Order Return consumes the shipment_id produced by Order Fulfilment
+
+## Triggers
+<!-- none -->

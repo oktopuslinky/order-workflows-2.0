@@ -69,6 +69,7 @@ class NodeType(StrEnum):
     SUBPROCESS = "subprocess"
     SIGNAL = "signal"
     TIMER = "timer"
+    TRIGGER = "trigger"
 
 
 class EdgeType(StrEnum):

@@ -139,7 +139,7 @@ def create_app() -> FastAPI:
         return ProjectResponse(
             project=project,
             spec_markdown={
-                spec.slug: render_spec(spec, project.cross_references)
+                spec.slug: render_spec(spec, project.cross_references, project.triggers)
                 for spec in project.specs
             },
         )

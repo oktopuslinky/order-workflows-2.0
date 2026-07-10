@@ -18,7 +18,8 @@ from pydantic import Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
 from workflow_compiler.models.enums import ApprovalStatus
-from workflow_compiler.models.spec import CrossReference, WorkflowSpec
+from workflow_compiler.models.findings import Severity, SpecFinding
+from workflow_compiler.models.spec import CrossReference, WorkflowSpec, WorkflowTrigger
 
 
 class ProjectStage(StrEnum):
@@ -73,6 +74,10 @@ class CompilationProject(WorkflowBaseModel):
     cross_references: list[CrossReference] = Field(
         default_factory=list, description="Typed output→input links between workflows."
     )
+    triggers: list[WorkflowTrigger] = Field(
+        default_factory=list,
+        description="Executable cross-workflow triggers (start/await between workflows).",
+    )
     spec_approval_status: ApprovalStatus = Field(
         default=ApprovalStatus.PENDING, description="Human approval state of the specs."
     )
@@ -83,9 +88,9 @@ class CompilationProject(WorkflowBaseModel):
     warnings: list[str] = Field(
         default_factory=list, description="Non-fatal issues (e.g. unlocatable segments)."
     )
-    validation_findings: dict[str, list[str]] = Field(
+    validation_findings: dict[str, list[SpecFinding]] = Field(
         default_factory=dict,
-        description="slug → findings from the most recent spec validation run.",
+        description="slug → structured findings from the most recent validation run.",
     )
     stage: ProjectStage = Field(
         default=ProjectStage.INGESTED, description="Current project stage."
@@ -116,3 +121,22 @@ class CompilationProject(WorkflowBaseModel):
             for r in self.cross_references
             if r.source_workflow == slug or r.target_workflow == slug
         ]
+
+    def triggers_from(self, slug: str) -> list[WorkflowTrigger]:
+        """Triggers that ``slug`` fires (its outgoing cross-workflow starts)."""
+        return [t for t in self.triggers if t.source_workflow == slug]
+
+    def has_blocking_findings(self) -> bool:
+        """True when any workflow has an unresolved BLOCKING validation finding."""
+        return any(
+            finding.severity is Severity.BLOCKING
+            for findings in self.validation_findings.values()
+            for finding in findings
+        )
+
+    def findings_as_strings(self) -> dict[str, list[str]]:
+        """Legacy projection: slug → one-line finding strings (for the API/overview)."""
+        return {
+            slug: [finding.as_string() for finding in findings]
+            for slug, findings in self.validation_findings.items()
+        }

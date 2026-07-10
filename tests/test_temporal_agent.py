@@ -239,3 +239,87 @@ def test_prune_keeps_timer_bounded_gate() -> None:
     pruned = agent._prune_ungrounded_signal_gates(design, _emit_graph())
     assert any(s.kind.value == "signal_gate" for s in pruned.plan)
     assert pruned.signals  # declaration retained
+
+
+# -- deterministic cross-workflow trigger injection ---------------------------
+
+
+def test_outgoing_triggers_injected_into_design() -> None:
+    from workflow_compiler.models import (
+        BindingSource,
+        StepKind,
+        TriggerInputBinding,
+        TriggerMode,
+        WorkflowTrigger,
+    )
+
+    agent = TemporalGeneratorAgent(MockProvider())
+    base = agent._to_design(_full_output(), _state())
+    triggers = [
+        WorkflowTrigger(
+            source_workflow="order-fulfillment",
+            target_workflow="account-provisioning",
+            mode=TriggerMode.BLOCKING,
+            input_map=[
+                TriggerInputBinding(
+                    target_input="customer_record_id",
+                    source=BindingSource.STEP_OUTPUT,
+                    source_ref="a1",
+                    type="str",
+                )
+            ],
+            result_binding="provisioning_result",
+            user_confirmed=True,
+        ),
+        WorkflowTrigger(
+            source_workflow="order-fulfillment",
+            target_workflow="audit-log",
+            mode=TriggerMode.FIRE_AND_FORGET,
+            condition="order.amount > 100",
+            user_confirmed=True,
+        ),
+    ]
+    design = agent._inject_triggers(base, triggers)
+
+    # Declarations: one per trigger, carrying the typed input params.
+    assert [t.name for t in design.triggers] == ["StartAccountProvisioning", "StartAuditLog"]
+    blocking = design.triggers[0]
+    assert blocking.target_workflow_name == "AccountProvisioning"
+    assert blocking.target_slug == "account-provisioning"
+    assert blocking.mode == "blocking"
+    assert [p.name for p in blocking.params] == ["customer_record_id"]
+
+    # Plan: unconditional trigger appended as a TRIGGER step with bindings +
+    # result; conditional one wrapped in a BRANCH whose then-lane triggers.
+    trigger_step = next(s for s in design.plan if s.kind is StepKind.TRIGGER)
+    assert trigger_step.ref == "StartAccountProvisioning"
+    assert trigger_step.result_name == "provisioning_result"
+    assert trigger_step.bindings[0].param == "customer_record_id"
+    assert trigger_step.bindings[0].source is BindingSource.STEP_OUTPUT
+    branch = next(
+        s for s in design.plan
+        if s.kind is StepKind.BRANCH and s.predicate == "order.amount > 100"
+    )
+    assert branch.lanes[0][0].kind is StepKind.TRIGGER
+    assert branch.lanes[0][0].ref == "StartAuditLog"
+    assert branch.lanes[1] == []
+
+
+async def test_run_injects_state_outgoing_triggers() -> None:
+    from workflow_compiler.models import StepKind, TriggerMode, WorkflowTrigger
+
+    provider = MockProvider(structured=[_full_output()])
+    state = _state()
+    state.outgoing_triggers = [
+        WorkflowTrigger(
+            source_workflow="order-fulfillment",
+            target_workflow="reporting",
+            mode=TriggerMode.FIRE_AND_FORGET,
+            user_confirmed=True,
+        )
+    ]
+    state = await TemporalGeneratorAgent(provider).run(state)
+    design = state.temporal_design
+    assert design is not None
+    assert [t.name for t in design.triggers] == ["StartReporting"]
+    assert any(s.kind is StepKind.TRIGGER for s in design.plan)

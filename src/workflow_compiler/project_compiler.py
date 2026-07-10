@@ -36,9 +36,14 @@ from workflow_compiler.models import (
     ApprovalStatus,
     CompilationProject,
     CompilationStage,
+    FactCategory,
     ProjectStage,
     Provenance,
+    Severity,
+    SpecFinding,
     SpecItem,
+    TriggerMode,
+    TriggerNode,
     WorkflowFacts,
     WorkflowMetadata,
     WorkflowSpec,
@@ -139,11 +144,14 @@ class ProjectCompiler:
         started = time.perf_counter()
         self._segmentation.set_progress(self._sub_reporter(progress))
         try:
-            segments, references, warnings = await self._segmentation.run(document_text)
+            segments, references, triggers, warnings = await self._segmentation.run(
+                document_text
+            )
         finally:
             self._segmentation.set_progress(None)
         project.segments = segments
         project.cross_references = references
+        project.triggers = triggers
         project.warnings = warnings
         project.stage = ProjectStage.WORKFLOWS_DISCOVERED
         _emit(progress, ProgressEvent(
@@ -214,7 +222,7 @@ class ProjectCompiler:
         ``project.validation_findings[slug]``.
         """
         project = await self._projects.load(project_id)
-        findings_by_slug: dict[str, list[str]] = {}
+        findings_by_slug: dict[str, list[SpecFinding]] = {}
         total = len(project.specs)
 
         for index, spec in enumerate(list(project.specs), start=1):
@@ -223,21 +231,40 @@ class ProjectCompiler:
                 phase="review", name=name, status="start", index=index, total=total,
             ))
             started = time.perf_counter()
-            findings: list[str] = []
+            findings: list[SpecFinding] = []
             current = spec
             markdown = (markdown_by_slug or {}).get(spec.slug)
             if markdown is not None:
                 result = ingest_spec_markdown(
-                    current, markdown, project.document_text, project.cross_references
+                    current, markdown, project.document_text,
+                    project.cross_references, project.triggers,
                 )
                 current = result.spec
                 project.cross_references = result.cross_references
-                findings.extend(f"ingest: {c}" for c in result.changes)
-                findings.extend(f"ingest warning: {w}" for w in result.warnings)
+                project.triggers = result.triggers
+                findings.extend(
+                    SpecFinding(
+                        severity=Severity.INFO, workflow=spec.slug,
+                        section="Ingest", message=c,
+                    )
+                    for c in result.changes
+                )
+                findings.extend(
+                    SpecFinding(
+                        severity=Severity.WARNING, workflow=spec.slug,
+                        section="Ingest", message=w,
+                    )
+                    for w in result.warnings
+                )
             current, validator_findings, _note = await self._validator.validate(
                 current, project.document_text, project.cross_references
             )
-            findings.extend(validator_findings)
+            findings.extend(
+                SpecFinding(
+                    severity=Severity.WARNING, workflow=spec.slug, message=vf
+                )
+                for vf in validator_findings
+            )
             findings_by_slug[spec.slug] = findings
             self._replace_spec(project, current)
             _emit(progress, ProgressEvent(
@@ -245,12 +272,123 @@ class ProjectCompiler:
                 seconds=time.perf_counter() - started,
             ))
 
+        # Deterministic (no-LLM) cross-workflow integrity pass: distribute its
+        # findings onto the workflow that owns each trigger / dependency.
+        for finding in self._validate_triggers_and_dependencies(project):
+            findings_by_slug.setdefault(finding.workflow, []).append(finding)
+
         project.validation_findings = findings_by_slug
         project.stage = ProjectStage.SPEC_VALIDATED
         project.touch()
         if persist:
             await self._projects.save(project)
         return project
+
+    @staticmethod
+    def _validate_triggers_and_dependencies(
+        project: CompilationProject,
+    ) -> list[SpecFinding]:
+        """Deterministic cross-workflow integrity checks (no LLM).
+
+        Classifies problems two ways: structural breakage that would make
+        generation impossible is ``BLOCKING`` (unknown endpoint, or a referenced
+        target input the target explicitly does *not* declare); softer issues the
+        human should confirm are ``WARNING`` (unverifiable field, type mismatch,
+        unconfirmed predicate, blocking trigger with no result binding).
+        """
+        specs = {spec.slug: spec for spec in project.specs}
+
+        def fields(slug: str, category: FactCategory) -> set[str]:
+            spec = specs.get(slug)
+            if spec is None:
+                return set()
+            return {
+                f.statement.strip().lower()
+                for f in spec.facts.facts
+                if f.category is category
+            }
+
+        findings: list[SpecFinding] = []
+
+        def add(
+            severity: Severity, workflow: str, message: str, suggestion: str | None = None
+        ) -> None:
+            findings.append(
+                SpecFinding(
+                    severity=severity, workflow=workflow, section="Triggers",
+                    message=message, suggestion=suggestion,
+                )
+            )
+
+        for trigger in project.triggers:
+            src = trigger.source_workflow
+            label = f"trigger to '{trigger.target_workflow}'"
+            if trigger.target_workflow not in specs:
+                add(
+                    Severity.BLOCKING, src,
+                    f"{label} targets a workflow that is not in this project",
+                    "fix the target name or remove the trigger",
+                )
+                continue
+            target_inputs = fields(trigger.target_workflow, FactCategory.INPUT)
+            for binding in trigger.input_map:
+                field_key = binding.target_input.strip().lower()
+                if target_inputs and field_key not in target_inputs:
+                    add(
+                        Severity.BLOCKING, src,
+                        f"{label} maps to input '{binding.target_input}', which "
+                        f"'{trigger.target_workflow}' does not declare",
+                        "correct the input name or add it to the target's Inputs",
+                    )
+                elif not target_inputs:
+                    add(
+                        Severity.WARNING, src,
+                        f"{label} maps to input '{binding.target_input}' but the target "
+                        "declares no inputs to verify against",
+                        "declare the target's inputs so the hand-off can be checked",
+                    )
+            if trigger.mode is TriggerMode.BLOCKING and not trigger.result_binding:
+                add(
+                    Severity.WARNING, src,
+                    f"{label} is blocking but has no result binding",
+                    "name the variable its result should bind to, or make it fire-and-forget",
+                )
+            if trigger.condition and not trigger.user_confirmed:
+                add(
+                    Severity.WARNING, src,
+                    f"{label} is conditional on '{trigger.condition}' but is not confirmed",
+                    "review and tick its checkbox in the spec file",
+                )
+            elif not trigger.user_confirmed:
+                add(
+                    Severity.WARNING, src,
+                    f"{label} has not been confirmed",
+                    "review and tick its checkbox in the spec file",
+                )
+
+        for ref in project.cross_references:
+            if ref.target_workflow not in specs:
+                findings.append(SpecFinding(
+                    severity=Severity.BLOCKING, workflow=ref.source_workflow,
+                    section="Cross-Workflow Dependencies",
+                    message=(
+                        f"dependency feeds '{ref.target_workflow}', which is not in this project"
+                    ),
+                    suggestion="fix the target name or remove the dependency",
+                ))
+                continue
+            if ref.output_type != ref.input_type:
+                findings.append(SpecFinding(
+                    severity=Severity.WARNING, workflow=ref.source_workflow,
+                    section="Cross-Workflow Dependencies",
+                    message=(
+                        f"type mismatch: '{ref.output_field}' is {ref.output_type} but "
+                        f"'{ref.target_workflow}.{ref.input_field}' expects {ref.input_type}"
+                    ),
+                    suggestion="align the output/input types in the spec files",
+                ))
+
+        return findings
 
     async def update_specs(
         self,
@@ -271,9 +409,11 @@ class ProjectCompiler:
             if markdown is None:
                 continue
             result = ingest_spec_markdown(
-                spec, markdown, project.document_text, project.cross_references
+                spec, markdown, project.document_text,
+                project.cross_references, project.triggers,
             )
             project.cross_references = result.cross_references
+            project.triggers = result.triggers
             self._replace_spec(project, result.spec)
         project.touch()
         if persist:
@@ -314,9 +454,11 @@ class ProjectCompiler:
                 if markdown is None:
                     continue
                 result = ingest_spec_markdown(
-                    spec, markdown, project.document_text, project.cross_references
+                    spec, markdown, project.document_text,
+                    project.cross_references, project.triggers,
                 )
                 project.cross_references = result.cross_references
+                project.triggers = result.triggers
                 self._replace_spec(project, result.spec)
 
         selected = [
@@ -346,6 +488,20 @@ class ProjectCompiler:
                 f"approval (tick their checkbox in the spec files): {links}"
             )
 
+        selected_slugs = {spec.slug for spec in selected}
+        blocking = [
+            finding
+            for slug in selected_slugs
+            for finding in project.validation_findings.get(slug, [])
+            if finding.severity is Severity.BLOCKING
+        ]
+        if blocking and not accept_incomplete:
+            details = "; ".join(f"{f.workflow}: {f.as_string()}" for f in blocking)
+            raise ApprovalError(
+                "Blocking validation findings must be resolved before approval "
+                f"(run validate and fix them, or override with accept_incomplete): {details}"
+            )
+
         project.spec_approval_status = ApprovalStatus.APPROVED
         project.stage = ProjectStage.COMPILING
         needs_attention = False
@@ -370,11 +526,20 @@ class ProjectCompiler:
                 # every workflow's content and would compile to a mega-workflow.
                 # Never do that silently — surface it as a blocking finding.
                 project.validation_findings.setdefault(spec.slug, []).append(
-                    "blocked: this workflow's document segment could not be "
-                    "isolated (the full document was used as its text), so its "
-                    "spec merges every workflow's content. Fix the section "
-                    "titles / spec content and re-compile, or override with "
-                    "accept_incomplete."
+                    SpecFinding(
+                        severity=Severity.BLOCKING,
+                        workflow=spec.slug,
+                        section="Segmentation",
+                        message=(
+                            "this workflow's document segment could not be isolated "
+                            "(the full document was used as its text), so its spec "
+                            "merges every workflow's content"
+                        ),
+                        suggestion=(
+                            "fix the section titles / spec content and re-compile, "
+                            "or override with accept_incomplete"
+                        ),
+                    )
                 )
                 needs_attention = True
                 _emit(progress, ProgressEvent(
@@ -389,9 +554,16 @@ class ProjectCompiler:
             if state.checklist is not None and not state.checklist.is_satisfied():
                 unmet = [item.id for item in state.checklist.unmet_required()]
                 project.validation_findings.setdefault(spec.slug, []).append(
-                    "blocked: unmet required checklist items "
-                    f"{unmet} — answer the open questions in the spec file "
-                    "or approve with accept_incomplete"
+                    SpecFinding(
+                        severity=Severity.BLOCKING,
+                        workflow=spec.slug,
+                        section="Open Questions",
+                        message=f"unmet required checklist items {unmet}",
+                        suggestion=(
+                            "answer the open questions in the spec file "
+                            "or approve with accept_incomplete"
+                        ),
+                    )
                 )
                 needs_attention = True
                 _emit(progress, ProgressEvent(
@@ -418,9 +590,17 @@ class ProjectCompiler:
                     else 0.0
                 )
                 project.validation_findings.setdefault(spec.slug, []).append(
-                    f"graph health {health:.2f} below threshold {self._threshold:.2f} — "
-                    "left pending for manual review"
-                    + (f"; issues: {'; '.join(issues)}" if issues else "")
+                    SpecFinding(
+                        severity=Severity.BLOCKING,
+                        workflow=spec.slug,
+                        section="Graph review",
+                        message=(
+                            f"graph health {health:.2f} below threshold "
+                            f"{self._threshold:.2f} — left pending for manual review"
+                            + (f"; issues: {'; '.join(issues)}" if issues else "")
+                        ),
+                        suggestion="review and approve the graph manually",
+                    )
                 )
             _emit(progress, ProgressEvent(
                 phase="approve", name=name, status="done", index=index, total=total,
@@ -442,10 +622,31 @@ class ProjectCompiler:
         document: downstream stages (Temporal design prompts, checklist,
         grounding) operate on the normalized, human-approved artifact.
         """
-        rendered = render_spec(spec, project.cross_references)
+        rendered = render_spec(spec, project.cross_references, project.triggers)
         state = WorkflowState(document_text=rendered, project_id=project.project_id)
         state.workflow_metadata = spec.metadata.model_copy(deep=True)
         state.workflow_facts = spec.facts.model_copy(deep=True)
+        state.outgoing_triggers = [
+            t.model_copy(deep=True) for t in project.triggers_from(spec.slug)
+        ]
+        # Make the cross-workflow starts visible to the graph/review stages:
+        # inject one TriggerNode per outgoing trigger into the structure copy.
+        structure = state.workflow_facts.structure
+        if state.outgoing_triggers and structure is not None:
+            existing = {t.id for t in structure.triggers}
+            counter = 1
+            for trigger in state.outgoing_triggers:
+                while f"t{counter}" in existing:
+                    counter += 1
+                existing.add(f"t{counter}")
+                structure.triggers.append(
+                    TriggerNode(
+                        id=f"t{counter}",
+                        target_workflow=trigger.target_workflow,
+                        mode=trigger.mode.value,
+                        condition=trigger.condition,
+                    )
+                )
         state.stage = CompilationStage.FACTS_EXTRACTED
         return state
 
@@ -490,7 +691,8 @@ class ProjectCompiler:
         for spec in project.specs:
             path = root / f"{spec.slug}.md"
             path.write_text(
-                render_spec(spec, project.cross_references), encoding="utf-8"
+                render_spec(spec, project.cross_references, project.triggers),
+                encoding="utf-8",
             )
             paths.append(path)
         overview = root / OVERVIEW_FILENAME
@@ -544,7 +746,7 @@ class ProjectCompiler:
             lines += ["", "## Latest Validation Findings"]
             for slug, findings in project.validation_findings.items():
                 lines.append(f"### {slug}")
-                lines += [f"- {f}" for f in findings] or ["- none"]
+                lines += [f"- {f.as_string()}" for f in findings] or ["- none"]
         lines += [
             "",
             "## How to proceed",

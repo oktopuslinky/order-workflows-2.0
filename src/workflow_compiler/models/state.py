@@ -17,6 +17,7 @@ from workflow_compiler.models.graph import WorkflowGraph
 from workflow_compiler.models.mermaid import MermaidDiagram
 from workflow_compiler.models.metadata import WorkflowMetadata
 from workflow_compiler.models.review import ReviewReport
+from workflow_compiler.models.spec import WorkflowTrigger
 from workflow_compiler.models.temporal import TemporalCodeBundle, TemporalWorkflowDesign
 
 
@@ -46,6 +47,13 @@ class WorkflowState(WorkflowBaseModel):
     )
     checklist: WorkflowChecklist | None = Field(
         default=None, description="Pre-generation readiness checklist (the form gate)."
+    )
+    outgoing_triggers: list[WorkflowTrigger] = Field(
+        default_factory=list,
+        description=(
+            "Cross-workflow triggers this workflow fires (populated from the "
+            "project at approval; empty for classic single-workflow compiles)."
+        ),
     )
     workflow_graph: WorkflowGraph | None = Field(
         default=None, description="Canonical workflow graph."

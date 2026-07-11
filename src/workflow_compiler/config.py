@@ -44,6 +44,14 @@ class Settings(BaseSettings):
         default=True, description="Block downstream artifacts until the graph is approved."
     )
 
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:3001",
+        ],
+        description="Browser origins allowed to call the HTTP API (CORS allow-list).",
+    )
+
     review_enabled: bool = Field(
         default=True,
         description=(

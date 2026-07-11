@@ -281,6 +281,24 @@ curl -s localhost:8000/projects/compile \
   -d '{"document_text": "When a customer submits an order, validate payment, then ship it."}'
 ```
 
+## Use — Frontend
+
+A Next.js frontend lives in [`frontend/`](frontend/). Run the backend API and the frontend dev
+server side by side (two terminals, both from the repo root):
+
+```bash
+# Terminal 1 — backend API (http://localhost:8000)
+uvicorn workflow_compiler.api.app:app --reload
+
+# Terminal 2 — frontend dev server (http://localhost:3000)
+cd frontend
+npm install          # first time only
+npm run dev          # or a custom port: npm run dev -- -p 3001
+```
+
+Open http://localhost:3000 in your browser. The frontend talks to the backend at
+`http://localhost:8000`; override that with `NEXT_PUBLIC_API_BASE` in `frontend/.env.local`.
+
 ## Use — Library
 
 ```python

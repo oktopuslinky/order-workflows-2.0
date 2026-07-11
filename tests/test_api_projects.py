@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from workflow_compiler import ProjectCompiler, WorkflowCompiler
 from workflow_compiler.api.app import app
-from workflow_compiler.api.dependencies import get_project_compiler
+from workflow_compiler.api.dependencies import get_compiler, get_project_compiler
 from workflow_compiler.compiler import ReviewConfig
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.storage import InMemoryStateStore
@@ -37,6 +37,9 @@ def client() -> TestClient:
         segmentation_review=False,
     )
     app.dependency_overrides[get_project_compiler] = lambda: compiler
+    # The /files endpoint loads per-workflow states through get_compiler; point it
+    # at the same inner compiler so it sees the states approval just created.
+    app.dependency_overrides[get_compiler] = lambda: inner
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -93,3 +96,44 @@ def test_project_spec_update_validate_and_approve(client: TestClient) -> None:
 
 def test_project_not_found_is_404(client: TestClient) -> None:
     assert client.get("/projects/nope").status_code == 404
+
+
+def test_project_compile_upload_parses_document(client: TestClient) -> None:
+    response = client.post(
+        "/projects/compile-upload",
+        files={"file": ("order.md", _DOCUMENT.encode("utf-8"), "text/markdown")},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project"]["stage"] == "spec_drafted"
+    assert "demo-order-workflow" in body["spec_markdown"]
+
+
+def test_project_compile_upload_rejects_unknown_format(client: TestClient) -> None:
+    response = client.post(
+        "/projects/compile-upload",
+        files={"file": ("mystery.xyz", b"whatever", "application/x-unknown")},
+    )
+    assert response.status_code == 415
+
+
+def test_project_files_returns_zip_ready_tree(client: TestClient) -> None:
+    compiled = client.post("/projects/compile", json={"document_text": _DOCUMENT})
+    project_id = compiled.json()["project"]["project_id"]
+    client.post(f"/projects/{project_id}/validate", json={"spec_markdown": {}})
+    approved = client.post(
+        f"/projects/{project_id}/approve", json={"accept_incomplete": True}
+    )
+    assert approved.json()["project"]["stage"] == "completed"
+
+    files = client.get(f"/projects/{project_id}/files")
+    assert files.status_code == 200
+    body = files.json()
+    assert body["project_id"] == project_id
+    paths = [entry["path"] for entry in body["files"]]
+    # Per-workflow bundle files are namespaced under the slug directory ...
+    assert any(path.startswith("demo-order-workflow/") for path in paths)
+    assert "demo-order-workflow/workflow.py" in paths
+    # ... and the shared project glue files sit at the root.
+    assert "contracts.py" in paths
+    assert "README.md" in paths

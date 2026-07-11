@@ -23,7 +23,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
 
 from workflow_compiler import __version__
 from workflow_compiler.api.dependencies import get_compiler, get_project_compiler
@@ -31,6 +32,7 @@ from workflow_compiler.api.schemas import (
     ApproveRequest,
     ProjectApproveRequest,
     ProjectCompileRequest,
+    ProjectFilesResponse,
     ProjectIdList,
     ProjectResponse,
     RejectRequest,
@@ -38,14 +40,18 @@ from workflow_compiler.api.schemas import (
     WorkflowIdList,
     WorkflowStateResponse,
 )
+from workflow_compiler.codegen.temporal.project_generator import generate_project_files
 from workflow_compiler.compiler import WorkflowCompiler
+from workflow_compiler.config import get_settings
 from workflow_compiler.exceptions import (
     ApprovalError,
     CompilationError,
     StateNotFoundError,
+    UnsupportedFormatError,
     WorkflowCompilerError,
 )
-from workflow_compiler.models import CompilationProject
+from workflow_compiler.ingestion import DocumentParserFactory
+from workflow_compiler.models import CompilationProject, GeneratedFile, TemporalWorkflowDesign
 from workflow_compiler.project_compiler import ProjectCompiler
 from workflow_compiler.spec import render_spec
 
@@ -70,6 +76,14 @@ def create_app() -> FastAPI:
         title="workflow-compiler",
         version=__version__,
         description="Compile business workflow documents into canonical artifacts.",
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=get_settings().cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.get("/health", tags=["meta"])
@@ -139,6 +153,27 @@ def create_app() -> FastAPI:
         )
         return _project_response(project)
 
+    @app.post(
+        "/projects/compile-upload", response_model=ProjectResponse, tags=["projects"]
+    )
+    async def compile_project_upload(
+        file: UploadFile = File(..., description="A .docx/.pdf/.md/.html/.txt document."),
+        persist: bool = Form(default=True),
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+    ) -> ProjectResponse:
+        """Parse an uploaded document to text, then segment it into per-workflow specs."""
+        data = await file.read()
+        try:
+            content = DocumentParserFactory().parse(
+                data, filename=file.filename, content_type=file.content_type
+            )
+        except UnsupportedFormatError as exc:
+            raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
+        except WorkflowCompilerError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        project = await _guard(compiler.compile_document(content.text, persist=persist))
+        return _project_response(project)
+
     @app.get("/projects", response_model=ProjectIdList, tags=["projects"])
     async def list_projects(
         compiler: ProjectCompiler = Depends(get_project_compiler),
@@ -155,6 +190,35 @@ def create_app() -> FastAPI:
         """Load a stored project plus its rendered spec files."""
         project = await _guard(compiler.load_project(project_id))
         return _project_response(project)
+
+    @app.get(
+        "/projects/{project_id}/files", response_model=ProjectFilesResponse, tags=["projects"]
+    )
+    async def get_project_files(
+        project_id: str,
+        project_compiler: ProjectCompiler = Depends(get_project_compiler),
+        compiler: WorkflowCompiler = Depends(get_compiler),
+    ) -> ProjectFilesResponse:
+        """Assemble every compiled workflow's bundle plus shared glue files (zip-ready)."""
+        project = await _guard(project_compiler.load_project(project_id))
+        files: list[GeneratedFile] = []
+        designs: dict[str, TemporalWorkflowDesign] = {}
+        for slug, workflow_id in project.workflow_ids.items():
+            state = await _guard(compiler.load_state(workflow_id))
+            if state.temporal_design is not None:
+                designs[slug] = state.temporal_design
+            if state.temporal_code is not None:
+                files.extend(
+                    GeneratedFile(
+                        path=f"{slug}/{generated.path}",
+                        language=generated.language,
+                        content=generated.content,
+                    )
+                    for generated in state.temporal_code.files
+                )
+        if designs:
+            files.extend(generate_project_files(designs, project.triggers))
+        return ProjectFilesResponse(project_id=project.project_id, files=files)
 
     @app.put("/projects/{project_id}/spec", response_model=ProjectResponse, tags=["projects"])
     async def update_project_spec(

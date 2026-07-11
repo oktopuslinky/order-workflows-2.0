@@ -1,0 +1,284 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ *
+ * Design tokens — "blueprint": cool paper/ink, indigo signal accent,
+ * and state colors that map to real pipeline semantics
+ * (amber = human gate/validate, emerald = pass, red = block).
+ * ------------------------------------------------------------------ */
+:root {
+  --paper: #f4f4f0;
+  --surface: #ffffff;
+  --surface-2: #fbfbf9;
+  --ink: #16181f;
+  --muted: #5b6070;
+  --faint: #8b90a0;
+  --border: #e4e3dc;
+  --border-strong: #d3d2c9;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef0ff;
+
+  --gate: #d98a1f; /* validate / human gate */
+  --gate-soft: #fbf1de;
+  --pass: #2f9e63; /* approved */
+  --pass-soft: #e5f4ec;
+  --block: #d64545; /* blocking */
+  --block-soft: #fbe9e9;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 2px rgba(20, 22, 30, 0.04), 0 8px 24px -12px rgba(20, 22, 30, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0b0d13;
+    --surface: #14161f;
+    --surface-2: #191c27;
+    --ink: #e8eaf1;
+    --muted: #9096a6;
+    --faint: #6b7080;
+    --border: #262a37;
+    --border-strong: #333949;
+
+    --accent: #7c7bff;
+    --accent-hover: #9a99ff;
+    --accent-soft: #1c1e3a;
+
+    --gate: #e6a94a;
+    --gate-soft: #2a2213;
+    --pass: #46c48a;
+    --pass-soft: #12271d;
+    --block: #f0736f;
+    --block-soft: #2a1616;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -16px rgba(0, 0, 0, 0.7);
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-gate: var(--gate);
+  --color-pass: var(--pass);
+  --color-block: var(--block);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  font-family: var(--font-sans), system-ui, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* Quiet scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* ------------------------------------------------------------------ *
+ * Component layer
+ * ------------------------------------------------------------------ */
+
+/* mono structural eyebrow — the "code-like" identity device */
+.eyebrow {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s, transform 0.05s;
+  border: 1px solid transparent;
+}
+.btn:active {
+  transform: translateY(0.5px);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:not(:disabled):hover {
+  background: var(--accent-hover);
+}
+.btn-gate {
+  background: var(--gate);
+  color: #fff;
+}
+.btn-pass {
+  background: var(--pass);
+  color: #fff;
+}
+.btn-ghost {
+  border-color: var(--border-strong);
+  color: var(--ink);
+}
+.btn-ghost:not(:disabled):hover {
+  background: var(--surface-2);
+}
+
+.link-accent {
+  color: var(--accent);
+}
+.link-accent:hover {
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------------ *
+ * Rendered spec preview
+ * ------------------------------------------------------------------ */
+.prose-spec h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0.75rem 0 0.5rem;
+}
+.prose-spec h2 {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin: 1.1rem 0 0.35rem;
+}
+.prose-spec ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.prose-spec li {
+  margin: 0.1rem 0;
+}
+.prose-spec code {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.85em;
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  padding: 0 0.25em;
+  border-radius: 0.25rem;
+}
+.prose-spec p {
+  margin: 0.25rem 0;
+}
+.prose-spec a {
+  color: var(--accent);
+}
+.prose-spec table {
+  border-collapse: collapse;
+}
+.prose-spec th,
+.prose-spec td {
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.5rem;
+}
+
+/* ------------------------------------------------------------------ *
+ * Guide — reading experience
+ * ------------------------------------------------------------------ */
+.guide-prose {
+  max-width: 46rem;
+}
+.guide-prose h2 {
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.5rem;
+  scroll-margin-top: 5rem;
+}
+.guide-prose h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.4rem;
+}
+.guide-prose p {
+  color: var(--muted);
+  line-height: 1.65;
+  margin: 0.5rem 0;
+}
+.guide-prose code {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.85em;
+  background: color-mix(in srgb, var(--muted) 15%, transparent);
+  padding: 0.05em 0.35em;
+  border-radius: 5px;
+  color: var(--ink);
+}
+.guide-prose strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.snippet {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.8rem;
+  line-height: 1.7;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 0.9rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+.snippet .id {
+  color: var(--accent);
+}
+.snippet .tail {
+  color: var(--gate);
+}
+.snippet .cmt {
+  color: var(--faint);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .reveal {
+    animation: reveal 0.5s ease both;
+  }
+}
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

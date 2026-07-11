@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from workflow_compiler.models import CompilationProject, WorkflowState
+from workflow_compiler.models import CompilationProject, GeneratedFile, WorkflowState
 
 
 class ApproveRequest(BaseModel):
@@ -80,3 +80,16 @@ class ProjectIdList(BaseModel):
     """Response listing stored project ids."""
 
     project_ids: list[str] = Field(default_factory=list)
+
+
+class ProjectFilesResponse(BaseModel):
+    """Flat, directory-prefixed file tree for a compiled project (ready to zip)."""
+
+    project_id: str = Field(..., description="Id of the project the files belong to.")
+    files: list[GeneratedFile] = Field(
+        default_factory=list,
+        description=(
+            "Every generated file: each workflow's bundle under '<slug>/...' plus the "
+            "shared project glue files (contracts.py, README.md) at the root."
+        ),
+    )

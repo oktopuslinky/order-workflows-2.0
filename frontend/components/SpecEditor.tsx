@@ -5,6 +5,8 @@ import { EditorView } from "@codemirror/view";
 import dynamic from "next/dynamic";
 import { useMemo } from "react";
 
+import { specHighlight } from "@/lib/specHighlight";
+
 // CodeMirror touches browser APIs at import time — load it browser-only.
 const CodeMirror = dynamic(() => import("@uiw/react-codemirror"), {
   ssr: false,
@@ -21,7 +23,7 @@ export function SpecEditor({
   onChange: (v: string) => void;
 }) {
   const extensions = useMemo(
-    () => [markdown(), EditorView.lineWrapping],
+    () => [markdown(), EditorView.lineWrapping, specHighlight],
     [],
   );
   return (

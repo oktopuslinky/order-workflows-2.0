@@ -348,6 +348,46 @@ input[type="checkbox"] {
   color: var(--faint);
 }
 
+/* Spec editor syntax highlighting — same "anatomy of a line" scheme as
+   .snippet above and the guide page: id → accent, tail → gate, cmt → faint. */
+.cm-spec-heading {
+  color: var(--ink);
+  font-weight: 650;
+}
+.cm-spec-punct {
+  color: var(--faint);
+}
+.cm-spec-id {
+  color: var(--accent);
+  font-weight: 600;
+}
+.cm-spec-tail {
+  color: var(--gate);
+}
+.cm-spec-key {
+  color: var(--gate);
+  font-weight: 600;
+}
+.cm-spec-cmt {
+  color: var(--faint);
+  font-style: italic;
+}
+.cm-spec-prov {
+  color: var(--faint);
+}
+.cm-spec-code {
+  font-size: 0.92em;
+  background: color-mix(in srgb, var(--muted) 15%, transparent);
+  padding: 0.05em 0.25em;
+  border-radius: 4px;
+}
+.cm-spec-strong {
+  font-weight: 650;
+}
+.cm-spec-em {
+  font-style: italic;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .reveal {
     animation: reveal 0.5s ease both;

@@ -53,12 +53,40 @@ def test_project_compile_returns_specs(client: TestClient) -> None:
     assert "demo-order-workflow" in body["spec_markdown"]
     assert body["spec_markdown"]["demo-order-workflow"].startswith("# ")
 
+    # A deterministic structural diagram is previewed for the workflow.
+    assert body["diagrams"]["demo-order-workflow"].startswith("flowchart TD")
+    assert "classDef" not in body["diagrams"]["demo-order-workflow"]
+
     project_id = body["project"]["project_id"]
     listed = client.get("/projects")
     assert project_id in listed.json()["project_ids"]
     got = client.get(f"/projects/{project_id}")
     assert got.status_code == 200
     assert got.json()["project"]["project_id"] == project_id
+    assert got.json()["diagrams"]["demo-order-workflow"].startswith("flowchart TD")
+
+
+def test_project_cvpa_preview_returns_colored_diagram(client: TestClient) -> None:
+    compiled = client.post("/projects/compile", json={"document_text": _DOCUMENT})
+    project_id = compiled.json()["project"]["project_id"]
+
+    response = client.post(
+        f"/projects/{project_id}/cvpa", json={"workflow": "demo-order-workflow"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["slug"] == "demo-order-workflow"
+    assert body["diagram"].startswith("flowchart TD")
+    assert "classDef" in body["diagram"]  # phase-colored
+
+
+def test_project_cvpa_preview_unknown_workflow_is_400(client: TestClient) -> None:
+    compiled = client.post("/projects/compile", json={"document_text": _DOCUMENT})
+    project_id = compiled.json()["project"]["project_id"]
+    response = client.post(
+        f"/projects/{project_id}/cvpa", json={"workflow": "ghost"}
+    )
+    assert response.status_code == 400
 
 
 def test_project_spec_update_validate_and_approve(client: TestClient) -> None:

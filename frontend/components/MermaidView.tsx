@@ -7,7 +7,11 @@ let mermaidReady: Promise<typeof import("mermaid").default> | null = null;
 function loadMermaid() {
   if (!mermaidReady) {
     mermaidReady = import("mermaid").then((mod) => {
-      mod.default.initialize({ startOnLoad: false, theme: "neutral" });
+      const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      mod.default.initialize({
+        startOnLoad: false,
+        theme: dark ? "dark" : "neutral",
+      });
       return mod.default;
     });
   }
@@ -37,12 +41,12 @@ export function MermaidView({ source }: { source: string }) {
   }, [source, domId]);
 
   if (!source?.trim()) {
-    return <p className="text-xs text-slate-400">No diagram yet.</p>;
+    return <p className="text-xs text-[var(--faint)]">No diagram yet.</p>;
   }
   return (
     <div className="overflow-auto">
       {error ? (
-        <pre className="whitespace-pre-wrap text-xs text-red-500">{error}</pre>
+        <pre className="whitespace-pre-wrap text-xs text-[var(--block)]">{error}</pre>
       ) : (
         <div ref={ref} className="[&_svg]:max-w-full" />
       )}

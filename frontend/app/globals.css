@@ -124,6 +124,7 @@ body {
   padding: 0.45rem 0.85rem;
   font-size: 0.82rem;
   font-weight: 500;
+  cursor: pointer;
   transition: background 0.15s, border-color 0.15s, opacity 0.15s, transform 0.05s;
   border: 1px solid transparent;
 }
@@ -157,11 +158,91 @@ body {
   background: var(--surface-2);
 }
 
+.btn-danger {
+  background: var(--block);
+  color: #fff;
+}
+.btn-danger:not(:disabled):hover {
+  background: color-mix(in srgb, var(--block) 85%, black);
+}
+
 .link-accent {
   color: var(--accent);
 }
 .link-accent:hover {
   text-decoration: underline;
+}
+
+/* Semantic status tones: soft bg + readable ink-mixed text + matching border
+ * color. Pair with `border` / radius / padding utilities. */
+.tone-block {
+  background: var(--block-soft);
+  color: color-mix(in srgb, var(--block) 78%, var(--ink));
+  border-color: color-mix(in srgb, var(--block) 40%, transparent);
+}
+.tone-gate {
+  background: var(--gate-soft);
+  color: color-mix(in srgb, var(--gate) 78%, var(--ink));
+  border-color: color-mix(in srgb, var(--gate) 45%, transparent);
+}
+.tone-pass {
+  background: var(--pass-soft);
+  color: color-mix(in srgb, var(--pass) 78%, var(--ink));
+  border-color: color-mix(in srgb, var(--pass) 40%, transparent);
+}
+.tone-info {
+  background: var(--surface-2);
+  color: var(--muted);
+  border-color: var(--border);
+}
+.tone-accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Segmented control — used for Spec/Results, Diagram/.mmd toggles */
+.seg {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.seg > button {
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.seg > button:hover:not(:disabled):not(.seg-active) {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+.seg > button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.seg > button.seg-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
 }
 
 /* ------------------------------------------------------------------ *

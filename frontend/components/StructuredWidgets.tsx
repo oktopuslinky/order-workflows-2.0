@@ -29,11 +29,11 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-      <h3 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+    <section className="card p-3">
+      <h3 className="eyebrow mb-2 flex items-center gap-2">
         {title}
         {count !== undefined && (
-          <span className="rounded-full bg-slate-200 px-1.5 text-[10px] text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+          <span className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-1.5 text-[10px] text-[var(--muted)]">
             {count}
           </span>
         )}
@@ -72,9 +72,9 @@ export function OpenQuestions({
                   }
                   className="mt-1"
                 />
-                <span className={q.resolved ? "text-slate-400 line-through" : ""}>
+                <span className={q.resolved ? "text-[var(--faint)] line-through" : ""}>
                   {q.ref && (
-                    <span className="mr-1 font-mono text-[10px] text-indigo-400">
+                    <span className="mr-1 font-mono text-[10px] text-[var(--accent)]">
                       {q.ref}
                     </span>
                   )}
@@ -97,7 +97,7 @@ export function OpenQuestions({
                     ),
                   )
                 }
-                className="mt-1 ml-6 w-[calc(100%-1.5rem)] rounded border border-slate-300 bg-transparent px-2 py-1 text-xs outline-none focus:border-indigo-400 dark:border-slate-700"
+                className="mt-1 ml-6 w-[calc(100%-1.5rem)] rounded-md border border-[var(--border-strong)] bg-transparent px-2 py-1 text-xs outline-none focus:border-[var(--accent)]"
               />
             </li>
           );
@@ -127,13 +127,13 @@ export function DependencyChecklist({
               onChange={(e) => onChange(setCheckbox(markdown, d.line, e.target.checked))}
               className="mt-1"
             />
-            <span className={d.checked ? "" : "text-amber-600 dark:text-amber-400"}>
+            <span className={d.checked ? "" : "text-[var(--gate)]"}>
               {d.text}
             </span>
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-[11px] text-slate-400">
+      <p className="mt-2 text-[11px] text-[var(--faint)]">
         Unconfirmed dependencies block approval unless overridden.
       </p>
     </Panel>
@@ -155,7 +155,7 @@ export function TriggerCards({
         {triggers.map((t) => (
           <li
             key={t.line}
-            className="rounded-md border border-slate-200 p-2 text-sm dark:border-slate-800"
+            className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2 text-sm"
           >
             <div className="flex items-center justify-between gap-2">
               <label className="flex items-center gap-2">
@@ -167,27 +167,27 @@ export function TriggerCards({
                   }
                 />
                 <span>
-                  triggers <span className="font-mono text-indigo-500">{t.target}</span>{" "}
-                  <span className="text-xs text-slate-500">({t.mode})</span>
+                  triggers <span className="font-mono text-[var(--accent)]">{t.target}</span>{" "}
+                  <span className="text-xs text-[var(--muted)]">({t.mode})</span>
                 </span>
               </label>
               <button
                 onClick={() => onChange(deleteTrigger(markdown, t.line, t.endLine))}
-                className="rounded px-1.5 py-0.5 text-xs text-red-500 hover:bg-red-500/10"
+                className="cursor-pointer rounded px-1.5 py-0.5 text-xs text-[var(--block)] hover:bg-[var(--block-soft)]"
                 title="Delete this trigger"
               >
                 Delete
               </button>
             </div>
             {t.condition && (
-              <p className="mt-1 pl-6 text-xs text-slate-500">
+              <p className="mt-1 pl-6 text-xs text-[var(--muted)]">
                 when <span className="font-mono">{t.condition}</span>
               </p>
             )}
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-[11px] text-slate-400">
+      <p className="mt-2 text-[11px] text-[var(--faint)]">
         Delete a trigger that should not fire (e.g. a customer-initiated flow).
       </p>
     </Panel>
@@ -215,7 +215,7 @@ export function EventKindEditor({
         {events.map((ev) => (
           <li key={ev.line} className="flex items-center justify-between gap-2">
             <span>
-              <span className="font-mono text-[10px] text-slate-400">{ev.id}</span>{" "}
+              <span className="font-mono text-[10px] text-[var(--faint)]">{ev.id}</span>{" "}
               {ev.name}
             </span>
             <select
@@ -223,7 +223,7 @@ export function EventKindEditor({
               onChange={(e) =>
                 onChange(setEventKind(markdown, ev.line, e.target.value as EventKind))
               }
-              className="rounded border border-slate-300 bg-transparent px-1 py-0.5 text-xs outline-none focus:border-indigo-400 dark:border-slate-700"
+              className="cursor-pointer rounded-md border border-[var(--border-strong)] bg-transparent px-1 py-0.5 text-xs outline-none focus:border-[var(--accent)]"
             >
               {(Object.keys(KIND_LABEL) as EventKind[]).map((k) => (
                 <option key={k} value={k}>
@@ -234,7 +234,7 @@ export function EventKindEditor({
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-[11px] text-slate-400">
+      <p className="mt-2 text-[11px] text-[var(--faint)]">
         <code>signal_wait</code> makes a wait a bounded condition instead of a hang.
       </p>
     </Panel>
@@ -254,7 +254,7 @@ export function ValidateDiff({
   if (removed.length === 0) return null;
   return (
     <Panel title="Removed by validate" count={removed.length}>
-      <p className="mb-2 text-[11px] text-slate-400">
+      <p className="mb-2 text-[11px] text-[var(--faint)]">
         The validate pass removed these lines. If one was correct, re-add it — a
         re-added line is recorded as human-provided and sticks.
       </p>
@@ -262,12 +262,12 @@ export function ValidateDiff({
         {removed.map((line, i) => (
           <li
             key={`${line}-${i}`}
-            className="flex items-start justify-between gap-2 rounded border border-red-500/30 bg-red-500/5 px-2 py-1 text-xs"
+            className="tone-block flex items-start justify-between gap-2 rounded-md border px-2 py-1 text-xs"
           >
-            <code className="break-all text-red-600 dark:text-red-300">{line}</code>
+            <code className="break-all">{line}</code>
             <button
               onClick={() => onReAdd(line)}
-              className="shrink-0 rounded px-1.5 py-0.5 text-indigo-500 hover:bg-indigo-500/10"
+              className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 text-[var(--accent)] hover:bg-[var(--accent-soft)]"
             >
               Re-add
             </button>

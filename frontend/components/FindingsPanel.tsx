@@ -12,7 +12,7 @@ export function FindingsPanel({
 }) {
   if (findings.length === 0) {
     return (
-      <p className="text-xs text-emerald-500">No findings — spec looks clean.</p>
+      <p className="text-xs text-[var(--pass)]">No findings — spec looks clean.</p>
     );
   }
   const order = { blocking: 0, warning: 1, info: 2 } as const;
@@ -27,7 +27,7 @@ export function FindingsPanel({
           <li key={i}>
             <button
               onClick={() => onSelect?.(f.section)}
-              className={`w-full rounded-md border px-2.5 py-2 text-left text-xs ${SEVERITY_STYLE[f.severity]}`}
+              className={`w-full cursor-pointer rounded-md border px-2.5 py-2 text-left text-xs ${SEVERITY_STYLE[f.severity]}`}
             >
               <div className="flex items-center gap-2">
                 <span className="font-mono font-bold">

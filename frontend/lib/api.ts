@@ -2,6 +2,7 @@
 // The browser talks to the origin directly (CORS is enabled server-side).
 
 import type {
+  CvpaPreviewResponse,
   ProjectFilesResponse,
   ProjectResponse,
   WorkflowStateResponse,
@@ -116,6 +117,13 @@ export const api = {
         accept_incomplete: opts.acceptIncomplete ?? false,
         allow_unconfirmed_references: opts.allowUnconfirmedReferences ?? false,
       }),
+    }),
+
+  classifyCvpa: (id: string, workflow: string) =>
+    request<CvpaPreviewResponse>(`/projects/${encodeURIComponent(id)}/cvpa`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ workflow }),
     }),
 
   projectFiles: (id: string) =>

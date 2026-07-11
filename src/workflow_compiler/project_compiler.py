@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from workflow_compiler.agents.cvpa import CVPAClassifierAgent
+from workflow_compiler.agents.graph_builder import GraphBuilderAgent
 from workflow_compiler.agents.segmentation import WorkflowSegmentationAgent
 from workflow_compiler.checklist import amend as checklist_amend
 from workflow_compiler.compiler import (
@@ -30,7 +32,11 @@ from workflow_compiler.compiler import (
     WorkflowCompiler,
     _emit,
 )
-from workflow_compiler.exceptions import ApprovalError, CompilationError
+from workflow_compiler.exceptions import (
+    ApprovalError,
+    CompilationError,
+    WorkflowCompilerError,
+)
 from workflow_compiler.interfaces.llm import BaseLLMProvider
 from workflow_compiler.models import (
     ApprovalStatus,
@@ -419,6 +425,50 @@ class ProjectCompiler:
         if persist:
             await self._projects.save(project)
         return project
+
+    # ------------------------------------------------------------------ #
+    # Spec-review diagrams (deterministic preview + on-demand CVPA)
+    # ------------------------------------------------------------------ #
+
+    async def build_diagrams(self, project: CompilationProject) -> dict[str, str]:
+        """slug → structural Mermaid source, built deterministically (no LLM).
+
+        A preview of the graph approval will build: each spec is seeded into a
+        state exactly as :meth:`approve_spec` does (``_seed_state`` injects the
+        outgoing triggers), then the deterministic :class:`GraphBuilderAgent`
+        renders the diagram. Failures and empty graphs are skipped so callers can
+        surface "no diagram yet" per workflow.
+        """
+        agent = GraphBuilderAgent()
+        diagrams: dict[str, str] = {}
+        for spec in project.specs:
+            try:
+                state = await agent.run(self._seed_state(project, spec))
+            except WorkflowCompilerError:
+                continue
+            graph = state.workflow_graph
+            diagram = state.mermaid_diagram
+            if graph is not None and graph.nodes and diagram is not None:
+                diagrams[spec.slug] = diagram.source
+        return diagrams
+
+    async def classify_preview(self, project_id: str, slug: str) -> str:
+        """CVPA phase-colored Mermaid source for one workflow (LLM, display-only).
+
+        Runs graph build + CVPA classification on a seeded state and returns the
+        colored diagram. It is **not** persisted — the authoritative CVPA runs at
+        approval; this is a read-only preview for the spec-review UI.
+        """
+        project = await self._projects.load(project_id)
+        spec = next((s for s in project.specs if s.slug == slug), None)
+        if spec is None:
+            raise CompilationError(f"Project {project_id!r} has no workflow {slug!r}.")
+        state = self._seed_state(project, spec)
+        state = await GraphBuilderAgent().run(state)
+        state = await CVPAClassifierAgent(self._llm, prompt_manager=self._prompts).run(state)
+        if state.mermaid_diagram is None:
+            raise CompilationError(f"Could not render a diagram for {slug!r}.")
+        return state.mermaid_diagram.source
 
     # ------------------------------------------------------------------ #
     # Stage 3: approval → per-workflow back-end

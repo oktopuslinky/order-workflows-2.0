@@ -60,7 +60,7 @@ export default function HomePage() {
           </p>
 
         <label
-          className="mt-4 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-300 px-4 py-6 text-center text-sm hover:border-indigo-400 dark:border-slate-700"
+          className="mt-4 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-[var(--border-strong)] px-4 py-6 text-center text-sm transition hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]/40"
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
@@ -83,17 +83,17 @@ export default function HomePage() {
             }}
           />
           {file ? (
-            <span className="font-medium text-indigo-500">{file.name}</span>
+            <span className="font-medium text-[var(--accent)]">{file.name}</span>
           ) : (
-            <span className="text-slate-500">
+            <span className="text-[var(--muted)]">
               Drag a file here, or click to choose
             </span>
           )}
         </label>
 
-        <div className="my-3 flex items-center gap-3 text-xs text-slate-400">
-          <span className="h-px flex-1 bg-slate-200 dark:bg-slate-800" /> or paste
-          text <span className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+        <div className="my-3 flex items-center gap-3 text-xs text-[var(--faint)]">
+          <span className="h-px flex-1 bg-[var(--border)]" /> or paste
+          text <span className="h-px flex-1 bg-[var(--border)]" />
         </div>
 
         <textarea
@@ -106,11 +106,11 @@ export default function HomePage() {
             }
           }}
           placeholder="When a customer submits an order, validate payment, then ship it…"
-          className="h-32 w-full resize-y rounded-lg border border-slate-300 bg-transparent p-3 font-mono text-sm outline-none focus:border-indigo-400 dark:border-slate-700"
+          className="h-32 w-full resize-y rounded-lg border border-[var(--border-strong)] bg-transparent p-3 font-mono text-sm outline-none focus:border-[var(--accent)]"
         />
 
         {compile.error && (
-          <p className="mt-2 text-sm text-red-500">
+          <p className="mt-2 text-sm text-[var(--block)]">
             {(compile.error as ApiError).message}
           </p>
         )}

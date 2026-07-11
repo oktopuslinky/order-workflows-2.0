@@ -246,6 +246,32 @@ async def test_validate_approve_and_compile_each_workflow(tmp_path) -> None:
         assert "workflow-compiler specification" in state.document_text
 
 
+async def test_build_diagrams_previews_every_workflow() -> None:
+    """After compile, a deterministic structural diagram exists for each slug."""
+    provider = MockProvider(structured=_front_end_queue())
+    compiler = _compiler(provider)
+    project = await compiler.compile_document(_DOCUMENT)
+
+    diagrams = await compiler.build_diagrams(project)
+    assert set(diagrams) == {"customer-onboarding", "account-provisioning"}
+    for source in diagrams.values():
+        assert source.startswith("flowchart TD")
+        assert "classDef" not in source  # structural preview, not CVPA-colored
+
+
+async def test_classify_preview_colors_the_diagram() -> None:
+    """The on-demand CVPA preview returns a phase-colored diagram (LLM)."""
+    queue: list[object] = _front_end_queue()
+    queue.append(_cvpa())  # one CVPA structured call for the preview
+    provider = MockProvider(structured=queue)
+    compiler = _compiler(provider)
+    project = await compiler.compile_document(_DOCUMENT)
+
+    source = await compiler.classify_preview(project.project_id, "customer-onboarding")
+    assert source.startswith("flowchart TD")
+    assert "classDef" in source  # CVPA phase coloring applied
+
+
 async def test_approve_requires_confirmed_cross_references() -> None:
     provider = MockProvider(structured=_front_end_queue())
     compiler = _compiler(provider)

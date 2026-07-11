@@ -30,6 +30,8 @@ from workflow_compiler import __version__
 from workflow_compiler.api.dependencies import get_compiler, get_project_compiler
 from workflow_compiler.api.schemas import (
     ApproveRequest,
+    CvpaPreviewRequest,
+    CvpaPreviewResponse,
     ProjectApproveRequest,
     ProjectCompileRequest,
     ProjectFilesResponse,
@@ -132,14 +134,17 @@ def create_app() -> FastAPI:
         ids = await _guard(compiler.list_states())
         return WorkflowIdList(workflow_ids=ids)
 
-    def _project_response(project: CompilationProject) -> ProjectResponse:
-        """Wrap a project with its rendered spec Markdown files."""
+    async def _project_response(
+        project: CompilationProject, compiler: ProjectCompiler
+    ) -> ProjectResponse:
+        """Wrap a project with its rendered spec Markdown and structural diagrams."""
         return ProjectResponse(
             project=project,
             spec_markdown={
                 spec.slug: render_spec(spec, project.cross_references, project.triggers)
                 for spec in project.specs
             },
+            diagrams=await compiler.build_diagrams(project),
         )
 
     @app.post("/projects/compile", response_model=ProjectResponse, tags=["projects"])
@@ -151,7 +156,7 @@ def create_app() -> FastAPI:
         project = await _guard(
             compiler.compile_document(request.document_text, persist=request.persist)
         )
-        return _project_response(project)
+        return await _project_response(project, compiler)
 
     @app.post(
         "/projects/compile-upload", response_model=ProjectResponse, tags=["projects"]
@@ -172,7 +177,7 @@ def create_app() -> FastAPI:
         except WorkflowCompilerError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
         project = await _guard(compiler.compile_document(content.text, persist=persist))
-        return _project_response(project)
+        return await _project_response(project, compiler)
 
     @app.get("/projects", response_model=ProjectIdList, tags=["projects"])
     async def list_projects(
@@ -189,7 +194,7 @@ def create_app() -> FastAPI:
     ) -> ProjectResponse:
         """Load a stored project plus its rendered spec files."""
         project = await _guard(compiler.load_project(project_id))
-        return _project_response(project)
+        return await _project_response(project, compiler)
 
     @app.get(
         "/projects/{project_id}/files", response_model=ProjectFilesResponse, tags=["projects"]
@@ -230,7 +235,7 @@ def create_app() -> FastAPI:
         project = await _guard(
             compiler.update_specs(project_id, request.spec_markdown)
         )
-        return _project_response(project)
+        return await _project_response(project, compiler)
 
     @app.post(
         "/projects/{project_id}/validate", response_model=ProjectResponse, tags=["projects"]
@@ -246,7 +251,7 @@ def create_app() -> FastAPI:
                 project_id, markdown_by_slug=request.spec_markdown or None
             )
         )
-        return _project_response(project)
+        return await _project_response(project, compiler)
 
     @app.post(
         "/projects/{project_id}/approve", response_model=ProjectResponse, tags=["projects"]
@@ -267,7 +272,19 @@ def create_app() -> FastAPI:
                 allow_unconfirmed_references=request.allow_unconfirmed_references,
             )
         )
-        return _project_response(project)
+        return await _project_response(project, compiler)
+
+    @app.post(
+        "/projects/{project_id}/cvpa", response_model=CvpaPreviewResponse, tags=["projects"]
+    )
+    async def classify_project_workflow(
+        project_id: str,
+        request: CvpaPreviewRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+    ) -> CvpaPreviewResponse:
+        """Run CVPA phase-coloring for one workflow and return the diagram (preview)."""
+        diagram = await _guard(compiler.classify_preview(project_id, request.workflow))
+        return CvpaPreviewResponse(slug=request.workflow, diagram=diagram)
 
     return app
 

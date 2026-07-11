@@ -74,6 +74,26 @@ class ProjectResponse(BaseModel):
     spec_markdown: dict[str, str] = Field(
         default_factory=dict, description="slug → rendered spec Markdown."
     )
+    diagrams: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "slug → structural Mermaid diagram source, built deterministically from "
+            "the current specs (a preview of the graph approval will build)."
+        ),
+    )
+
+
+class CvpaPreviewRequest(BaseModel):
+    """Request body for an on-demand CVPA phase-coloring preview."""
+
+    workflow: str = Field(..., description="Slug of the workflow to classify.")
+
+
+class CvpaPreviewResponse(BaseModel):
+    """A single workflow's CVPA phase-colored Mermaid diagram (display-only)."""
+
+    slug: str = Field(..., description="Slug of the classified workflow.")
+    diagram: str = Field(..., description="CVPA phase-colored Mermaid diagram source.")
 
 
 class ProjectIdList(BaseModel):

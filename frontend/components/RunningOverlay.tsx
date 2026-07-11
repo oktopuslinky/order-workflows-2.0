@@ -32,12 +32,12 @@ export function RunningOverlay({
   const ss = String(elapsed % 60).padStart(2, "0");
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-slate-50/80 backdrop-blur-sm dark:bg-slate-950/80">
-      <div className="h-10 w-10 animate-spin rounded-full border-3 border-slate-300 border-t-indigo-500 dark:border-slate-700 dark:border-t-indigo-400" />
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-[var(--paper)]/80 backdrop-blur-sm">
+      <div className="h-10 w-10 animate-spin rounded-full border-3 border-[var(--border-strong)] border-t-[var(--accent)]" />
       <div className="text-center">
         <p className="font-medium">{title}</p>
-        <p className="mt-1 text-sm text-slate-500">{steps[stepIndex]}…</p>
-        <p className="mt-2 font-mono text-xs text-slate-400">
+        <p className="mt-1 text-sm text-[var(--muted)]">{steps[stepIndex]}…</p>
+        <p className="mt-2 font-mono text-xs text-[var(--faint)]">
           {mm}:{ss} elapsed · LLM stages can take 1–3 minutes
         </p>
       </div>

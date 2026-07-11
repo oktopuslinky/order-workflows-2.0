@@ -125,6 +125,14 @@ export interface CompilationProject {
 export interface ProjectResponse {
   project: CompilationProject;
   spec_markdown: Record<string, string>;
+  // slug → structural Mermaid source, built deterministically from the current
+  // specs (a preview of what graph approval will build).
+  diagrams: Record<string, string>;
+}
+
+export interface CvpaPreviewResponse {
+  slug: string;
+  diagram: string;
 }
 
 export interface GeneratedFile {

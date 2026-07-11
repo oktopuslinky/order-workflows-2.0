@@ -9,7 +9,7 @@ import { useMemo } from "react";
 const CodeMirror = dynamic(() => import("@uiw/react-codemirror"), {
   ssr: false,
   loading: () => (
-    <div className="p-4 text-sm text-slate-400">Loading editor…</div>
+    <div className="p-4 text-sm text-[var(--faint)]">Loading editor…</div>
   ),
 });
 

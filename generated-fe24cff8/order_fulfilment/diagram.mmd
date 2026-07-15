@@ -1,0 +1,47 @@
+flowchart TD
+    start(["Start"])
+    end_node(["End"])
+    activity_1["Pick items"]
+    activity_2["Pack shipment"]
+    activity_3["Dispatch shipment"]
+    activity_4["Capture payment"]
+    activity_5["Wait for carrier pickup confirmation"]
+    decision_1{"Dispatch accepted?"}
+    exception_1(["CarrierRejected"])
+    exception_2(["PickupTimeout"])
+    compensation_1["Unpack shipment"]
+    event_1(["order.fulfil"])
+    event_2["carrier.picked_up"]
+    event_3(["shipment_id"])
+    event_4(["payment_id"])
+    event_5(["fulfilment_status"])
+    trigger_1["Trigger order-return"]
+    start --> activity_1
+    activity_1 --> activity_2
+    activity_2 --> activity_3
+    activity_3 --> decision_1
+    decision_1 -->|yes| activity_4
+    decision_1 -->|no| exception_1
+    activity_4 --> activity_5
+    activity_5 --> end_node
+    activity_3 -.->|on error| exception_1
+    activity_5 -.->|on error| exception_2
+    activity_2 -.->|compensate| compensation_1
+    compensation_1 --> end_node
+    start -.->|event| event_1
+    event_1 -.->|triggers| activity_1
+    activity_5 -.->|waits for| event_2
+    event_2 -->|then| end_node
+    activity_3 -.->|emits| event_3
+    activity_4 -.->|emits| event_4
+    activity_5 -->|when a shipment is dispatched| trigger_1
+    exception_2 -->|terminates| end_node
+    exception_1 -->|terminates| end_node
+    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;
+    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
+    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;
+    class start,activity_4,event_1 capture;
+    class decision_1,exception_1,exception_2 validate;
+    class activity_1,activity_2,activity_3,compensation_1 process;
+    class end_node,activity_5,event_2,event_3,event_4,event_5,trigger_1 activate;

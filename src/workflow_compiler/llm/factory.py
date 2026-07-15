@@ -76,6 +76,7 @@ class ProviderFactory:
         kwargs: dict[str, Any] = {
             "model": resolved.llm_model,
             "temperature": resolved.llm_temperature,
+            "timeout": resolved.llm_timeout,
         }
         if getattr(resolved, "llm_base_url", None):
             kwargs["base_url"] = resolved.llm_base_url

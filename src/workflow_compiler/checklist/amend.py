@@ -4,9 +4,15 @@ This is the "local amendment" path: the user's answers from the filled-in report
 are applied directly to ``metadata``/``facts``/``structure`` with no LLM call, so
 re-validation is instant and free. Additive answers (trigger, inputs, outputs) are
 applied structurally; relational fixes (compensation binding, a decision's 'no'
-branch) are best-effort by name. Any item the user answered is at minimum recorded
-and marked ``accepted`` so an explicit answer always clears the gate, while the
-underlying structure is improved wherever we can do so safely.
+branch) are resolved by id or name against what the workflow actually declares.
+
+**Answering is not the same as clearing.** A REQUIRED item is cleared only by a
+structural repair (or by an explicit ``accept_as_is`` override) — never by the mere
+presence of an answer, because generating code from a structure we failed to repair
+would silently drop a branch. An answer we could not apply is recorded on the item
+and called out in its evidence, so the gate can tell the user their answer landed but
+did nothing, and name the edit that would work. Optional items, which gate nothing,
+are cleared by any answer.
 
 After any structural edit the structure is re-``validated()`` (per the
 referential-integrity invariant) and the checklist is recomputed.
@@ -26,11 +32,17 @@ from workflow_compiler.models import (
     WorkflowStructure,
 )
 from workflow_compiler.models.checklist import ChecklistSeverity, ChecklistStatus
+from workflow_compiler.models.structure import TERMINAL_TARGETS
 
 #: Split a free-text answer into items on commas / semicolons / newlines.
 _SPLIT = re.compile(r"[,;\n]+")
 #: A "left <sep> right" pair, e.g. "Release inventory -> Reserve inventory".
 _PAIR = re.compile(r"^(.*?)\s*(?:->|:|\breverses\b|\bcompensates\b)\s*(.*)$", re.IGNORECASE)
+#: A separator-less pair whose left is a bare id, e.g. "d1 CartNotEligible". Only
+#: honoured when the left side names a declared node, so prose cannot match by accident.
+_LOOSE_PAIR = re.compile(r"^(\S+)\s+(.+)$")
+#: A name we are willing to declare as a *new* exception: name-shaped, not a sentence.
+_EXCEPTION_NAME = re.compile(r"^[A-Za-z][\w-]*(?:\s+[\w-]+){0,3}$")
 
 
 def _items(answer: str) -> list[str]:
@@ -86,6 +98,14 @@ def apply(
         is_optional = item.severity == ChecklistSeverity.OPTIONAL
         if accept_as_is or (is_optional and was_answered):
             item.status = ChecklistStatus.ACCEPTED
+        elif was_answered:
+            # Answered, still unmet: the answer could not be turned into a
+            # structural edit. Say so on the item — silently re-asking the original
+            # question would tell the user nothing about why their answer failed.
+            item.evidence = (
+                f"{item.evidence} Your answer was recorded but could not be applied "
+                f'automatically: "{item.answer}".'
+            ).strip()
     state.checklist = checklist
     state.touch()
     return state
@@ -169,16 +189,42 @@ def _bind_compensations(structure: WorkflowStructure, answer: str) -> WorkflowSt
 
 
 def _route_decisions(structure: WorkflowStructure, answer: str) -> WorkflowStructure:
-    """Route a decision's 'no' branch to a (possibly new) named exception.
+    """Route each unrouted decision's 'no' branch to the target the answer names.
 
-    Accepts pairs like ``d1 -> OrderNotSettleable`` (decision id / question on the
-    left, exception name on the right).
+    The left of a pair identifies the decision (``d1``, or its question text); the
+    right names the target — an exception id (``e1``), an exception name
+    (``CartNotEligible``), an activity, a terminal token, or a new exception to
+    declare. ``d1 -> CartNotEligible``, ``d1: e1`` and ``d1 CartNotEligible`` all work,
+    and a target named anywhere in a sentence is found (``d1 - raise CartNotEligible
+    and stop``).
+
+    A pair whose left side names no declared decision is ignored, and an answer with no
+    pairs at all is applied **only** when exactly one decision is unrouted and the
+    answer resolves to exactly one target — otherwise which decision the user meant is
+    a guess, and a mis-wired branch is worse than a blocked spec.
     """
-    routes: dict[str, str] = {}  # decision key(lower) -> exception name
+    unrouted = [d for d in structure.decisions if not d.no_target or d.no_target == d.after]
+    if not unrouted:
+        return structure
+
+    keys = {d.id.lower() for d in structure.decisions}
+    keys |= {d.question.strip().lower() for d in structure.decisions}
+
+    routes: dict[str, str] = {}  # decision key(lower) -> raw target text
+    unattributed: list[str] = []
     for piece in _items(answer):
-        pair = _PAIR.match(piece)
-        if pair:
+        pair = _PAIR.match(piece) or _LOOSE_PAIR.match(piece)
+        if pair and pair.group(1).strip().lower() in keys:
             routes[pair.group(1).strip().lower()] = pair.group(2).strip()
+        else:
+            unattributed.append(piece)
+
+    if not routes and len(unrouted) == 1:
+        # Unambiguous: one open branch, so an answer that names one target can only
+        # mean that one.
+        target = _resolve_target(structure, answer)
+        if target:
+            routes[unrouted[0].id.lower()] = target
     if not routes:
         return structure
 
@@ -191,18 +237,52 @@ def _route_decisions(structure: WorkflowStructure, answer: str) -> WorkflowStruc
         if d.no_target and d.no_target != d.after:
             decisions.append(d)
             continue
-        exc_name = routes.get(d.id.lower()) or routes.get(d.question.lower())
-        if not exc_name:
+        raw = routes.get(d.id.lower()) or routes.get(d.question.strip().lower())
+        if not raw:
             decisions.append(d)
             continue
-        exc_id = exc_id_by_reason.get(exc_name.lower())
-        if exc_id is None:
+        target = _resolve_target(structure, raw)
+        if target is None:
+            # Nothing declared matches — treat the answer as a new exception to
+            # declare, but only if it reads like a name rather than a sentence.
+            name = raw.strip()
+            if not _EXCEPTION_NAME.match(name):
+                decisions.append(d)
+                continue
             next_index += 1
-            exc_id = f"e{next_index}"
-            exceptions.append(
-                ExceptionNode(id=exc_id, reason=exc_name, raised_by=d.after)
-            )
-            exc_id_by_reason[exc_name.lower()] = exc_id
-        decisions.append(d.model_copy(update={"no_target": exc_id}))
+            target = f"e{next_index}"
+            exceptions.append(ExceptionNode(id=target, reason=name, raised_by=d.after))
+            exc_id_by_reason[name.lower()] = target
+        decisions.append(d.model_copy(update={"no_target": target}))
 
     return structure.model_copy(update={"decisions": decisions, "exceptions": exceptions})
+
+
+def _resolve_target(structure: WorkflowStructure, text: str) -> str | None:
+    """Resolve ``text`` to a declared node id or terminal token, else None.
+
+    Matches an id or a full name exactly first, then looks for a declared exception /
+    activity name or a terminal token *mentioned inside* the text, so a sentence like
+    "raise CartNotEligible and reject" resolves to that exception's id.
+    """
+    key = text.strip().strip("`'\"").lower()
+    if not key:
+        return None
+
+    candidates: list[tuple[str, str]] = [(x.id, x.reason) for x in structure.exceptions]
+    candidates += [(a.id, a.name) for a in structure.activities]
+    for node_id, name in candidates:
+        if key in (node_id.lower(), name.strip().lower()):
+            return node_id
+    if key in TERMINAL_TARGETS:
+        return key
+
+    # Fall back to a mention inside a longer phrase; longest name first so
+    # "CartNotEligible" wins over a shorter name that is a substring of it.
+    for node_id, name in sorted(candidates, key=lambda c: -len(c[1])):
+        if name.strip() and re.search(rf"\b{re.escape(name.strip().lower())}\b", key):
+            return node_id
+    for terminal in TERMINAL_TARGETS:
+        if re.search(rf"\b{re.escape(terminal)}\b", key):
+            return terminal
+    return None

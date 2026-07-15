@@ -5,8 +5,9 @@ import { saveAs } from "file-saver";
 import JSZip from "jszip";
 import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { FindingsPanel } from "./FindingsPanel";
 import { MermaidView } from "./MermaidView";
-import type { CompilationProject, WorkflowState } from "@/lib/types";
+import type { CompilationProject, SpecFinding, WorkflowState } from "@/lib/types";
 
 export function ResultsView({
   project,
@@ -15,17 +16,28 @@ export function ResultsView({
   project: CompilationProject;
   onRefetch: () => void;
 }) {
-  const slugs = Object.keys(project.workflow_ids);
+  // Every workflow in the project, not just the ones that produced code: a
+  // workflow the approve run skipped must say so, never just go missing.
+  const slugs = project.specs.map((s) => s.slug);
+  const compiled = slugs.filter((slug) => project.workflow_ids[slug]);
+  const blockedBySlug: Record<string, SpecFinding[]> = {};
+  for (const slug of slugs) {
+    if (project.workflow_ids[slug]) continue;
+    blockedBySlug[slug] = (project.validation_findings[slug] ?? []).filter(
+      (f) => f.severity === "blocking",
+    );
+  }
+  const blockedSlugs = slugs.filter((slug) => !project.workflow_ids[slug]);
   const [active, setActive] = useState(slugs[0] ?? "");
 
   const states = useQueries({
-    queries: slugs.map((slug) => ({
+    queries: compiled.map((slug) => ({
       queryKey: ["workflow", project.workflow_ids[slug]],
       queryFn: () => api.getWorkflow(project.workflow_ids[slug]),
     })),
   });
   const stateBySlug: Record<string, WorkflowState | undefined> = {};
-  slugs.forEach((slug, i) => {
+  compiled.forEach((slug, i) => {
     stateBySlug[slug] = states[i].data?.state;
   });
 
@@ -51,9 +63,17 @@ export function ResultsView({
   }
 
   const state = stateBySlug[active];
+  const blocked = blockedSlugs.includes(active);
 
   return (
     <div className="flex h-full flex-col">
+      {blockedSlugs.length > 0 && (
+        <p className="tone-block border-b px-3 py-1.5 text-xs">
+          No code was generated for {blockedSlugs.join(", ")} — blocked by findings
+          below. The other {compiled.length} workflow
+          {compiled.length === 1 ? "" : "s"} compiled.
+        </p>
+      )}
       <div className="flex items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2">
         <div className="flex flex-wrap gap-1">
           {slugs.map((slug) => (
@@ -67,6 +87,13 @@ export function ResultsView({
               }`}
             >
               {slug}
+              {blockedSlugs.includes(slug) && (
+                <span
+                  className={`ml-1.5 ${slug === active ? "opacity-80" : "text-[var(--block)]"}`}
+                >
+                  blocked
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -80,22 +107,56 @@ export function ResultsView({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-3">
-        {state?.approval_status === "pending" && (
-          <PendingOverrideCard state={state} onRefetch={onRefetch} />
-        )}
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div>
-            <h4 className="eyebrow mb-1.5">Diagram</h4>
-            <div className="card p-2">
-              <MermaidView source={state?.mermaid_diagram?.source ?? ""} />
+        {blocked ? (
+          <BlockedWorkflow slug={active} findings={blockedBySlug[active] ?? []} />
+        ) : (
+          <>
+            {state?.approval_status === "pending" && (
+              <PendingOverrideCard state={state} onRefetch={onRefetch} />
+            )}
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <h4 className="eyebrow mb-1.5">Diagram</h4>
+                <div className="card p-2">
+                  <MermaidView source={state?.mermaid_diagram?.source ?? ""} />
+                </div>
+                <ReviewCVPA state={state} />
+              </div>
+              <div>
+                <h4 className="eyebrow mb-1.5">Generated files</h4>
+                <CodeFiles files={state?.temporal_code?.files ?? []} />
+              </div>
             </div>
-            <ReviewCVPA state={state} />
-          </div>
-          <div>
-            <h4 className="eyebrow mb-1.5">Generated files</h4>
-            <CodeFiles files={state?.temporal_code?.files ?? []} />
-          </div>
-        </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BlockedWorkflow({
+  slug,
+  findings,
+}: {
+  slug: string;
+  findings: SpecFinding[];
+}) {
+  return (
+    <div className="mx-auto max-w-2xl">
+      <div className="card tone-block p-3">
+        <h4 className="text-sm font-medium">
+          {slug} was not compiled — no code generated
+        </h4>
+        <p className="mt-1 text-xs opacity-80">
+          Approve skipped this workflow because it still has{" "}
+          {findings.length || "outstanding"} blocking finding
+          {findings.length === 1 ? "" : "s"}. Fix them in the Spec tab and approve
+          again — the other workflows keep the code they already produced.
+        </p>
+      </div>
+      <div className="mt-3">
+        <h4 className="eyebrow mb-1.5">Blocking findings</h4>
+        <FindingsPanel findings={findings} />
       </div>
     </div>
   );

@@ -198,11 +198,13 @@ class GraphReviewer:
         for node in graph.nodes:
             if node.node_type is NodeType.END or node.id in isolated:
                 continue
-            # Terminal EVENT nodes are intentional: the builder wires an
-            # output-emit as ``activity -> event`` with no continuation (the
-            # event is data leaving the workflow, not control flow). Signal
-            # waits are NodeType.SIGNAL and stay subject to this check.
-            if node.node_type is NodeType.EVENT:
+            # Terminal EVENT and TRIGGER nodes are intentional, not dead ends:
+            #   EVENT   -- the builder wires an output-emit as ``activity -> event`` with no
+            #              continuation (the event is data leaving the workflow, not control flow).
+            #   TRIGGER -- a fire-and-forget trigger starts *another* workflow and by definition
+            #              has no continuation in this one; control does not come back.
+            # Signal waits are NodeType.SIGNAL and stay subject to this check.
+            if node.node_type in (NodeType.EVENT, NodeType.TRIGGER):
                 continue
             if nx_graph.out_degree(node.id) == 0:
                 issues.append(

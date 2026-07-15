@@ -452,6 +452,12 @@ async def _run_approve_spec(
     from workflow_compiler.models import ProjectStage
 
     if project.stage is ProjectStage.NEEDS_ATTENTION:
+        skipped = [s.slug for s in project.specs if s.slug not in project.workflow_ids]
+        if skipped:
+            console.print(
+                f"\n[bold red]No code generated for[/]: {', '.join(skipped)} — "
+                "blocked by the findings above."
+            )
         console.print(
             "\n[bold yellow]Some workflows need attention[/] — see the findings above. "
             "Fix the spec files and re-run approve-spec, or approve individual "

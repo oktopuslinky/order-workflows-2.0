@@ -150,3 +150,118 @@ def test_accept_as_is_clears_remaining_required_items() -> None:
     # Answer only the trigger; accept the rest as-is.
     result = checklist_amend.apply(state, {"R1-trigger": "order.received"}, accept_as_is=True)
     assert result.checklist.is_satisfied()
+
+
+def _two_unrouted_decisions() -> WorkflowState:
+    """The shape that broke order-placement: both 'no' branches left unwired."""
+    structure = WorkflowStructure(
+        activities=[
+            ActivityNode(id="a1", name="Validate cart"),
+            ActivityNode(id="a2", name="Reserve inventory"),
+            ActivityNode(id="a3", name="Authorise payment"),
+            ActivityNode(id="a4", name="Create the order"),
+        ],
+        decisions=[
+            DecisionNode(id="d1", question="Is cart eligible?", after="a1", yes_target="a2"),
+            DecisionNode(id="d2", question="Is payment authorised?", after="a3", yes_target="a4"),
+        ],
+        exceptions=[
+            ExceptionNode(id="e1", reason="CartNotEligible"),
+            ExceptionNode(id="e2", reason="PaymentDeclined"),
+        ],
+    )
+    state = WorkflowState(
+        document_text="placement",
+        workflow_metadata=WorkflowMetadata(name="Order Placement", trigger_events=["checkout"]),
+        workflow_facts=WorkflowFacts(
+            facts=[_fact(FactCategory.INPUT, "cart_id — the cart", 1)], structure=structure
+        ),
+    )
+    state.checklist = ChecklistValidator().validate(state)
+    return state
+
+
+def test_decisions_answer_names_the_exact_spec_edit() -> None:
+    """R4's question must name the offending ids and the line to write, not ask prose."""
+    item = next(
+        i for i in _two_unrouted_decisions().checklist.items if i.id == "R4-decisions"
+    )
+    question = item.question or ""
+    assert "d1" in question and "d2" in question
+    assert "Decisions section" in question
+    assert "no: e1" in question  # the literal edit that clears it
+
+
+def test_suggested_line_matches_the_rendered_spec() -> None:
+    """The line we tell the user to write must be the line the spec file actually uses.
+
+    A suggestion in the wrong format is worse than none — the user pastes it, the
+    deterministic ingest does not recognise it, and the gate stays shut for no visible
+    reason. Pin the checklist's copy to the renderer's real output.
+    """
+    from workflow_compiler.models import WorkflowSpec
+    from workflow_compiler.spec import render_spec
+
+    state = _two_unrouted_decisions()
+    state.workflow_facts.structure.decisions[1].no_target = "e2"  # leave only d1 open
+    item = next(
+        i for i in ChecklistValidator().validate(state).items if i.id == "R4-decisions"
+    )
+    # The line the user is told to paste, quoted in backticks inside the question.
+    suggested = (item.question or "").split("`")[1]
+
+    # Now wire d1 exactly as the suggestion says and render the spec for real.
+    state.workflow_facts.structure.decisions[0].no_target = "e1"
+    spec = WorkflowSpec(
+        slug="order-placement",
+        metadata=state.workflow_metadata,
+        facts=state.workflow_facts,
+    )
+    rendered = {line.strip() for line in render_spec(spec, [], []).splitlines()}
+    assert suggested in rendered, f"{suggested!r} is not a line the renderer emits"
+
+
+def test_prose_answer_is_reported_not_silently_dropped() -> None:
+    """The exact failing answer: prose naming one exception, two decisions unrouted.
+
+    It cannot be attributed to a decision, so the gate stays shut — but the item must
+    say the answer was received and not applied, rather than silently re-asking.
+    """
+    state = _two_unrouted_decisions()
+    answer = "On decline, raise PaymentDeclined and cancel the order"
+    result = checklist_amend.apply(state, {"R4-decisions": answer})
+
+    assert not result.checklist.is_satisfied()
+    item = next(i for i in result.checklist.items if i.id == "R4-decisions")
+    assert item.answer == answer
+    assert "could not be applied" in (item.evidence or "")
+    # And nothing was wired on a guess.
+    assert all(d.no_target is None for d in result.workflow_facts.structure.decisions)
+
+
+def test_attributed_answers_route_each_decision() -> None:
+    """Every documented answer form resolves: id, name, and a name inside a sentence."""
+    for answer in (
+        "d1 -> e1\nd2 -> e2",
+        "d1 -> CartNotEligible\nd2 -> PaymentDeclined",
+        "d1: e1; d2: e2",
+        "d1 CartNotEligible\nd2 PaymentDeclined",
+        "d1 - raise CartNotEligible and stop\nd2 - raise PaymentDeclined and stop",
+    ):
+        result = checklist_amend.apply(_two_unrouted_decisions(), {"R4-decisions": answer})
+        decisions = result.workflow_facts.structure.decisions
+        assert [d.no_target for d in decisions] == ["e1", "e2"], answer
+        assert result.checklist.is_satisfied(), answer
+
+
+def test_sole_unrouted_decision_accepts_an_unattributed_answer() -> None:
+    """One open branch means an answer naming one target is unambiguous — apply it."""
+    state = _two_unrouted_decisions()
+    state.workflow_facts.structure.decisions.pop()  # leave only d1 open
+    state.checklist = ChecklistValidator().validate(state)
+
+    result = checklist_amend.apply(
+        state, {"R4-decisions": "reject the checkout with CartNotEligible"}
+    )
+    assert result.workflow_facts.structure.decisions[0].no_target == "e1"
+    assert result.checklist.is_satisfied()

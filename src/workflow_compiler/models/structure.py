@@ -195,12 +195,15 @@ class WorkflowStructure(WorkflowBaseModel):
                 return None
             return ref
 
-        # The first exception each activity can raise — used to repair a
-        # degenerate decision whose 'no' branch was never wired distinctly.
-        exc_by_activity: dict[str, str] = {}
+        # The *sole* exception an activity can raise — used to repair a decision whose
+        # 'no' branch was never wired. Activities with more than one candidate
+        # exception are excluded: which one the 'no' branch means is then a guess, and
+        # a mis-wired branch is worse than one the readiness gate stops on.
+        exc_by_activity: dict[str, str | None] = {}
         for x in self.exceptions:
-            if x.raised_by and x.raised_by not in exc_by_activity:
-                exc_by_activity[x.raised_by] = x.id
+            if x.raised_by:
+                exc_by_activity[x.raised_by] = None if x.raised_by in exc_by_activity else x.id
+        sole_exc = {k: v for k, v in exc_by_activity.items() if v is not None}
 
         decisions: list[DecisionNode] = []
         for d in self.decisions:
@@ -211,12 +214,23 @@ class WorkflowStructure(WorkflowBaseModel):
                 # Identical branches mean the 'no' path was never modeled; route it
                 # to the exception the gated activity raises, else null it so the
                 # builder can terminate the branch instead of looping back.
-                alt = exc_by_activity.get(after or "")
+                alt = sole_exc.get(after or "")
                 warnings.append(
                     f"decision {d.id} has identical yes/no targets — "
                     + (f"re-routing 'no' to {alt}." if alt else "dropping 'no'.")
                 )
                 no_target = alt
+            elif no_target is None and yes_target is not None:
+                # An unwired 'no' branch: the extractor described the happy path and
+                # left the failure path implicit. If the gated activity raises exactly
+                # one exception, that is unambiguously where 'no' goes.
+                alt = sole_exc.get(after or "")
+                if alt is not None:
+                    warnings.append(
+                        f"decision {d.id} had no 'no' branch — routing it to {alt}, "
+                        f"the only exception raised by {after}."
+                    )
+                    no_target = alt
             decisions.append(
                 d.model_copy(
                     update={"after": after, "yes_target": yes_target, "no_target": no_target}

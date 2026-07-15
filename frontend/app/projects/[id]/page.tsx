@@ -145,7 +145,12 @@ function Workspace({
         .filter((f) => f.severity === "blocking").length,
     [proj.validation_findings],
   );
-  const hasCode = Object.keys(proj.workflow_ids).length > 0;
+  // Reachable once approval has run — including when it compiled nothing, since
+  // Results is where a skipped workflow explains itself.
+  const hasResults =
+    proj.spec_approval_status === "approved" ||
+    Object.keys(proj.workflow_ids).length > 0;
+  const blockedSlugs = slugs.filter((slug) => !proj.workflow_ids[slug]);
   const busy = save.isPending || validate.isPending || approve.isPending;
   // Flow rule: Approve only after a validate has run on the current content.
   const canApprove = !dirty && !busy;
@@ -188,7 +193,7 @@ function Workspace({
           </button>
           <button
             onClick={() => setTab("results")}
-            disabled={!hasCode}
+            disabled={!hasResults}
             className={tab === "results" ? "seg-active" : ""}
           >
             Results
@@ -229,6 +234,13 @@ function Workspace({
       {(approve.error || validate.error || save.error) && (
         <p className="tone-block border-b px-4 py-1 text-xs">
           {((approve.error || validate.error || save.error) as ApiError).message}
+        </p>
+      )}
+      {proj.spec_approval_status === "approved" && blockedSlugs.length > 0 && (
+        <p className="tone-block border-b px-4 py-1 text-xs">
+          Approve skipped {blockedSlugs.join(", ")} — no code was generated for
+          {blockedSlugs.length === 1 ? " it" : " them"}. Fix the blocking findings and
+          approve again.
         </p>
       )}
 

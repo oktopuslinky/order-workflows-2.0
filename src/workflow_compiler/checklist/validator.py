@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 
 from workflow_compiler.models import (
+    CompensationNode,
+    DecisionNode,
     FactCategory,
     WorkflowState,
     WorkflowStructure,
@@ -41,6 +43,55 @@ def _lead_identifier(statement: str) -> str | None:
 def _is_snake(token: str) -> bool:
     """True when ``token`` is a lower_snake_case identifier."""
     return bool(_SNAKE.match(token))
+
+
+def _spec_line(node_id: str, label: str, tail: list[tuple[str, str | None]]) -> str:
+    """One spec-file entity bullet, byte-identical to what ``spec.renderer`` emits.
+
+    The suggestion is only useful if the user can paste it, so this must track the
+    renderer's format exactly — ``test_suggested_line_matches_the_rendered_spec`` pins
+    them together.
+    """
+    parts = "; ".join(f"{key}: {value}" for key, value in tail if value)
+    return f"- [{node_id}] {label}" + (f" — {parts}" if parts else "")
+
+
+def _decision_fix(offenders: list[DecisionNode], structure: WorkflowStructure) -> str:
+    """The exact edit that clears R4, written against this workflow's own ids.
+
+    The spec's Decisions section round-trips ``no:`` deterministically, so handing the
+    user the line to paste is a complete fix. A free-text answer is only a fallback,
+    and only in ``<decision> -> <target>`` form — say so rather than inviting prose.
+    """
+    d = offenders[0]
+    targets = ", ".join(f"{x.id} ({x.reason})" for x in structure.exceptions)
+    example = structure.exceptions[0].id if structure.exceptions else "rejected"
+    line = _spec_line(
+        d.id, d.question, [("after", d.after), ("yes", d.yes_target), ("no", example)]
+    )
+    return (
+        f"Route the 'no' branch of {', '.join(o.id for o in offenders)} in this spec's "
+        f"Decisions section, e.g. `{line}`. "
+        + (f"Declared exceptions: {targets}. " if targets else "")
+        + "A 'no' branch may target an exception id, an activity id, or a terminal token "
+        "(end, rejected, failed, completed). You can also answer here, one pair per line, "
+        f"as `{d.id} -> {example}` — prose is not applied."
+    )
+
+
+def _compensation_fix(unbound: list[CompensationNode], structure: WorkflowStructure) -> str:
+    """The exact edit that clears R5, written against this workflow's own ids."""
+    c = unbound[0]
+    activities = ", ".join(f"{a.id} ({a.name})" for a in structure.activities)
+    example = structure.activities[0] if structure.activities else None
+    line = _spec_line(c.id, c.name, [("compensates", example.id if example else "a1")])
+    return (
+        f"Bind {', '.join(u.id for u in unbound)} to the activity it reverses in this "
+        f"spec's Compensations section, e.g. `{line}`. "
+        + (f"Declared activities: {activities}. " if activities else "")
+        + f"You can also answer here, one pair per line, as "
+        f"`{c.name} -> {example.name if example else 'Reserve inventory'}`."
+    )
 
 
 class ChecklistValidator:
@@ -189,11 +240,14 @@ class ChecklistValidator:
                 evidence="No decisions to validate.",
             )
         incomplete: list[str] = []
+        offenders = []
         for d in decisions:
             if not d.yes_target or not d.no_target:
                 incomplete.append(f"{d.id} ('{d.question}') is missing a branch target")
+                offenders.append(d)
             elif d.no_target == d.after:
                 incomplete.append(f"{d.id} ('{d.question}') routes 'no' back to its own activity")
+                offenders.append(d)
         ok = not incomplete
         return ChecklistItem(
             id="R4-decisions",
@@ -206,12 +260,7 @@ class ChecklistValidator:
                 if ok
                 else "; ".join(incomplete) + "."
             ),
-            question=(
-                None
-                if ok
-                else "For each flagged decision, what happens on the 'no' branch "
-                "(name the exception or next step)?"
-            ),
+            question=None if ok else _decision_fix(offenders, structure),
         )
 
     @staticmethod
@@ -227,7 +276,7 @@ class ChecklistValidator:
                 evidence="No compensations to validate.",
             )
         activity_ids = structure.activity_ids()
-        unbound = [c.id for c in comps if not c.compensates or c.compensates not in activity_ids]
+        unbound = [c for c in comps if not c.compensates or c.compensates not in activity_ids]
         ok = not unbound
         return ChecklistItem(
             id="R5-compensations",
@@ -238,14 +287,9 @@ class ChecklistValidator:
             evidence=(
                 f"All {len(comps)} compensation(s) are bound to an activity."
                 if ok
-                else f"Unbound compensation(s): {', '.join(unbound)}."
+                else f"Unbound compensation(s): {', '.join(c.id for c in unbound)}."
             ),
-            question=(
-                None
-                if ok
-                else "Which activity does each flagged compensation reverse "
-                "(use the exact activity name)?"
-            ),
+            question=None if ok else _compensation_fix(unbound, structure),
         )
 
     @staticmethod

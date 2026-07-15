@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.resolve(__dirname),
   },
+  // The dev-tools badge floats over the bottom-left of every page, which puts it
+  // inside the demo recording's crop for the whole video. Compile and runtime
+  // errors are still surfaced with this off.
+  devIndicators: false,
 };
 
 export default nextConfig;

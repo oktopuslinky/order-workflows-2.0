@@ -91,6 +91,44 @@ def test_validated_repairs_degenerate_decision() -> None:
     assert any("identical yes/no" in w for w in warnings)
 
 
+def _unrouted(exceptions: list[ExceptionNode]) -> WorkflowStructure:
+    """A decision with no 'no' branch, gated by a1, over the given exceptions."""
+    return WorkflowStructure(
+        activities=[
+            ActivityNode(id="a1", name="Validate cart"),
+            ActivityNode(id="a2", name="Reserve inventory"),
+        ],
+        decisions=[
+            DecisionNode(id="d1", question="eligible?", after="a1", yes_target="a2")
+        ],
+        exceptions=exceptions,
+    )
+
+
+def test_validated_routes_an_unwired_no_branch_to_the_sole_exception() -> None:
+    """A missing 'no' branch is wired to the one exception the gated activity raises."""
+    structure = _unrouted([ExceptionNode(id="e1", reason="CartNotEligible", raised_by="a1")])
+    clean, warnings = structure.validated()
+    assert clean.decisions[0].no_target == "e1"
+    assert any("no 'no' branch" in w for w in warnings)
+
+
+def test_validated_leaves_an_ambiguous_no_branch_unwired() -> None:
+    """Two candidate exceptions (or none) means guessing — leave it for the gate."""
+    ambiguous = _unrouted(
+        [
+            ExceptionNode(id="e1", reason="CartNotEligible", raised_by="a1"),
+            ExceptionNode(id="e2", reason="CartExpired", raised_by="a1"),
+        ]
+    )
+    assert ambiguous.validated()[0].decisions[0].no_target is None
+
+    # And an exception that names no activity is no candidate at all — this is the
+    # shape that produced the uncompiled order-placement workflow.
+    unattached = _unrouted([ExceptionNode(id="e1", reason="CartNotEligible")])
+    assert unattached.validated()[0].decisions[0].no_target is None
+
+
 def test_event_kinds_wire_distinctly() -> None:
     """trigger / signal_wait / output_emit each wire to a different shape."""
     from workflow_compiler.models import EventKind, NodeType

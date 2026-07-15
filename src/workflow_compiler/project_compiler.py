@@ -65,6 +65,11 @@ if TYPE_CHECKING:
 #: Filename of the project-level summary written next to the spec files.
 OVERVIEW_FILENAME = "overview.md"
 
+#: Sections owned by the pre-compile gate (:meth:`ProjectCompiler._gate_findings`)
+#: plus the graph-review outcome. Findings in these sections are *recomputed* on
+#: every validate/approve, so a stale one can never survive a fixed spec.
+GATE_SECTIONS = frozenset({"Segmentation", "Open Questions", "Graph review"})
+
 
 class ProjectCompiler:
     """Compile a document into reviewed specs, then each spec into artifacts."""
@@ -271,8 +276,13 @@ class ProjectCompiler:
                 )
                 for vf in validator_findings
             )
-            findings_by_slug[spec.slug] = findings
             self._replace_spec(project, current)
+            # Run the same pre-compile gate approval enforces, so a spec that
+            # validates clean is a spec that will compile. Without this, validate
+            # is blind to the checklist and reports green on a spec approve skips.
+            gate, _state = self._gate_findings(project, current)
+            findings.extend(gate)
+            findings_by_slug[spec.slug] = findings
             _emit(progress, ProgressEvent(
                 phase="review", name=name, status="done", index=index, total=total,
                 seconds=time.perf_counter() - started,
@@ -538,19 +548,14 @@ class ProjectCompiler:
                 f"approval (tick their checkbox in the spec files): {links}"
             )
 
-        selected_slugs = {spec.slug for spec in selected}
-        blocking = [
-            finding
-            for slug in selected_slugs
-            for finding in project.validation_findings.get(slug, [])
-            if finding.severity is Severity.BLOCKING
-        ]
-        if blocking and not accept_incomplete:
-            details = "; ".join(f"{f.workflow}: {f.as_string()}" for f in blocking)
-            raise ApprovalError(
-                "Blocking validation findings must be resolved before approval "
-                f"(run validate and fix them, or override with accept_incomplete): {details}"
-            )
+        # Cross-workflow integrity is recomputed here rather than read back from the
+        # last validate: approve must never gate on a finding that a since-edited
+        # spec has already fixed.
+        cross_blocking: dict[str, list[SpecFinding]] = {}
+        if not accept_incomplete:
+            for finding in self._validate_triggers_and_dependencies(project):
+                if finding.severity is Severity.BLOCKING:
+                    cross_blocking.setdefault(finding.workflow, []).append(finding)
 
         project.spec_approval_status = ApprovalStatus.APPROVED
         project.stage = ProjectStage.COMPILING
@@ -563,58 +568,16 @@ class ProjectCompiler:
                 phase="approve", name=name, status="start", index=index, total=total,
             ))
             started = time.perf_counter()
-            segment = next(
-                (s for s in project.segments if s.slug == spec.slug), None
+            # Same gate validate runs, plus this workflow's cross-workflow breakage.
+            gate, state = self._gate_findings(
+                project, spec, accept_incomplete=accept_incomplete
             )
-            if (
-                segment is not None
-                and not segment.sliced
-                and len(project.segments) > 1
-                and not accept_incomplete
-            ):
-                # The segmenter fell back to the full document: this spec merges
-                # every workflow's content and would compile to a mega-workflow.
-                # Never do that silently — surface it as a blocking finding.
-                project.validation_findings.setdefault(spec.slug, []).append(
-                    SpecFinding(
-                        severity=Severity.BLOCKING,
-                        workflow=spec.slug,
-                        section="Segmentation",
-                        message=(
-                            "this workflow's document segment could not be isolated "
-                            "(the full document was used as its text), so its spec "
-                            "merges every workflow's content"
-                        ),
-                        suggestion=(
-                            "fix the section titles / spec content and re-compile, "
-                            "or override with accept_incomplete"
-                        ),
-                    )
-                )
-                needs_attention = True
-                _emit(progress, ProgressEvent(
-                    phase="approve", name=name, status="done", index=index, total=total,
-                    seconds=time.perf_counter() - started, stage="blocked",
-                ))
-                continue
-            state = self._seed_state(project, spec)
-            state = checklist_amend.apply(
-                state, self._answers(spec), accept_as_is=accept_incomplete
-            )
-            if state.checklist is not None and not state.checklist.is_satisfied():
-                unmet = [item.id for item in state.checklist.unmet_required()]
-                project.validation_findings.setdefault(spec.slug, []).append(
-                    SpecFinding(
-                        severity=Severity.BLOCKING,
-                        workflow=spec.slug,
-                        section="Open Questions",
-                        message=f"unmet required checklist items {unmet}",
-                        suggestion=(
-                            "answer the open questions in the spec file "
-                            "or approve with accept_incomplete"
-                        ),
-                    )
-                )
+            blocking = [*cross_blocking.get(spec.slug, []), *gate]
+            self._record_gate_findings(project, spec.slug, blocking)
+            if blocking:
+                # Blocked workflows are skipped, not fatal: the healthy ones still
+                # compile. The project ends NEEDS_ATTENTION and every skipped
+                # workflow carries the blocking findings that explain why.
                 needs_attention = True
                 _emit(progress, ProgressEvent(
                     phase="approve", name=name, status="done", index=index, total=total,
@@ -664,6 +627,85 @@ class ProjectCompiler:
         if persist:
             await self._projects.save(project)
         return project
+
+    def _gate_findings(
+        self,
+        project: CompilationProject,
+        spec: WorkflowSpec,
+        *,
+        accept_incomplete: bool = False,
+    ) -> tuple[list[SpecFinding], WorkflowState]:
+        """The pre-compile gate: what stops ``spec`` compiling, and the state it would compile.
+
+        Deterministic and side-effect free (no LLM, no persistence) so **validate and
+        approve enforce exactly the same conditions** — a spec that validates clean is
+        a spec that will compile. Returns the blocking findings (empty when the spec is
+        ready) together with the seeded, checklist-amended state approval hands to the
+        back-end, so approval never has to re-derive it.
+        """
+        findings: list[SpecFinding] = []
+
+        segment = next((s for s in project.segments if s.slug == spec.slug), None)
+        if (
+            segment is not None
+            and not segment.sliced
+            and len(project.segments) > 1
+            and not accept_incomplete
+        ):
+            # The segmenter fell back to the full document: this spec merges every
+            # workflow's content and would compile to a mega-workflow. Never do that
+            # silently — surface it as a blocking finding.
+            findings.append(
+                SpecFinding(
+                    severity=Severity.BLOCKING,
+                    workflow=spec.slug,
+                    section="Segmentation",
+                    message=(
+                        "this workflow's document segment could not be isolated "
+                        "(the full document was used as its text), so its spec "
+                        "merges every workflow's content"
+                    ),
+                    suggestion=(
+                        "fix the section titles / spec content and re-compile, "
+                        "or override with accept_incomplete"
+                    ),
+                )
+            )
+
+        state = checklist_amend.apply(
+            self._seed_state(project, spec),
+            self._answers(spec),
+            accept_as_is=accept_incomplete,
+        )
+        if state.checklist is not None:
+            # One finding per unmet item: its evidence names the offending entities and
+            # its question states the edit that clears it, so the user is never left
+            # guessing which line of the spec to fix.
+            findings.extend(
+                SpecFinding(
+                    severity=Severity.BLOCKING,
+                    workflow=spec.slug,
+                    section="Open Questions",
+                    field=item.id,
+                    message=item.evidence or item.requirement,
+                    suggestion=item.question
+                    or "answer this open question in the spec, or approve with accept_incomplete",
+                )
+                for item in state.checklist.unmet_required()
+            )
+        return findings, state
+
+    @staticmethod
+    def _record_gate_findings(
+        project: CompilationProject, slug: str, findings: list[SpecFinding]
+    ) -> None:
+        """Replace ``slug``'s gate findings with ``findings`` (never accumulate stale ones)."""
+        kept = [
+            f
+            for f in project.validation_findings.get(slug, [])
+            if f.section not in GATE_SECTIONS
+        ]
+        project.validation_findings[slug] = [*kept, *findings]
 
     def _seed_state(self, project: CompilationProject, spec: WorkflowSpec) -> WorkflowState:
         """Build the back-end input state from an approved spec.

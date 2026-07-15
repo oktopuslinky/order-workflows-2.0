@@ -291,14 +291,63 @@ async def test_approve_blocks_on_unanswered_required_questions() -> None:
         project.project_id, allow_unconfirmed_references=True
     )
     assert project.stage is ProjectStage.NEEDS_ATTENTION
-    # Neither workflow compiled; findings explain the block.
+    # Neither workflow compiled; findings explain the block, one per unmet item and
+    # tagged with the checklist id so the user knows which question is unanswered.
     assert project.workflow_ids == {}
     for slug in ("customer-onboarding", "account-provisioning"):
         findings = project.validation_findings.get(slug, [])
+        blocking = [f for f in findings if f.severity is Severity.BLOCKING]
+        assert blocking, slug
         assert any(
-            "unmet required checklist items" in f.message for f in findings
+            f.section == "Open Questions" and (f.field or "").startswith("R")
+            for f in blocking
         ), slug
-        assert any(f.severity is Severity.BLOCKING for f in findings), slug
+
+
+async def test_validate_reports_the_same_blocking_findings_as_approve() -> None:
+    """Validate runs approve's gate, so it can never green-light a spec approve skips.
+
+    The regression this guards: the checklist gate lived only in ``approve_spec``, so
+    validate reported a clean spec and approve then silently skipped the workflow,
+    generating no code for it.
+    """
+    queue: list[object] = _front_end_queue()
+    queue += [ReviewResult(patches=[]) for _ in range(6)]  # validate: 3 passes, 2 specs
+    provider = MockProvider(structured=queue)
+    compiler = _compiler(provider)
+    project = await compiler.compile_document(_DOCUMENT)
+
+    validated = await compiler.validate_specs(project.project_id)
+    approved = await compiler.approve_spec(
+        project.project_id, allow_unconfirmed_references=True
+    )
+
+    def blocking(p: CompilationProject, slug: str) -> set[str | None]:
+        return {
+            f.field
+            for f in p.validation_findings.get(slug, [])
+            if f.severity is Severity.BLOCKING and f.section == "Open Questions"
+        }
+
+    for slug in ("customer-onboarding", "account-provisioning"):
+        assert blocking(validated, slug), f"validate saw no blocker for {slug}"
+        assert blocking(validated, slug) == blocking(approved, slug), slug
+
+
+async def test_gate_findings_are_recomputed_never_accumulated() -> None:
+    """Repeated validate/approve rounds must not pile up stale gate findings."""
+    provider = MockProvider(structured=_front_end_queue())
+    compiler = _compiler(provider)
+    project = await compiler.compile_document(_DOCUMENT)
+
+    first = await compiler.approve_spec(
+        project.project_id, allow_unconfirmed_references=True
+    )
+    counts = {slug: len(f) for slug, f in first.validation_findings.items()}
+    second = await compiler.approve_spec(
+        project.project_id, allow_unconfirmed_references=True
+    )
+    assert {slug: len(f) for slug, f in second.validation_findings.items()} == counts
 
 
 class TestTriggerAssembly:

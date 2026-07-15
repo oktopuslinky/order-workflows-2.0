@@ -39,6 +39,16 @@ class Settings(BaseSettings):
         default=None, description="Optional override for the provider base URL."
     )
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0, description="Default temperature.")
+    llm_timeout: float = Field(
+        default=400.0,
+        gt=0.0,
+        description=(
+            "Per-request LLM timeout in seconds. The review passes and the Temporal "
+            "design stage routinely run past a minute on a 49B model, so the transport "
+            "default is far too tight for the HTTP API (which, unlike the CLI, has no "
+            "--timeout flag)."
+        ),
+    )
 
     require_human_approval: bool = Field(
         default=True, description="Block downstream artifacts until the graph is approved."

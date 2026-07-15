@@ -30,8 +30,16 @@ not declare.
   `after` = the id of the activity whose result is being decided. `yes_target` /
   `no_target` = the id of the node taken on each branch (an activity id, an
   exception id, or a terminal token: `end`, `rejected`, `failed`, `completed`).
+  **Both branches are mandatory — never leave `yes_target` or `no_target` null.**
+  A branch that ends the workflow still has a target: the exception it raises, or a
+  terminal token. A document sentence like "if the cart is **not eligible**, the
+  workflow raises `CartNotEligible`" fully specifies the 'no' branch — wire it:
+  `{id: "d1", question: "Is the cart eligible?", after: "a1", yes_target: "a2",
+  no_target: "e1"}` where `e1` is the `CartNotEligible` exception you declared.
 - exception_nodes: `{id, reason, raised_by}` — error conditions. `raised_by` = the
-  id of the activity that raises this exception.
+  id of the activity that raises this exception; **it is mandatory, never null**. Use
+  the activity whose failure or negative result produces the exception (for the
+  example above, `CartNotEligible` is `raised_by: "a1"`, the validate-cart activity).
 - compensation_nodes: `{id, name, compensates}` — saga rollbacks. `compensates` =
   the id of the activity this action reverses. The document states these as
   "X compensates Y" — map X to `name` and Y's activity to `compensates`.

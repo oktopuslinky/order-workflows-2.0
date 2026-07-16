@@ -27,11 +27,17 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, sta
 from fastapi.middleware.cors import CORSMiddleware
 
 from workflow_compiler import __version__
-from workflow_compiler.api.dependencies import get_compiler, get_project_compiler
+from workflow_compiler.api.dependencies import (
+    get_compiler,
+    get_local_provider,
+    get_project_compiler,
+    project_compiler_for_model,
+)
 from workflow_compiler.api.schemas import (
     ApproveRequest,
     CvpaPreviewRequest,
     CvpaPreviewResponse,
+    LocalModelList,
     ProjectApproveRequest,
     ProjectCompileRequest,
     ProjectFilesResponse,
@@ -48,6 +54,8 @@ from workflow_compiler.config import get_settings
 from workflow_compiler.exceptions import (
     ApprovalError,
     CompilationError,
+    ProviderConnectionError,
+    ProviderTimeoutError,
     StateNotFoundError,
     UnsupportedFormatError,
     WorkflowCompilerError,
@@ -92,6 +100,20 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         """Liveness probe."""
         return {"status": "ok", "version": __version__}
+
+    @app.get("/providers/local/models", response_model=LocalModelList, tags=["providers"])
+    async def local_models() -> LocalModelList:
+        """List the models the local eGPU gateway currently exposes (for the picker)."""
+        provider = get_local_provider()
+        try:
+            ids = await provider.list_models()  # type: ignore[attr-defined]
+        except ProviderTimeoutError as exc:
+            raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, str(exc)) from exc
+        except ProviderConnectionError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        finally:
+            await provider.aclose()  # type: ignore[attr-defined]
+        return LocalModelList(models=ids)
 
     @app.post("/approve", response_model=WorkflowStateResponse, tags=["workflows"])
     async def approve_workflow(
@@ -153,6 +175,8 @@ def create_app() -> FastAPI:
         compiler: ProjectCompiler = Depends(get_project_compiler),
     ) -> ProjectResponse:
         """Segment a document into per-workflow specs (stops at the spec gate)."""
+        if request.model:
+            compiler = project_compiler_for_model(request.model)
         project = await _guard(
             compiler.compile_document(request.document_text, persist=request.persist)
         )
@@ -164,6 +188,7 @@ def create_app() -> FastAPI:
     async def compile_project_upload(
         file: UploadFile = File(..., description="A .docx/.pdf/.md/.html/.txt document."),
         persist: bool = Form(default=True),
+        model: str | None = Form(default=None),
         compiler: ProjectCompiler = Depends(get_project_compiler),
     ) -> ProjectResponse:
         """Parse an uploaded document to text, then segment it into per-workflow specs."""
@@ -176,6 +201,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
         except WorkflowCompilerError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        if model:
+            compiler = project_compiler_for_model(model)
         project = await _guard(compiler.compile_document(content.text, persist=persist))
         return await _project_response(project, compiler)
 

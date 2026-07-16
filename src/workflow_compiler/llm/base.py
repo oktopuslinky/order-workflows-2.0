@@ -183,9 +183,24 @@ class HttpChatProvider(BaseLLMProvider):
         except httpx.TransportError as exc:
             raise ProviderConnectionError(f"{self.name} transport error: {exc}") from exc
 
+        return self._decode(response)
+
+    async def _get(self, endpoint: str) -> dict[str, Any]:
+        """GET ``endpoint`` and return the decoded body (same error mapping as ``_post``)."""
+        client = self._ensure_client()
+        try:
+            response = await client.get(endpoint, headers=self._auth_headers())
+        except httpx.TimeoutException as exc:
+            raise ProviderTimeoutError(f"{self.name} request timed out: {exc}") from exc
+        except httpx.TransportError as exc:
+            raise ProviderConnectionError(f"{self.name} transport error: {exc}") from exc
+
+        return self._decode(response)
+
+    def _decode(self, response: httpx.Response) -> dict[str, Any]:
+        """Raise on HTTP error, otherwise return the JSON body."""
         if response.status_code >= 400:
             raise ProviderHTTPError(response.status_code, response.text[:500])
-
         try:
             return response.json()
         except json.JSONDecodeError as exc:

@@ -179,7 +179,7 @@ flowchart LR
     end
 
     subgraph impls["Implementations"]
-        nemotron["NemotronProvider / MockProvider"]
+        nemotron["FallbackProvider(GatewaySession → Nemotron) / MockProvider"]
         filestore["FileStateStore / InMemoryStateStore"]
         defrev["DefaultReviewManager + GraphEditor"]
         agents["6 agents"]
@@ -246,7 +246,9 @@ field and advances `stage`:
 ## Design principles
 
 - **Provider-agnostic LLM layer.** Agents depend only on `BaseLLMProvider`; the concrete provider
-  is injected. No vendor SDK is imported.
+  is injected. No vendor SDK is imported. The default `local-fallback` provider composes a local
+  eGPU gateway (`GatewaySessionProvider`, email+password session auth) as primary with the hosted
+  `NemotronProvider` as automatic fallback on unreachable/timeout/5xx.
 - **Deterministic where it matters.** Graph construction and structural review are pure functions
   of the extracted facts — reproducible and testable without a model.
 - **Validated, immutable edits.** `GraphEditor` returns new validated `WorkflowGraph` instances;

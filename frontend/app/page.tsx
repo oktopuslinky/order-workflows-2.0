@@ -8,11 +8,17 @@ import { api, ApiError } from "@/lib/api";
 import { COMPILE_STEPS, shortId } from "@/lib/format";
 import { RunningOverlay } from "@/components/RunningOverlay";
 
+// Sentinel model value that routes a compile through the hosted NVIDIA Nemotron
+// API instead of the local eGPU gateway. Kept in sync with the backend
+// (api/dependencies.py NEMOTRON_CLOUD).
+const NEMOTRON_CLOUD = "nemotron-cloud";
+
 export default function HomePage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [model, setModel] = useState(NEMOTRON_CLOUD);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const projects = useQuery({
@@ -20,8 +26,17 @@ export default function HomePage() {
     queryFn: () => api.listProjects(),
   });
 
+  const localModels = useQuery({
+    queryKey: ["local-models"],
+    queryFn: () => api.listLocalModels(),
+    retry: false,
+  });
+
   const compile = useMutation({
-    mutationFn: () => (file ? api.compileUpload(file) : api.compileText(text)),
+    mutationFn: () =>
+      file
+        ? api.compileUpload(file, true, model || undefined)
+        : api.compileText(text, true, model || undefined),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       router.push(`/projects/${data.project.project_id}`);
@@ -114,6 +129,34 @@ export default function HomePage() {
             {(compile.error as ApiError).message}
           </p>
         )}
+
+          <div className="mt-4 flex items-center gap-2">
+            <label htmlFor="model" className="text-sm text-[var(--muted)]">
+              Model
+            </label>
+            <select
+              id="model"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              className="flex-1 cursor-pointer rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] outline-none focus:border-[var(--accent)]"
+            >
+              <option value={NEMOTRON_CLOUD}>Nemotron (cloud)</option>
+              {(localModels.data?.models.length ?? 0) > 0 && (
+                <optgroup label="Local eGPU">
+                  {localModels.data?.models.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </div>
+          {localModels.error && (
+            <p className="mt-1 text-xs text-[var(--faint)]">
+              Local eGPU models unavailable — Nemotron (cloud) is selected.
+            </p>
+          )}
 
           <button
             disabled={!canCompile}

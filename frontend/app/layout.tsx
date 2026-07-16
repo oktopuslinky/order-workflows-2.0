@@ -3,6 +3,11 @@ import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
+import { ThemeToggle } from "@/components/ThemeToggle";
+
+// Runs before first paint: apply the saved theme (or the OS setting) to <html>
+// so there is no light/dark flash and no hydration mismatch.
+const themeScript = `(function(){try{var t=localStorage.getItem('theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.dataset.theme=t;}catch(e){}})();`;
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,8 +32,12 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="h-full flex flex-col">
         <Providers>
           <header className="flex items-center gap-4 border-b border-[var(--border)] bg-[var(--surface)] px-5 py-2.5">
@@ -51,6 +60,7 @@ export default function RootLayout({
               >
                 Guide
               </Link>
+              <ThemeToggle />
             </nav>
           </header>
           <main className="flex-1 min-h-0 overflow-auto">{children}</main>

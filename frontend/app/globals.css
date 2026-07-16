@@ -31,30 +31,31 @@
   --shadow: 0 1px 2px rgba(20, 22, 30, 0.04), 0 8px 24px -12px rgba(20, 22, 30, 0.12);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #0b0d13;
-    --surface: #14161f;
-    --surface-2: #191c27;
-    --ink: #e8eaf1;
-    --muted: #9096a6;
-    --faint: #6b7080;
-    --border: #262a37;
-    --border-strong: #333949;
+/* Dark theme. Driven by a `data-theme` attribute on <html> (set before paint
+ * by an inline script that reads localStorage, falling back to the OS setting),
+ * so the header toggle can override the system preference in either direction. */
+:root[data-theme="dark"] {
+  --paper: #0b0d13;
+  --surface: #14161f;
+  --surface-2: #191c27;
+  --ink: #e8eaf1;
+  --muted: #9096a6;
+  --faint: #6b7080;
+  --border: #262a37;
+  --border-strong: #333949;
 
-    --accent: #7c7bff;
-    --accent-hover: #9a99ff;
-    --accent-soft: #1c1e3a;
+  --accent: #7c7bff;
+  --accent-hover: #9a99ff;
+  --accent-soft: #1c1e3a;
 
-    --gate: #e6a94a;
-    --gate-soft: #2a2213;
-    --pass: #46c48a;
-    --pass-soft: #12271d;
-    --block: #f0736f;
-    --block-soft: #2a1616;
+  --gate: #e6a94a;
+  --gate-soft: #2a2213;
+  --pass: #46c48a;
+  --pass-soft: #12271d;
+  --block: #f0736f;
+  --block-soft: #2a1616;
 
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -16px rgba(0, 0, 0, 0.7);
-  }
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -16px rgba(0, 0, 0, 0.7);
 }
 
 @theme inline {
@@ -243,6 +244,18 @@ body {
 
 input[type="checkbox"] {
   accent-color: var(--accent);
+}
+
+/* Native selects: force theme-aware colors so the control and its option list
+ * stay readable in both light and dark (browsers otherwise fall back to
+ * system chrome colors, which clash with a transparent field). */
+select {
+  color: var(--ink);
+  background-color: var(--surface);
+}
+select option {
+  color: var(--ink);
+  background-color: var(--surface);
 }
 
 /* ------------------------------------------------------------------ *

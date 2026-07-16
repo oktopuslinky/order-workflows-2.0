@@ -35,6 +35,10 @@ export type ReviewSeverity =
   | "critical"
   | string;
 
+export interface LocalModelList {
+  models: string[];
+}
+
 export interface SpecFinding {
   severity: Severity;
   workflow: string;

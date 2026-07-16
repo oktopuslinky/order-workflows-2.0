@@ -510,6 +510,13 @@ HttpChatProvider (llm/base.py) — retries, timeouts, JSON extraction, schema va
 OpenAICompatibleProvider (llm/providers/openai_compatible.py) — OpenAI-style wire format
         ▲
 NemotronProvider (llm/providers/nemotron.py) — NVIDIA base URL, model, "detailed thinking off"
+GatewaySessionProvider (llm/providers/gateway.py) — local eGPU gateway; email+password session auth
+                                       (login → cookie/bearer, expiry refresh, 401 re-login),
+                                       model discovery via /auth/config
+
+FallbackProvider (llm/providers/fallback.py) — composite: try the local gateway (primary), fall back
+                                       to Nemotron on unreachable/timeout/HTTP-5xx; auth/4xx errors
+                                       surface. Implements BaseLLMProvider directly.
 
 MockProvider (llm/providers/mock.py) — returns queued/canned responses (no network), implements the
                                        same interface directly. Used everywhere in tests.
@@ -527,9 +534,19 @@ MockProvider (llm/providers/mock.py) — returns queued/canned responses (no net
 - **Auth:** `_auth_headers` adds `Authorization: Bearer <key>` from a `SecretStr` (so the key won't
   print).
 - **Provider selection** is data-driven via `ProviderFactory` (`llm/factory.py`): providers register
-  under a name (`nemotron`, `openai-compatible`, `mock`); `factory.from_settings()` builds the one
-  named in `.env`. **Adding a new vendor never touches agent or compiler code** — you register a
-  builder.
+  under a name (`local-fallback` (default), `local`, `nemotron`, `openai-compatible`, `mock`);
+  `factory.from_settings()` builds the one named in `.env`. **Adding a new vendor never touches agent
+  or compiler code** — you register a builder.
+- **Local eGPU gateway + fallback (default).** `local-fallback` makes a local gateway the primary LLM
+  and Nemotron the automatic safety net. The gateway (`GatewaySessionProvider`) is OpenAI-compatible
+  for chat but authenticates with **email+password** (`LLM_GATEWAY_EMAIL`/`LLM_GATEWAY_PASSWORD`) —
+  it logs in lazily, replays the session as a bearer token, refreshes before expiry, and re-logs-in
+  once on a 401. `FallbackProvider` delegates each call to the gateway and, only on
+  `ProviderConnectionError`/`ProviderTimeoutError`/HTTP-5xx, retries on Nemotron (caching "down"
+  briefly); auth failures and other 4xx surface instead of being masked. Model discovery reads the
+  gateway's public `/auth/config` (no auth) — exposed via `workflow-compiler models`,
+  `GET /providers/local/models`, and the frontend picker; the per-compile `model` selection is
+  applied by injecting a provider built with that local-model override.
 - **Why Nemotron has a "detailed thinking off" preamble:** Nemotron "super" models are reasoning
   models that, left alone, emit long chains of thought that slow down and pollute JSON output. The
   preamble keeps responses fast and clean.

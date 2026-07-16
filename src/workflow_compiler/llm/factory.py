@@ -12,9 +12,12 @@ from typing import Any
 
 from workflow_compiler.exceptions import LLMProviderError
 from workflow_compiler.interfaces.llm import BaseLLMProvider
+from workflow_compiler.llm.providers.fallback import FallbackProvider
+from workflow_compiler.llm.providers.gateway import GatewaySessionProvider
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.llm.providers.nemotron import NemotronProvider
 from workflow_compiler.llm.providers.openai_compatible import OpenAICompatibleProvider
+from workflow_compiler.llm.types import RetryConfig
 
 ProviderBuilder = Callable[..., BaseLLMProvider]
 
@@ -29,11 +32,64 @@ def _scripted_mock(**kwargs: Any) -> MockProvider:
     return MockProvider(**kwargs)
 
 
+def build_local_provider(
+    settings: Any,
+    *,
+    model_override: str | None = None,
+    timeout: float | None = None,
+) -> GatewaySessionProvider:
+    """Build the local eGPU gateway provider from settings (fast-fail retries).
+
+    ``max_attempts=1`` keeps a down gateway from stalling before the fallback
+    engages; the resolved model comes from ``model_override`` → the configured
+    ``llm_local_model`` → the gateway's advertised default (resolved lazily).
+    """
+    base_url = getattr(settings, "llm_local_base_url", None)
+    if not base_url:
+        raise LLMProviderError(
+            "The local gateway requires LLM_API_BASE (or "
+            "WORKFLOW_COMPILER_LLM_LOCAL_BASE_URL) to be set."
+        )
+    return GatewaySessionProvider(
+        base_url=base_url,
+        model=model_override or getattr(settings, "llm_local_model", None),
+        temperature=settings.llm_temperature,
+        timeout=timeout if timeout is not None else settings.llm_timeout,
+        retry=RetryConfig(max_attempts=1),
+    )
+
+
+def build_fallback_provider(
+    settings: Any,
+    *,
+    local_model_override: str | None = None,
+    timeout: float | None = None,
+) -> FallbackProvider:
+    """Build the local-primary + Nemotron-fallback composite from settings."""
+    primary = build_local_provider(
+        settings, model_override=local_model_override, timeout=timeout
+    )
+    fallback = NemotronProvider(
+        model=settings.llm_model,
+        temperature=settings.llm_temperature,
+        timeout=timeout if timeout is not None else settings.llm_timeout,
+    )
+    return FallbackProvider(primary=primary, fallback=fallback)
+
+
 _DEFAULT_PROVIDERS: dict[str, ProviderBuilder] = {
     "nemotron": NemotronProvider,
     "openai-compatible": OpenAICompatibleProvider,
+    "local": GatewaySessionProvider,
+    "local-fallback": lambda **kw: build_fallback_provider(_current_settings()),
     "mock": _scripted_mock,
 }
+
+
+def _current_settings() -> Any:
+    from workflow_compiler.config import get_settings
+
+    return get_settings()
 
 
 class ProviderFactory:
@@ -70,8 +126,13 @@ class ProviderFactory:
         from workflow_compiler.config import get_settings
 
         resolved = settings or get_settings()
-        if resolved.llm_provider.lower() == "mock":
+        name = resolved.llm_provider.lower()
+        if name == "mock":
             return self.create("mock")
+        if name == "local-fallback":
+            return build_fallback_provider(resolved)
+        if name == "local":
+            return build_local_provider(resolved)
 
         kwargs: dict[str, Any] = {
             "model": resolved.llm_model,

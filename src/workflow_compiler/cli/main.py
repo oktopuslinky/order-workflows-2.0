@@ -177,18 +177,62 @@ def show(
     asyncio.run(_run_show(workflow_id))
 
 
+@app.command()
+def models() -> None:
+    """List the models the local eGPU gateway currently exposes."""
+    import asyncio
+
+    from workflow_compiler.config import get_settings
+    from workflow_compiler.exceptions import (
+        LLMProviderError,
+        ProviderConnectionError,
+        ProviderTimeoutError,
+    )
+    from workflow_compiler.llm.factory import build_local_provider
+
+    async def _run() -> list[str]:
+        provider = build_local_provider(get_settings())
+        try:
+            return await provider.list_models()
+        finally:
+            await provider.aclose()
+
+    try:
+        available = asyncio.run(_run())
+    except (ProviderConnectionError, ProviderTimeoutError):
+        console.print("[red]Local eGPU gateway is not reachable.[/] Check LLM_API_BASE / the box.")
+        raise typer.Exit(1) from None
+    except LLMProviderError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1) from None
+
+    if not available:
+        console.print("[yellow]The gateway reported no models.[/]")
+        return
+    console.print("[bold]Local gateway models:[/]")
+    for model_id in available:
+        console.print(f"  • {model_id}")
+
+
 def _build_provider(
     provider_name: str | None, model: str | None, timeout: float
 ) -> BaseLLMProvider:
     """Construct an LLM provider from CLI overrides or settings (.env)."""
     from workflow_compiler.config import get_settings
     from workflow_compiler.llm import ProviderFactory
+    from workflow_compiler.llm.factory import build_fallback_provider, build_local_provider
 
     settings = get_settings()
     name = provider_name or settings.llm_provider
     factory = ProviderFactory()
     if name == "mock":
         return factory.create("mock")
+    # For the local gateway, --model overrides the *local* model, and generic
+    # kwargs (which carry the Nemotron model) must not leak onto it.
+    if name == "local-fallback":
+        return build_fallback_provider(settings, local_model_override=model, timeout=timeout)
+    if name == "local":
+        return build_local_provider(settings, model_override=model, timeout=timeout)
     return factory.create(name, model=model or settings.llm_model, timeout=timeout)
 
 

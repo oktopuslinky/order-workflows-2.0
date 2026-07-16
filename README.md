@@ -56,9 +56,14 @@ See [`docs/architecture.md`](docs/architecture.md) for component and sequence di
 
 Python 3.12+ · Pydantic v2 · FastAPI · Typer · NetworkX · Loguru · Rich · Pytest
 
-The LLM layer is **provider-agnostic**. The default provider talks to NVIDIA-hosted Nemotron
-models over an OpenAI-compatible REST API; any provider can be registered without touching agent
-or compiler code. A `mock` provider ships for offline/testing use.
+The LLM layer is **provider-agnostic**. The default provider (`local-fallback`) uses a **local
+eGPU gateway** as the primary LLM and transparently falls back to **NVIDIA-hosted Nemotron** when
+the box is unreachable or errors; both speak an OpenAI-compatible REST API. Any provider can be
+registered without touching agent or compiler code. A `mock` provider ships for offline/testing use.
+
+The local box is an "LLM API Gateway" that uses **email+password session auth** (not a static API
+key) and serves several models; `workflow-compiler models` lists them and the frontend offers a
+model picker.
 
 ## Install
 
@@ -70,25 +75,40 @@ This installs the package and the `workflow-compiler` console script.
 
 ## Configure
 
-Copy `.env.example` to `.env` and set your NVIDIA API key (only needed for the LLM-backed stages —
+Copy `.env.example` to `.env` and configure the LLM (only needed for the LLM-backed stages —
 segmentation, discovery, fact extraction, spec validation, CVPA, Temporal design):
 
 ```dotenv
+# Local eGPU gateway (primary). Session auth — register at the gateway's /ui/.
+LLM_API_BASE=http://192.168.1.184:8080/v1
+LLM_GATEWAY_EMAIL=you@example.com
+LLM_GATEWAY_PASSWORD=your-password
+# LLM_MODEL=gpt-oss-120b            # optional; else the gateway's default / UI pick
+
+# NVIDIA-hosted Nemotron (automatic fallback when the eGPU is unreachable).
 NVIDIA_API_KEY=nvapi-xxxxxxxx
-WORKFLOW_COMPILER_LLM_PROVIDER=nemotron
+
+WORKFLOW_COMPILER_LLM_PROVIDER=local-fallback
 WORKFLOW_COMPILER_LLM_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
 WORKFLOW_COMPILER_STATE_STORE_PATH=.workflow_state
 WORKFLOW_COMPILER_GRAPH_HEALTH_THRESHOLD=0.9
 ```
 
+Set `WORKFLOW_COMPILER_LLM_PROVIDER=nemotron` (or pass `--provider nemotron`) to skip the eGPU
+entirely, or `--provider mock` to run fully offline.
+
 State is persisted as JSON under `WORKFLOW_COMPILER_STATE_STORE_PATH` (default `.workflow_state/`).
 
 ## Use — CLI
 
-Six commands. `compile`, `validate`, `approve-spec`, and `approve` use the LLM (set
+`compile`, `validate`, `approve-spec`, and `approve` use the LLM (set the local gateway or
 `NVIDIA_API_KEY`, or pass `--provider mock` — the mock answers every stage with a scripted demo
-workflow, so every command runs offline); `reject` and `show` need no LLM. `--version` prints the
+workflow, so every command runs offline); `reject` and `show` need no LLM. `models` lists the
+models the local eGPU gateway exposes (`workflow-compiler models`). `--version` prints the
 version, and `workflow-compiler <command> --help` is always the authoritative reference.
+
+For the local gateway, `--model ID` selects the **local** model (discover ids with
+`workflow-compiler models`); `--provider nemotron` bypasses the eGPU and uses the hosted API.
 
 ### `compile <document>` — segment into editable specs, stop at the spec gate
 
@@ -256,7 +276,7 @@ Project endpoints (the compile → validate → approve pipeline; spec files tra
 
 | Method | Path                        | Body                                        | Purpose                                        |
 |--------|-----------------------------|---------------------------------------------|------------------------------------------------|
-| POST   | `/projects/compile`         | `{document_text, persist?}`                 | Segment into per-workflow specs (spec gate).    |
+| POST   | `/projects/compile`         | `{document_text, persist?, model?}`         | Segment into per-workflow specs (spec gate). `model` picks a local gateway model. |
 | GET    | `/projects`                 | —                                           | List stored project ids.                        |
 | GET    | `/projects/{id}`            | —                                           | Load a project + rendered spec files.           |
 | PUT    | `/projects/{id}/spec`       | `{spec_markdown}`                           | Fold edited spec Markdown back in (no LLM).     |
@@ -271,6 +291,7 @@ Per-workflow endpoints (viewing plus the manual override for below-threshold gra
 | POST   | `/reject`           | `{workflow_id, reviewer?, reason?}`        | Reject a graph.                           |
 | GET    | `/workflow/{id}`    | —                                          | Load a stored workflow state.             |
 | GET    | `/workflows`        | —                                          | List stored workflow ids.                 |
+| GET    | `/providers/local/models` | —                                    | List models the local eGPU gateway exposes (for the picker). |
 | GET    | `/health`           | —                                          | Liveness probe.                           |
 
 Interactive docs are served at `/docs`. Example:

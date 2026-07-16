@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from workflow_compiler.env import load_environment
@@ -29,14 +29,32 @@ class Settings(BaseSettings):
     )
 
     llm_provider: str = Field(
-        default="nemotron", description="Active LLM provider name (registered in ProviderFactory)."
+        default="local-fallback",
+        description=(
+            "Active LLM provider name (registered in ProviderFactory). Default "
+            "'local-fallback' uses the local eGPU gateway as primary and the Nemotron "
+            "API as automatic fallback."
+        ),
     )
     llm_model: str = Field(
         default="nvidia/llama-3.3-nemotron-super-49b-v1",
-        description="Default model id requested from the provider.",
+        description="Default model id requested from the (Nemotron/fallback) provider.",
     )
     llm_base_url: str | None = Field(
         default=None, description="Optional override for the provider base URL."
+    )
+    llm_local_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("WORKFLOW_COMPILER_LLM_LOCAL_BASE_URL", "LLM_API_BASE"),
+        description="Base URL of the local eGPU gateway (OpenAI-compatible, e.g. .../v1).",
+    )
+    llm_local_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("WORKFLOW_COMPILER_LLM_LOCAL_MODEL", "LLM_MODEL"),
+        description=(
+            "Model id requested from the local gateway. When unset, the gateway's "
+            "advertised default (/auth/config) is used, or a per-compile selection."
+        ),
     )
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0, description="Default temperature.")
     llm_timeout: float = Field(

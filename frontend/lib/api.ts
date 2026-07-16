@@ -3,6 +3,7 @@
 
 import type {
   CvpaPreviewResponse,
+  LocalModelList,
   ProjectFilesResponse,
   ProjectResponse,
   WorkflowStateResponse,
@@ -63,20 +64,28 @@ export const api = {
 
   listProjects: () => request<ProjectIdList>("/projects"),
 
+  listLocalModels: () =>
+    request<LocalModelList>("/providers/local/models"),
+
   getProject: (id: string) =>
     request<ProjectResponse>(`/projects/${encodeURIComponent(id)}`),
 
-  compileText: (documentText: string, persist = true) =>
+  compileText: (documentText: string, persist = true, model?: string) =>
     request<ProjectResponse>("/projects/compile", {
       method: "POST",
       headers: jsonHeaders,
-      body: JSON.stringify({ document_text: documentText, persist }),
+      body: JSON.stringify({
+        document_text: documentText,
+        persist,
+        model: model || null,
+      }),
     }),
 
-  compileUpload: (file: File, persist = true) => {
+  compileUpload: (file: File, persist = true, model?: string) => {
     const form = new FormData();
     form.append("file", file);
     form.append("persist", String(persist));
+    if (model) form.append("model", model);
     return request<ProjectResponse>("/projects/compile-upload", {
       method: "POST",
       body: form,

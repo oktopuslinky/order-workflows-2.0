@@ -39,6 +39,16 @@ class ProjectCompileRequest(BaseModel):
 
     document_text: str = Field(..., description="The raw business workflow document.")
     persist: bool = Field(default=True, description="Persist the resulting project.")
+    model: str | None = Field(
+        default=None,
+        description="Optional local gateway model id for this compile (else the server default).",
+    )
+
+
+class LocalModelList(BaseModel):
+    """Response listing the models the local eGPU gateway exposes."""
+
+    models: list[str] = Field(default_factory=list)
 
 
 class SpecUpdateRequest(BaseModel):

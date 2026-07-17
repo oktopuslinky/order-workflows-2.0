@@ -11,6 +11,7 @@ dist/
 # Environment / secrets
 .env
 .env.*
+.env copy
 !.env.example
 
 # Virtual environments
@@ -36,3 +37,11 @@ Thumbs.db
 *.sqlite
 *.db
 .workflow_state/
+
+# One-off pipeline run artifacts — the documented example outputs live in
+# ./generated and ./specs; ad-hoc runs should use these prefixed dirs.
+generated-*/
+generated_*/
+specs-*/
+specs_*/
+.playwright-mcp/

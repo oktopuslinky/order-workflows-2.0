@@ -32,6 +32,9 @@ Document ─▶ Segmentation (every workflow + its sections) ─▶ per-workflow
          ─▶ one editable spec .md file per workflow      [HUMAN GATE: edit ⇄ validate]
          ─▶ approve-spec ─▶ per workflow: Graph (auto-review ≥ health threshold)
                             ─▶ CVPA ─▶ Temporal Design ─▶ Temporal Code
+                 ▲
+                 └── edit (edit-request document) — change compiled workflows later;
+                     the project re-enters the gate and everything regenerates
 ```
 
 A document that describes a **single** workflow yields one segment holding the full document
@@ -56,10 +59,11 @@ See [`docs/architecture.md`](docs/architecture.md) for component and sequence di
 
 Python 3.12+ · Pydantic v2 · FastAPI · Typer · NetworkX · Loguru · Rich · Pytest
 
-The LLM layer is **provider-agnostic**. The default provider (`local-fallback`) uses a **local
-eGPU gateway** as the primary LLM and transparently falls back to **NVIDIA-hosted Nemotron** when
-the box is unreachable or errors; both speak an OpenAI-compatible REST API. Any provider can be
-registered without touching agent or compiler code. A `mock` provider ships for offline/testing use.
+The LLM layer is **provider-agnostic**. The default provider (`nemotron`) is the **NVIDIA-hosted
+cloud API**. Opt into the **local eGPU gateway** with `local`, or `local-fallback` (eGPU primary,
+Nemotron as automatic fallback when the box is unreachable or errors); all speak an
+OpenAI-compatible REST API. Any provider can be registered without touching agent or compiler
+code. A `mock` provider ships for offline/testing use.
 
 The local box is an "LLM API Gateway" that uses **email+password session auth** (not a static API
 key) and serves several models; `workflow-compiler models` lists them and the frontend offers a
@@ -85,17 +89,18 @@ LLM_GATEWAY_EMAIL=you@example.com
 LLM_GATEWAY_PASSWORD=your-password
 # LLM_MODEL=gpt-oss-120b            # optional; else the gateway's default / UI pick
 
-# NVIDIA-hosted Nemotron (automatic fallback when the eGPU is unreachable).
+# NVIDIA-hosted Nemotron (the default provider).
 NVIDIA_API_KEY=nvapi-xxxxxxxx
 
-WORKFLOW_COMPILER_LLM_PROVIDER=local-fallback
+WORKFLOW_COMPILER_LLM_PROVIDER=nemotron
 WORKFLOW_COMPILER_LLM_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
 WORKFLOW_COMPILER_STATE_STORE_PATH=.workflow_state
 WORKFLOW_COMPILER_GRAPH_HEALTH_THRESHOLD=0.9
 ```
 
-Set `WORKFLOW_COMPILER_LLM_PROVIDER=nemotron` (or pass `--provider nemotron`) to skip the eGPU
-entirely, or `--provider mock` to run fully offline.
+Set `WORKFLOW_COMPILER_LLM_PROVIDER=local` (or pass `--provider local`) to use the local eGPU
+gateway instead, `local-fallback` for eGPU-primary with automatic Nemotron fallback, or
+`--provider mock` to run fully offline.
 
 State is persisted as JSON under `WORKFLOW_COMPILER_STATE_STORE_PATH` (default `.workflow_state/`).
 
@@ -174,10 +179,37 @@ Findings are two-tier and printed with precise refs (`TAG slug Section > field: 
 - `WARN` (yellow) — should be confirmed but doesn't block: type mismatches on a hand-off,
   unconfirmed trigger predicates, a blocking trigger with no result binding.
 
+### `edit <project-id> <edit-file>` — change compiled workflows with an edit request
+
+```bash
+workflow-compiler edit <project-id> examples/order_edit_request.md --spec-dir ./specs --author alice
+```
+
+Applies a **workflow edit-request document** (format:
+[`docs/EDIT_FORMAT_GUIDE.md`](docs/EDIT_FORMAT_GUIDE.md)) to a compiled project: structured
+sections (`## Workflow: <slug>` with `### Add` / `### Modify` / `### Remove`, plus
+`### Triggers` / `### Dependencies`, `## Add Workflow:` and `## Remove Workflow:`) hold
+natural-language entries that an LLM translates into deterministic patches against the current
+specs. Your changes carry **human authority** — additions need no support in the original
+document (they are marked `[human]`) and removals are honored. The edit is **atomic**: an entry
+that cannot be translated or applied aborts the whole request with the offending entries listed,
+and nothing changes.
+
+On success the edited workflows' versions are bumped, an `EditRecord` is appended to the
+project's audit log, the spec files are re-written, and the project returns to the spec gate —
+run `validate` then `approve-spec` to regenerate graphs, designs, and code.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--workflow SLUG` | all | Only allow edits touching these workflow slug(s) (repeatable). |
+| `--author NAME` | — | Author recorded in the edit log. |
+| `--spec-dir DIR` | `./specs` | Where the updated spec files are re-written. |
+| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
+
 ### `approve-spec <project-id>` — compile every workflow through to code
 
 ```bash
-workflow-compiler approve-spec <project-id> --spec-dir ./specs --out-dir ./generated
+workflow-compiler approve-spec <project-id> --spec-dir ./specs
 ```
 
 Approves the specs and runs each workflow **independently** through graph building, structural
@@ -186,7 +218,8 @@ configured threshold continues; below it the workflow is left pending (`approve 
 remains the manual override). Unanswered required questions block a workflow unless you pass
 `--accept-incomplete`; unconfirmed dependencies block approval unless you pass
 `--allow-unconfirmed`. Each completed workflow's runnable Temporal bundle is written under
-`--out-dir`.
+`<out-dir>/<project-id>/<slug>/` — `--out-dir` defaults to `./generated`, so repeated runs
+never litter the working directory with loose bundle folders.
 
 **Every workflow generates as a standalone Temporal workflow** — its own `workflow.py`,
 `activities.py`, `shared.py`, `worker.py`, `starter.py`, and a `test_stepthrough.py` local
@@ -215,10 +248,10 @@ code:
 | `--reviewer NAME` | — | Reviewer identity recorded on the approval. |
 | `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
 | `--out PATH` | — | Write the CVPA-colored Mermaid diagram to a file. |
-| `--out-dir DIR` | — | Write the generated Temporal Python code bundle to a directory. |
+| `--out-dir DIR` | `./generated` | Root for generated output; the bundle lands in `<out-dir>/<workflow-id>/`. |
 
 ```bash
-workflow-compiler approve <workflow_id> --reviewer alice --out workflow.mmd --out-dir ./generated
+workflow-compiler approve <workflow_id> --reviewer alice --out workflow.mmd
 ```
 
 ### `reject <workflow_id>` — halt a pending workflow (no LLM)
@@ -280,6 +313,7 @@ Project endpoints (the compile → validate → approve pipeline; spec files tra
 | GET    | `/projects`                 | —                                           | List stored project ids.                        |
 | GET    | `/projects/{id}`            | —                                           | Load a project + rendered spec files.           |
 | PUT    | `/projects/{id}/spec`       | `{spec_markdown}`                           | Fold edited spec Markdown back in (no LLM).     |
+| POST   | `/projects/{id}/edit`       | `{edit_document, workflows?, author?}`      | Apply an edit-request document; re-arms the gate. |
 | POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes.   |
 | POST   | `/projects/{id}/approve`    | `{workflows?, reviewer?, spec_markdown?, accept_incomplete?, allow_unconfirmed_references?}` | Approve specs, compile every workflow. |
 

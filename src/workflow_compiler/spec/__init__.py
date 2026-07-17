@@ -7,11 +7,13 @@ user reviews, and ``ingest.ingest_spec_markdown`` folds edits back in.
 
 from __future__ import annotations
 
+from workflow_compiler.spec.edit_applier import EditPatchApplier
 from workflow_compiler.spec.ingest import IngestResult, ingest_spec_markdown
 from workflow_compiler.spec.renderer import render_spec
 from workflow_compiler.spec.validator import SpecPatchApplier, SpecValidator
 
 __all__ = [
+    "EditPatchApplier",
     "IngestResult",
     "SpecPatchApplier",
     "SpecValidator",

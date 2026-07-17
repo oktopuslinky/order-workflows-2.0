@@ -55,6 +55,7 @@ flowchart TD
     doc --> seg --> ext --> specs --> files --> gate
     gate -->|validate: ingest edits + 3 spec review passes| files
     gate -->|approve-spec| backend
+    backend -->|"edit (edit-request document)"| gate
 ```
 
 Key invariants:
@@ -101,6 +102,23 @@ Key invariants:
   `decisions_taken`, `triggers_fired`) plus a `test_stepthrough.py` harness; the
   `WORKFLOW_COMPILER_STEPWISE` setting gates every top-level step behind an `advance` signal
   (`wait_condition` + signal — deterministic).
+
+- **Edit requests re-enter the gate.** `ProjectCompiler.edit_specs` applies a human-authored
+  **edit-request document** (`docs/EDIT_FORMAT_GUIDE.md`) to a compiled project. The skeleton is
+  parsed deterministically (`spec/edit_ingest.py`, fail-fast before any LLM call); the
+  natural-language entries are translated by `EditInterpreterAgent`
+  (`agents/edit_interpreter.py`, prompt `interpret_edit_request.md`) into an `EditPlan`
+  (`models/edit.py`) — the existing `Patch` vocabulary plus typed `TriggerOp`/`XrefOp` wiring
+  operations. `EditPatchApplier` (`spec/edit_applier.py`) applies patches through
+  `SpecPatchApplier(human_authority=True)`: adds need no document grounding and are marked
+  `human_provided`; removals — including of human-provided or referenced elements — are honored
+  (dangling references pruned by the integrity guard). The whole edit is **atomic** (applied to
+  a deep copy; any failure leaves the stored project untouched); on success the edited specs'
+  versions are patch-bumped, an `EditRecord` is appended to the project's append-only
+  `edit_log`, and the project returns to `SPEC_DRAFTED` so validate → approve-spec re-runs.
+  Whole workflows can be added (the section body runs through the normal discovery + facts
+  pipeline and is appended to `document_text` for grounding) or removed (every trigger/xref
+  touching the slug is dropped and logged). Split/merge syntax is reserved and rejected.
 
 Projects persist via `storage/project_store.py` (`<state-root>/projects/<id>.json`, same atomic
 write pattern); per-workflow states are unchanged apart from an optional `project_id` back-link
@@ -246,9 +264,10 @@ field and advances `stage`:
 ## Design principles
 
 - **Provider-agnostic LLM layer.** Agents depend only on `BaseLLMProvider`; the concrete provider
-  is injected. No vendor SDK is imported. The default `local-fallback` provider composes a local
-  eGPU gateway (`GatewaySessionProvider`, email+password session auth) as primary with the hosted
-  `NemotronProvider` as automatic fallback on unreachable/timeout/5xx.
+  is injected. No vendor SDK is imported. The default provider is the hosted `NemotronProvider`
+  (NVIDIA cloud API); the opt-in `local` provider is a local eGPU gateway
+  (`GatewaySessionProvider`, email+password session auth), and `local-fallback` composes the
+  gateway as primary with Nemotron as automatic fallback on unreachable/timeout/5xx.
 - **Deterministic where it matters.** Graph construction and structural review are pure functions
   of the extracted facts — reproducible and testable without a model.
 - **Validated, immutable edits.** `GraphEditor` returns new validated `WorkflowGraph` instances;

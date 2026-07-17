@@ -98,6 +98,36 @@ def validate_cmd(
     asyncio.run(_run_validate(project_id, spec_dir, provider, model, timeout))
 
 
+@app.command(name="edit")
+def edit_cmd(
+    project_id: str = typer.Argument(..., help="Project id from 'compile --spec-dir'."),
+    edit_file: Path = typer.Argument(
+        ..., exists=True, readable=True, dir_okay=False,
+        help="Edit-request Markdown file (see docs/EDIT_FORMAT_GUIDE.md).",
+    ),
+    workflow: list[str] = typer.Option(
+        None, "--workflow", help="Only allow edits to these workflow slug(s)."
+    ),
+    author: str = typer.Option(None, "--author", help="Author recorded in the edit log."),
+    spec_dir: Path = typer.Option(
+        Path("./specs"), "--spec-dir",
+        help="Re-write the updated spec files to this directory.",
+    ),
+    provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
+    model: str = typer.Option(None, "--model", help="Override the model id."),
+    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+) -> None:
+    """Apply a workflow edit-request document, then re-enter the spec gate."""
+    import asyncio
+
+    asyncio.run(
+        _run_edit(
+            project_id, edit_file, list(workflow or []), author, spec_dir,
+            provider, model, timeout,
+        )
+    )
+
+
 @app.command(name="approve-spec")
 def approve_spec_cmd(
     project_id: str = typer.Argument(..., help="Project id from 'compile --spec-dir'."),
@@ -110,7 +140,8 @@ def approve_spec_cmd(
     ),
     reviewer: str = typer.Option(None, "--reviewer", help="Reviewer name to record."),
     out_dir: Path = typer.Option(
-        None, "--out-dir", help="Write each generated Temporal code bundle here."
+        Path("./generated"), "--out-dir",
+        help="Root for generated output; code lands in <out-dir>/<project-id>/<slug>/.",
     ),
     accept_incomplete: bool = typer.Option(
         False, "--accept-incomplete",
@@ -146,7 +177,8 @@ def approve(
         None, "--out", help="Write the CVPA-colored Mermaid diagram to this file."
     ),
     out_dir: Path = typer.Option(
-        None, "--out-dir", help="Write the generated Temporal code to this directory."
+        Path("./generated"), "--out-dir",
+        help="Root for generated output; code lands in <out-dir>/<workflow-id>/.",
     ),
 ) -> None:
     """Approve a graph and produce CVPA + Temporal artifacts."""
@@ -459,6 +491,48 @@ async def _run_validate(
     )
 
 
+async def _run_edit(
+    project_id: str,
+    edit_file: Path,
+    workflows: list[str],
+    author: str | None,
+    spec_dir: Path,
+    provider_name: str | None,
+    model: str | None,
+    timeout: float,
+) -> None:
+    provider = _build_provider(provider_name, model, timeout)
+    console.print(f"[bold]Provider[/]: {provider.name}")
+    compiler = _project_compiler(provider, review=True)
+    edit_document = edit_file.read_text(encoding="utf-8")
+    try:
+        console.print(f"[bold]Applying edit request[/] {edit_file} ...")
+        project = await compiler.edit_specs(
+            project_id,
+            edit_document,
+            workflows=workflows or None,
+            author=author,
+            progress=_make_progress(),
+        )
+    finally:
+        await _aclose(provider)
+
+    compiler.write_spec_files(project, spec_dir)
+    record = project.edit_log[-1]
+    console.print(f"\n[bold green]Edit applied[/] (edit id {record.edit_id})")
+    for slug, lines in record.summary.items():
+        console.print(f"  [cyan]{slug}[/]:")
+        for line in lines:
+            console.print(f"    - {line}")
+    _print_project(project, spec_dir)
+    console.print(
+        f"\nSpec files re-written to [cyan]{spec_dir}[/]. The project is back at "
+        "the spec gate — review the changes, then run:\n"
+        f"  [cyan]workflow-compiler validate {project_id} --spec-dir {spec_dir}[/]\n"
+        f"  [cyan]workflow-compiler approve-spec {project_id} --spec-dir {spec_dir}[/]"
+    )
+
+
 async def _run_approve_spec(
     project_id: str,
     spec_dir: Path,
@@ -526,16 +600,19 @@ async def _write_project_code(compiler: object, project: object, out_dir: Path |
     assert isinstance(project, CompilationProject)
     if out_dir is None:
         return
+    # Everything nests under <out-dir>/<project-id>/ so repeated runs never
+    # litter the working directory with loose bundle folders.
+    root = out_dir / project.project_id
     designs = {}
     for slug, workflow_id in project.workflow_ids.items():
         state = await compiler.workflow_compiler.load_state(workflow_id)
         package_dir_name = slug.replace("-", "_")
-        workflow_dir = out_dir / package_dir_name
+        workflow_dir = root / package_dir_name
         if state.mermaid_diagram is not None:
             workflow_dir.mkdir(parents=True, exist_ok=True)
             _write_diagram(state, workflow_dir / "diagram.mmd")
         if state.stage is CompilationStage.COMPLETED:
-            _write_code(state, out_dir, package_dir_name=package_dir_name)
+            _write_code(state, root, package_dir_name=package_dir_name)
             if state.temporal_design is not None:
                 designs[slug] = state.temporal_design
         else:
@@ -547,11 +624,11 @@ async def _write_project_code(compiler: object, project: object, out_dir: Path |
             generate_project_files,
         )
 
-        out_dir.mkdir(parents=True, exist_ok=True)
+        root.mkdir(parents=True, exist_ok=True)
         for generated in generate_project_files(designs, project.triggers):
-            (out_dir / generated.path).write_text(generated.content, encoding="utf-8")
+            (root / generated.path).write_text(generated.content, encoding="utf-8")
         console.print(
-            f"  [green]project[/]: wrote contracts.py + README.md to {out_dir}"
+            f"  [green]project[/]: wrote contracts.py + README.md to {root}"
         )
 
 
@@ -583,7 +660,7 @@ async def _run_approve(
         f"\n[bold green]Approved[/] {state.workflow_id}  stage={state.stage.value}"
     )
     _write_diagram(state, out)
-    _write_code(state, out_dir)
+    _write_code(state, None if out_dir is None else out_dir / state.workflow_id)
 
 
 async def _run_reject(workflow_id: str, reviewer: str | None, reason: str | None) -> None:

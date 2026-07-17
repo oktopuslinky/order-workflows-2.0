@@ -17,6 +17,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
+from workflow_compiler.models.edit import EditRecord
 from workflow_compiler.models.enums import ApprovalStatus
 from workflow_compiler.models.findings import Severity, SpecFinding
 from workflow_compiler.models.spec import CrossReference, WorkflowSpec, WorkflowTrigger
@@ -91,6 +92,10 @@ class CompilationProject(WorkflowBaseModel):
     validation_findings: dict[str, list[SpecFinding]] = Field(
         default_factory=dict,
         description="slug → structured findings from the most recent validation run.",
+    )
+    edit_log: list[EditRecord] = Field(
+        default_factory=list,
+        description="Append-only audit trail of applied edit requests.",
     )
     stage: ProjectStage = Field(
         default=ProjectStage.INGESTED, description="Current project stage."

@@ -65,11 +65,18 @@ class SpecPatchApplier:
       appended as :class:`SpecItem`s (deduplicated by text);
     * ``flag`` anywhere → recorded as a finding, artifact untouched;
     * ``remove`` of a human-provided element → converted to a finding.
+
+    ``human_authority=True`` is the edit-request mode: the patches were derived
+    from a human-authored edit document, so adds need no document grounding,
+    removes of human-provided elements are honored, and removes of referenced
+    elements apply with a warning (the rebuilt structure's integrity guard
+    prunes the dangling references). The default (review) mode is unchanged.
     """
 
-    def __init__(self) -> None:
-        self._metadata = MetadataPatchApplier()
-        self._facts = FactsPatchApplier()
+    def __init__(self, *, human_authority: bool = False) -> None:
+        self._human_authority = human_authority
+        self._metadata = MetadataPatchApplier(require_grounding=not human_authority)
+        self._facts = FactsPatchApplier(require_grounding=not human_authority)
 
     def apply(
         self, spec: WorkflowSpec, patches: list[Patch], document_text: str
@@ -90,22 +97,33 @@ class SpecPatchApplier:
                 if patch.action == PatchAction.ADD:
                     item_added += int(self._add_item(spec, _ITEM_TARGETS[kind], patch))
                 continue
-            if patch.action == PatchAction.REMOVE and self._is_human(spec, patch):
+            if (
+                patch.action == PatchAction.REMOVE
+                and not self._human_authority
+                and self._is_human(spec, patch)
+            ):
                 findings.append(
                     f"human-provided element '{patch.target}' is not supported by the "
                     "document — please confirm or remove it yourself"
                 )
                 continue
             if patch.action == PatchAction.REMOVE and self._is_referenced(spec, patch):
-                # A remove that would orphan references (a decision's branch
-                # target, a compensation's activity, …) silently breaks the
-                # flow and defeats user repairs — surface it instead.
+                if not self._human_authority:
+                    # A remove that would orphan references (a decision's branch
+                    # target, a compensation's activity, …) silently breaks the
+                    # flow and defeats user repairs — surface it instead.
+                    findings.append(
+                        f"'{patch.target}' is referenced by other elements — removal "
+                        "skipped; if it is truly unsupported, remove the referencing "
+                        "lines first"
+                    )
+                    continue
+                # Human authority: honor the removal but warn — the rebuilt
+                # structure's integrity guard drops the dangling references.
                 findings.append(
-                    f"'{patch.target}' is referenced by other elements — removal "
-                    "skipped; if it is truly unsupported, remove the referencing "
-                    "lines first"
+                    f"'{patch.target}' was referenced by other elements — those "
+                    "references were pruned along with the removal"
                 )
-                continue
             if kind in _METADATA_LIST_FIELDS or kind in _METADATA_SCALAR_FIELDS:
                 metadata_patches.append(patch)
             elif kind in _ENTITY_KINDS or kind in _SCALAR_CATEGORIES:

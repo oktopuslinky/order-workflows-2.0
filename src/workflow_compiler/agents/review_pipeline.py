@@ -152,7 +152,14 @@ class MetadataPatchApplier:
     scalar fields (name/purpose) accept modify. ``flag`` only records a note. An
     ``add`` whose value already exists (case-insensitively) or is not grounded in
     the document is dropped — which is exactly what makes the pass idempotent.
+
+    ``require_grounding=False`` (the human-authority edit path) skips the
+    grounding check: the change was authored by a human, so it needs no textual
+    support in the source document. Duplicate detection still applies.
     """
+
+    def __init__(self, *, require_grounding: bool = True) -> None:
+        self._require_grounding = require_grounding
 
     def apply(
         self, artifact: object, patches: list[Patch], document_text: str
@@ -176,7 +183,10 @@ class MetadataPatchApplier:
                     dropped += 1
             elif field in _METADATA_SCALAR_FIELDS and patch.action == PatchAction.MODIFY:
                 value = _payload_value(patch, "value", "new", "to")
-                if value and _grounded(value, patch.evidence, document_text):
+                if value and (
+                    not self._require_grounding
+                    or _grounded(value, patch.evidence, document_text)
+                ):
                     data[field] = value
                     applied += 1
                 else:
@@ -202,7 +212,7 @@ class MetadataPatchApplier:
             value = _payload_value(patch, "value", "item", "name")
             if not value or self._index_ci(items, value) != -1:
                 return False
-            if not _grounded(value, patch.evidence, document_text):
+            if self._require_grounding and not _grounded(value, patch.evidence, document_text):
                 return False
             items.append(value)
             return True
@@ -261,6 +271,15 @@ _ENTITY_PREFIX = {
     "exception": "e",
     "compensation": "c",
     "event": "v",
+}
+
+#: Entity kinds mapped to their flat fact category, for structureless artifacts.
+_FLAT_ENTITY_CATEGORIES = {
+    "activity": FactCategory.ACTIVITY,
+    "decision": FactCategory.DECISION,
+    "exception": FactCategory.EXCEPTION,
+    "compensation": FactCategory.COMPENSATION,
+    "event": FactCategory.EVENT,
 }
 
 
@@ -343,13 +362,22 @@ class FactsPatchApplier:
     integrity guard so links can only point at declared entities. ``add`` of an
     entity whose normalized name already exists, or that is not grounded, is
     dropped (idempotency + anti-hallucination).
+
+    ``require_grounding=False`` (the human-authority edit path) skips the
+    grounding check on adds; duplicate detection and referential integrity
+    still apply.
     """
+
+    def __init__(self, *, require_grounding: bool = True) -> None:
+        self._require_grounding = require_grounding
 
     def apply(
         self, artifact: object, patches: list[Patch], document_text: str
     ) -> tuple[WorkflowFacts, str]:
         assert isinstance(artifact, WorkflowFacts)
-        structure = (artifact.structure or WorkflowStructure()).model_copy(deep=True)
+        if artifact.structure is None:
+            return self._apply_flat(artifact, patches, document_text)
+        structure = artifact.structure.model_copy(deep=True)
         scalar = [f for f in artifact.facts if f.category in _SCALAR_CATEGORIES.values()]
         applied = dropped = flagged = 0
 
@@ -371,6 +399,38 @@ class FactsPatchApplier:
 
         rebuilt = rebuild_facts(structure, scalar)
         return rebuilt, f"{applied} applied, {dropped} dropped, {flagged} flagged"
+
+    def _apply_flat(
+        self, artifact: WorkflowFacts, patches: list[Patch], document_text: str
+    ) -> tuple[WorkflowFacts, str]:
+        """Patch structureless facts in place.
+
+        Without a relational structure there are no entity ids: entity-kind
+        patches degrade to statement-level operations on the matching flat
+        category (an id-addressed modify/remove cannot resolve and is dropped),
+        and the existing flat facts are preserved rather than rebuilt from an
+        empty structure — rebuilding would silently discard every non-scalar
+        fact.
+        """
+        facts = [f.model_copy(deep=True) for f in artifact.facts]
+        applied = dropped = flagged = 0
+        for patch in patches:
+            kind, _, ref = patch.target.partition(":")
+            kind = kind.strip().lower()
+            if patch.action == PatchAction.FLAG:
+                flagged += 1
+                continue
+            category = _SCALAR_CATEGORIES.get(kind) or _FLAT_ENTITY_CATEGORIES.get(kind)
+            ok = (
+                category is not None
+                and not ref.strip()
+                and self._apply_scalar(category, patch, facts, document_text)
+            )
+            applied += int(ok)
+            dropped += int(not ok)
+        return WorkflowFacts(facts=facts, structure=None), (
+            f"{applied} applied, {dropped} dropped, {flagged} flagged"
+        )
 
     # -- structure entities -------------------------------------------------
 
@@ -437,7 +497,9 @@ class FactsPatchApplier:
         existing_ids = {n.id for n in items}
         label_key = {"decision": ("question",), "exception": ("reason",)}.get(kind, ("name",))
         label = _payload_value(patch, *label_key, "value")
-        if not label or not _grounded(label, patch.evidence, document_text):
+        if not label:
+            return False
+        if self._require_grounding and not _grounded(label, patch.evidence, document_text):
             return False
         if any(self._entity_label(kind, n).lower() == label.lower() for n in items):
             return False  # idempotent: already present
@@ -516,10 +578,10 @@ class FactsPatchApplier:
                          if f.category == category and f.statement.lower() == low), -1)
 
         if patch.action == PatchAction.ADD:
-            value = _payload_value(patch, "value", "statement", "name")
+            value = _payload_value(patch, "value", "statement", "name", "question", "reason")
             if not value or index_ci(value) != -1:
                 return False
-            if not _grounded(value, patch.evidence, document_text):
+            if self._require_grounding and not _grounded(value, patch.evidence, document_text):
                 return False
             scalar.append(
                 WorkflowFact(
@@ -531,7 +593,9 @@ class FactsPatchApplier:
             )
             return True
         if patch.action == PatchAction.REMOVE:
-            idx = index_ci(_payload_value(patch, "value", "statement", "name"))
+            idx = index_ci(
+                _payload_value(patch, "value", "statement", "name", "question", "reason")
+            )
             if idx == -1:
                 return False
             scalar.pop(idx)

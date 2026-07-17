@@ -18,11 +18,14 @@ the project exists.
 
 from __future__ import annotations
 
+import json
+import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from workflow_compiler.agents.cvpa import CVPAClassifierAgent
+from workflow_compiler.agents.edit_interpreter import EditInterpreterAgent
 from workflow_compiler.agents.graph_builder import GraphBuilderAgent
 from workflow_compiler.agents.segmentation import WorkflowSegmentationAgent
 from workflow_compiler.checklist import amend as checklist_amend
@@ -42,7 +45,12 @@ from workflow_compiler.models import (
     ApprovalStatus,
     CompilationProject,
     CompilationStage,
+    CrossReference,
+    EditPlan,
+    EditRecord,
     FactCategory,
+    Patch,
+    PatchAction,
     ProjectStage,
     Provenance,
     Severity,
@@ -50,13 +58,24 @@ from workflow_compiler.models import (
     SpecItem,
     TriggerMode,
     TriggerNode,
+    TriggerOp,
+    WiringAction,
     WorkflowFacts,
     WorkflowMetadata,
+    WorkflowSegment,
     WorkflowSpec,
     WorkflowState,
+    WorkflowTrigger,
+    XrefOp,
 )
 from workflow_compiler.prompts import PromptManager
-from workflow_compiler.spec import SpecValidator, ingest_spec_markdown, render_spec
+from workflow_compiler.spec import (
+    EditPatchApplier,
+    SpecValidator,
+    ingest_spec_markdown,
+    render_spec,
+)
+from workflow_compiler.spec.edit_ingest import EditRequestDoc, parse_edit_request
 from workflow_compiler.storage.project_store import FileProjectStore, ProjectStore
 
 if TYPE_CHECKING:
@@ -435,6 +454,536 @@ class ProjectCompiler:
         if persist:
             await self._projects.save(project)
         return project
+
+    # ------------------------------------------------------------------ #
+    # Stage 2b: edit requests against compiled workflows
+    # ------------------------------------------------------------------ #
+
+    async def edit_specs(
+        self,
+        project_id: str,
+        edit_document: str,
+        *,
+        workflows: list[str] | None = None,
+        author: str | None = None,
+        persist: bool = True,
+        progress: ProgressCallback | None = None,
+    ) -> CompilationProject:
+        """Apply a workflow edit-request document to the project's specs.
+
+        The document's skeleton is parsed deterministically (fail-fast, before
+        any LLM call); each workflow section's entries are interpreted into
+        patches by the :class:`EditInterpreterAgent` and applied with human
+        authority. The whole edit is **atomic**: any failure leaves the stored
+        project untouched. On success the project re-enters the spec gate
+        (stage ``SPEC_DRAFTED``, approval ``PENDING``) so the normal
+        validate → approve-spec flow re-runs, and an :class:`EditRecord` is
+        appended to the audit log.
+        """
+        project = await self._projects.load(project_id)
+        known = {spec.slug for spec in project.specs}
+        doc = parse_edit_request(edit_document, known)
+        self._enforce_workflow_filter(doc, workflows, known)
+
+        # All mutations happen on a deep copy: one edit document is one human
+        # intent, and a partially-applied request would leave a project state
+        # the author never described.
+        working = project.model_copy(deep=True)
+        record = EditRecord(document=edit_document, author=author)
+        summary: dict[str, list[str]] = {}
+
+        for slug in doc.remove_workflows:
+            summary[slug] = self._remove_workflow(working, slug)
+            record.workflows_removed.append(slug)
+
+        total = len(doc.add_workflows) + len(doc.workflows)
+        index = 0
+        for new_section in doc.add_workflows:
+            index += 1
+            name = f"edit:add:{new_section.slug}"
+            _emit(progress, ProgressEvent(
+                phase="agent", name=name, status="start", index=index, total=total,
+            ))
+            started = time.perf_counter()
+            state = await self._compiler.extract_facts(
+                new_section.body, project_id=working.project_id
+            )
+            drafted = self._build_spec(new_section.slug, state)
+            working.specs.append(drafted)
+            working.segments.append(
+                self._new_segment(working, new_section.slug, drafted, new_section.body)
+            )
+            # Ground the new workflow: later validate passes compare specs
+            # against document_text, so the description must live there too.
+            working.document_text += (
+                f"\n\n<!-- edit {record.edit_id}: added workflow {new_section.slug} -->\n"
+                f"{new_section.body}\n"
+            )
+            record.workflows_added.append(new_section.slug)
+            summary[new_section.slug] = [f"added workflow '{drafted.metadata.name}'"]
+            _emit(progress, ProgressEvent(
+                phase="agent", name=name, status="done", index=index, total=total,
+                seconds=time.perf_counter() - started,
+            ))
+
+        # Interpret every section first (LLM), then apply deterministically —
+        # an unresolved entry anywhere aborts before anything is applied.
+        interpreter = EditInterpreterAgent(self._llm, prompt_manager=self._prompts)
+        project_context = self._project_context(working)
+        plans: dict[str, EditPlan] = {}
+        unresolved: list[str] = []
+        for section in doc.workflows:
+            index += 1
+            name = f"edit:{section.slug}"
+            _emit(progress, ProgressEvent(
+                phase="agent", name=name, status="start", index=index, total=total,
+            ))
+            started = time.perf_counter()
+            current = working.spec_for(section.slug)
+            if current is None:  # pragma: no cover - parser guarantees existence
+                raise CompilationError(f"No spec for workflow {section.slug!r}.")
+            plan = await interpreter.interpret(
+                slug=section.slug,
+                edit_section=section.to_markdown(),
+                current_spec=render_spec(current, working.cross_references, working.triggers),
+                project_context=project_context,
+            )
+            unresolved.extend(f"{section.slug}: {entry}" for entry in plan.unresolved)
+            if section.entry_count() and not (
+                plan.patches or plan.trigger_ops or plan.xref_ops or plan.unresolved
+            ):
+                raise CompilationError(
+                    f"The edit entries for workflow '{section.slug}' produced no "
+                    "operations — rephrase them (see docs/EDIT_FORMAT_GUIDE.md)."
+                )
+            plans[section.slug] = plan
+            _emit(progress, ProgressEvent(
+                phase="agent", name=name, status="done", index=index, total=total,
+                seconds=time.perf_counter() - started,
+            ))
+
+        project_plan: EditPlan | None = None
+        if doc.project_bullets:
+            project_plan = await interpreter.interpret(
+                slug="(project)",
+                edit_section="\n".join(f"- {b}" for b in doc.project_bullets),
+                current_spec="(project-level request — no single workflow)",
+                project_context=project_context,
+            )
+            unresolved.extend(f"(project): {entry}" for entry in project_plan.unresolved)
+            if project_plan.patches:
+                raise CompilationError(
+                    "Project-section entries may only change cross-workflow wiring "
+                    "(triggers/dependencies). Put content edits under a "
+                    "'## Workflow: <slug>' section."
+                )
+
+        if unresolved:
+            listed = "\n".join(f"  - {entry}" for entry in unresolved)
+            raise CompilationError(
+                "Some edit entries could not be translated into operations — "
+                f"nothing was applied. Rephrase these entries:\n{listed}"
+            )
+
+        # Apply patches per workflow (human authority), then wiring ops.
+        applier = EditPatchApplier()
+        for slug, plan in plans.items():
+            if not plan.patches:
+                continue
+            target_spec = working.spec_for(slug)
+            assert target_spec is not None
+            new_spec, lines, warnings = applier.apply(
+                target_spec, plan.patches, working.document_text
+            )
+            dropped = self._dropped_count(lines)
+            if dropped:
+                benign, fatal = self._classify_drops(
+                    applier, target_spec, plan.patches, working.document_text
+                )
+                if fatal:
+                    listed = "\n".join(f"  - {entry}" for entry in fatal)
+                    raise CompilationError(
+                        f"{len(fatal)} operation(s) for workflow '{slug}' could not "
+                        "be applied (unknown element id/name, or the current value "
+                        "does not match) — nothing was applied. Dropped operations:\n"
+                        f"{listed}\n"
+                        "Check the edit request against the current spec."
+                    )
+                # Adds whose value is already in the spec are satisfied, not
+                # failed: the requested end-state already holds. Skip them
+                # loudly (never silently) and apply the rest.
+                lines.extend(f"skipped (already present): {entry}" for entry in benign)
+            self._replace_spec(working, new_spec)
+            record.resolved_patches[slug] = plan.patches
+            entry_lines = summary.setdefault(slug, [])
+            entry_lines.extend(lines)
+            entry_lines.extend(f"warning: {w}" for w in warnings)
+            bumped = self._bump_patch_version(new_spec.metadata.version)
+            if bumped is None:
+                entry_lines.append(
+                    f"version '{new_spec.metadata.version}' is not semver — left unchanged"
+                )
+            else:
+                new_spec.metadata = new_spec.metadata.model_copy(
+                    update={"version": bumped}
+                )
+                self._replace_spec(working, new_spec)
+                entry_lines.append(f"version bumped to {bumped}")
+
+        wiring_plans = [p for p in plans.values() if p.trigger_ops or p.xref_ops]
+        if project_plan is not None:
+            wiring_plans.append(project_plan)
+        for plan in wiring_plans:
+            for trigger_op in plan.trigger_ops:
+                line = self._apply_trigger_op(working, trigger_op)
+                summary.setdefault("(project)", []).append(line)
+                record.trigger_ops.append(trigger_op)
+            for xref_op in plan.xref_ops:
+                line = self._apply_xref_op(working, xref_op)
+                summary.setdefault("(project)", []).append(line)
+                record.xref_ops.append(xref_op)
+
+        record.summary = summary
+        working.edit_log.append(record)
+        working.spec_approval_status = ApprovalStatus.PENDING
+        working.stage = ProjectStage.SPEC_DRAFTED
+        # Stale findings would describe the pre-edit specs; validate recomputes
+        # everything (including the trigger/xref integrity pass — the safety
+        # net for edits that broke wiring).
+        working.validation_findings = {}
+        working.touch()
+        if persist:
+            await self._projects.save(working)
+        return working
+
+    @staticmethod
+    def _enforce_workflow_filter(
+        doc: EditRequestDoc, workflows: list[str] | None, known: set[str]
+    ) -> None:
+        """Raise when the edit doc targets workflows outside the ``workflows`` filter."""
+        if not workflows:
+            return
+        allowed = set(workflows)
+        unknown = allowed - known
+        if unknown:
+            raise CompilationError(
+                f"--workflow filter names unknown workflow(s): {sorted(unknown)}. "
+                f"Known: {sorted(known)}."
+            )
+        targeted = (
+            {section.slug for section in doc.workflows}
+            | set(doc.remove_workflows)
+            | {section.slug for section in doc.add_workflows}
+        )
+        outside = targeted - allowed
+        if outside:
+            raise CompilationError(
+                f"The edit request targets workflow(s) outside the --workflow "
+                f"filter: {sorted(outside)}. Widen the filter or trim the document."
+            )
+
+    @staticmethod
+    def _remove_workflow(project: CompilationProject, slug: str) -> list[str]:
+        """Drop ``slug``'s spec, segment, and every wire touching it."""
+        lines = [f"removed workflow '{slug}'"]
+        project.specs = [s for s in project.specs if s.slug != slug]
+        project.segments = [s for s in project.segments if s.slug != slug]
+        project.workflow_ids.pop(slug, None)
+        project.validation_findings.pop(slug, None)
+        kept_triggers: list[WorkflowTrigger] = []
+        for trigger in project.triggers:
+            if slug in (trigger.source_workflow, trigger.target_workflow):
+                lines.append(
+                    f"dropped trigger {trigger.source_workflow} → {trigger.target_workflow}"
+                )
+            else:
+                kept_triggers.append(trigger)
+        project.triggers = kept_triggers
+        kept_refs: list[CrossReference] = []
+        for ref in project.cross_references:
+            if slug in (ref.source_workflow, ref.target_workflow):
+                lines.append(
+                    f"dropped dependency {ref.source_workflow}.{ref.output_field} → "
+                    f"{ref.target_workflow}.{ref.input_field}"
+                )
+            else:
+                kept_refs.append(ref)
+        project.cross_references = kept_refs
+        return lines
+
+    @staticmethod
+    def _new_segment(
+        project: CompilationProject, slug: str, spec: WorkflowSpec, body: str
+    ) -> WorkflowSegment:
+        """Mint a segment for a workflow added by an edit request."""
+        existing = {segment.id for segment in project.segments}
+        counter = 1
+        while f"w{counter}" in existing:
+            counter += 1
+        return WorkflowSegment(
+            id=f"w{counter}",
+            slug=slug,
+            name=spec.metadata.name,
+            purpose=spec.metadata.purpose,
+            text=body,
+            sliced=True,
+        )
+
+    @staticmethod
+    def _project_context(project: CompilationProject) -> str:
+        """Compact wiring context for the edit-interpreter prompt."""
+        lines = ["Workflows: " + ", ".join(sorted(s.slug for s in project.specs))]
+        if project.triggers:
+            lines.append("Triggers:")
+            lines.extend(
+                f"- {t.source_workflow} starts {t.target_workflow} "
+                f"({t.mode.value}{', when ' + t.condition if t.condition else ''})"
+                for t in project.triggers
+            )
+        if project.cross_references:
+            lines.append("Dependencies (output → input):")
+            lines.extend(
+                f"- {r.source_workflow}.{r.output_field} → "
+                f"{r.target_workflow}.{r.input_field}"
+                for r in project.cross_references
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _dropped_count(summary_lines: list[str]) -> int:
+        """Total dropped-operation count reported by the appliers' notes."""
+        return sum(
+            int(match.group(1))
+            for line in summary_lines
+            for match in re.finditer(r"(\d+) dropped", line)
+        )
+
+    @classmethod
+    def _classify_drops(
+        cls,
+        applier: EditPatchApplier,
+        spec: WorkflowSpec,
+        patches: list[Patch],
+        document_text: str,
+    ) -> tuple[list[str], list[str]]:
+        """Attribute drops to individual patches by cumulative single-patch replay.
+
+        Returns ``(benign, fatal)`` descriptions. A drop is benign only when it
+        is an ADD whose value already exists in the spec at that point — the
+        requested end-state already holds (the interpreter routinely emits
+        supporting adds like "ensure this system is listed"). Everything else
+        (unknown id, unmatched modify/remove old-value, empty payload) is fatal.
+
+        The appliers are pure, so replaying the same patch sequence one at a
+        time reproduces the batch outcome per patch (a patch that referenced a
+        not-yet-rebuilt element may diverge in its pruned references, but drop
+        attribution — decided before the rebuild — is unaffected).
+        """
+        benign: list[str] = []
+        fatal: list[str] = []
+        working = spec
+        for patch in patches:
+            already_present = patch.action == PatchAction.ADD and cls._add_value_present(
+                working, patch
+            )
+            working, lines, _ = applier.apply(working, [patch], document_text)
+            if not cls._dropped_count(lines):
+                continue
+            payload = json.dumps(patch.payload, ensure_ascii=False, default=str)
+            if len(payload) > 160:
+                payload = payload[:157] + "..."
+            entry = f"{patch.action.value} {patch.target} {payload}"
+            (benign if already_present else fatal).append(entry)
+        return benign, fatal
+
+    @staticmethod
+    def _add_value_present(spec: WorkflowSpec, patch: Patch) -> bool:
+        """Whether an ADD patch's value already exists in ``spec`` (case-insensitive).
+
+        Mirrors the duplicate checks in the deterministic appliers: structure
+        entities match on their label, scalar facts on the statement within the
+        category, metadata list fields on the item value.
+        """
+        kind = patch.target.partition(":")[0].strip().lower()
+        payload = patch.payload
+
+        def _val(*keys: str) -> str:
+            for key in keys:
+                raw = payload.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    return raw.strip().lower()
+            return ""
+
+        structure = spec.facts.structure
+        if kind in ("activity", "decision", "exception", "compensation", "event"):
+            label_keys = {"decision": ("question",), "exception": ("reason",)}.get(
+                kind, ("name",)
+            )
+            label = _val(*label_keys, "value")
+            if not label:
+                return False
+            if structure is None:
+                # Structureless spec: entity adds degrade to flat facts, so
+                # presence is a statement match within the category.
+                return any(
+                    fact.category.value == kind and fact.statement.lower() == label
+                    for fact in spec.facts.facts
+                )
+            nodes_by_kind: dict[str, list[Any]] = {
+                "activity": structure.activities,
+                "decision": structure.decisions,
+                "exception": structure.exceptions,
+                "compensation": structure.compensations,
+                "event": structure.events,
+            }
+            nodes = nodes_by_kind[kind]
+            labels = {
+                getattr(n, "question", None) or getattr(n, "reason", None)
+                or getattr(n, "name", "")
+                for n in nodes
+            }
+            return label in {str(text).lower() for text in labels}
+        if kind in ("input", "output", "rule", "api", "system", "timer", "retry"):
+            value = _val("value", "statement", "name")
+            return bool(value) and any(
+                fact.category.value == kind and fact.statement.lower() == value
+                for fact in spec.facts.facts
+            )
+        value = _val("value", "item", "name")
+        items = getattr(spec.metadata, kind, None)
+        if isinstance(items, list):
+            return value in {str(item).lower() for item in items}
+        return False
+
+    @staticmethod
+    def _bump_patch_version(version: str) -> str | None:
+        """``X.Y.Z`` → ``X.Y.(Z+1)``; ``None`` when ``version`` is not semver."""
+        match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version.strip())
+        if match is None:
+            return None
+        major, minor, patch = match.groups()
+        return f"{major}.{minor}.{int(patch) + 1}"
+
+    def _apply_trigger_op(self, project: CompilationProject, op: TriggerOp) -> str:
+        """Apply one trigger operation to the project wiring; return a summary line."""
+        slugs = {spec.slug for spec in project.specs}
+        source, target = op.source_workflow, op.target_workflow
+        for endpoint in (source, target):
+            if endpoint not in slugs:
+                raise CompilationError(
+                    f"Trigger operation references unknown workflow '{endpoint}'. "
+                    f"Known: {sorted(slugs)}."
+                )
+        existing_index = next(
+            (
+                i
+                for i, t in enumerate(project.triggers)
+                if t.source_workflow == source and t.target_workflow == target
+            ),
+            -1,
+        )
+        if op.action is WiringAction.ADD:
+            if existing_index != -1:
+                raise CompilationError(
+                    f"A trigger {source} → {target} already exists — use a modify "
+                    "entry instead."
+                )
+            trigger = self._trigger_payload(op, source, target)
+            project.triggers.append(trigger)
+            return f"added trigger {source} → {target} ({trigger.mode.value})"
+        if existing_index == -1:
+            raise CompilationError(
+                f"No trigger {source} → {target} to {op.action.value} — check the "
+                "edit request against the project's triggers."
+            )
+        if op.action is WiringAction.REMOVE:
+            project.triggers.pop(existing_index)
+            return f"removed trigger {source} → {target}"
+        trigger = self._trigger_payload(op, source, target)
+        project.triggers[existing_index] = trigger
+        return f"modified trigger {source} → {target}"
+
+    @staticmethod
+    def _trigger_payload(op: TriggerOp, source: str, target: str) -> WorkflowTrigger:
+        """The normalized, human-confirmed trigger carried by an add/modify op."""
+        if op.trigger is None:
+            raise CompilationError(
+                f"Trigger {op.action.value} for {source} → {target} carries no "
+                "trigger payload."
+            )
+        return op.trigger.model_copy(
+            update={
+                "source_workflow": source,
+                "target_workflow": target,
+                # The human asked for this wiring — it does not need a
+                # confirmation checkbox round-trip.
+                "user_confirmed": True,
+            }
+        )
+
+    @staticmethod
+    def _apply_xref_op(project: CompilationProject, op: XrefOp) -> str:
+        """Apply one cross-reference operation; return a summary line."""
+        if op.reference is None:
+            raise CompilationError(
+                f"Dependency {op.action.value} operation carries no reference payload."
+            )
+        ref = op.reference
+        slugs = {spec.slug for spec in project.specs}
+        for endpoint in (ref.source_workflow, ref.target_workflow):
+            if endpoint not in slugs:
+                raise CompilationError(
+                    f"Dependency operation references unknown workflow '{endpoint}'. "
+                    f"Known: {sorted(slugs)}."
+                )
+        label = (
+            f"{ref.source_workflow}.{ref.output_field} → "
+            f"{ref.target_workflow}.{ref.input_field}"
+        )
+
+        def key(r: CrossReference) -> tuple[str, str, str, str]:
+            return (r.source_workflow, r.output_field, r.target_workflow, r.input_field)
+
+        exact = next(
+            (i for i, r in enumerate(project.cross_references) if key(r) == key(ref)),
+            -1,
+        )
+        if op.action is WiringAction.ADD:
+            if exact != -1:
+                raise CompilationError(f"Dependency {label} already exists.")
+            project.cross_references.append(
+                ref.model_copy(update={"user_confirmed": True})
+            )
+            return f"added dependency {label}"
+        if op.action is WiringAction.REMOVE:
+            if exact == -1:
+                raise CompilationError(f"No dependency {label} to remove.")
+            project.cross_references.pop(exact)
+            return f"removed dependency {label}"
+        # MODIFY: replace the reference between the same workflow pair. When the
+        # pair has several links, disambiguate by matching either endpoint field.
+        candidates = [
+            i
+            for i, r in enumerate(project.cross_references)
+            if r.source_workflow == ref.source_workflow
+            and r.target_workflow == ref.target_workflow
+        ]
+        if len(candidates) > 1:
+            candidates = [
+                i
+                for i in candidates
+                if project.cross_references[i].output_field == ref.output_field
+                or project.cross_references[i].input_field == ref.input_field
+            ]
+        if len(candidates) != 1:
+            raise CompilationError(
+                f"Cannot identify which dependency between {ref.source_workflow} "
+                f"and {ref.target_workflow} to modify — remove and re-add it instead."
+            )
+        project.cross_references[candidates[0]] = ref.model_copy(
+            update={"user_confirmed": True}
+        )
+        return f"modified dependency {label}"
 
     # ------------------------------------------------------------------ #
     # Spec-review diagrams (deterministic preview + on-demand CVPA)

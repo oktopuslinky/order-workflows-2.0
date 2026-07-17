@@ -534,10 +534,10 @@ MockProvider (llm/providers/mock.py) — returns queued/canned responses (no net
 - **Auth:** `_auth_headers` adds `Authorization: Bearer <key>` from a `SecretStr` (so the key won't
   print).
 - **Provider selection** is data-driven via `ProviderFactory` (`llm/factory.py`): providers register
-  under a name (`local-fallback` (default), `local`, `nemotron`, `openai-compatible`, `mock`);
+  under a name (`nemotron` (default), `local`, `local-fallback`, `openai-compatible`, `mock`);
   `factory.from_settings()` builds the one named in `.env`. **Adding a new vendor never touches agent
   or compiler code** — you register a builder.
-- **Local eGPU gateway + fallback (default).** `local-fallback` makes a local gateway the primary LLM
+- **Local eGPU gateway + fallback (opt-in).** `local-fallback` makes a local gateway the primary LLM
   and Nemotron the automatic safety net. The gateway (`GatewaySessionProvider`) is OpenAI-compatible
   for chat but authenticates with **email+password** (`LLM_GATEWAY_EMAIL`/`LLM_GATEWAY_PASSWORD`) —
   it logs in lazily, replays the session as a bearer token, refreshes before expiry, and re-logs-in
@@ -789,9 +789,27 @@ The pieces, and where they live:
   runs CVPA → Temporal design → code; below it the workflow stays `PENDING` (the classic
   `approve <workflow-id>` is the manual override) and the project is marked `NEEDS_ATTENTION`.
 
+- **Edit requests (changing compiled workflows later).** `edit_specs` applies a structured
+  **edit-request document** (`docs/EDIT_FORMAT_GUIDE.md`): `spec/edit_ingest.py` parses the
+  skeleton deterministically and fails fast (unknown slug, unknown block, reserved split/merge
+  syntax — all before any LLM call); `agents/edit_interpreter.py` translates each section's
+  natural-language bullets into an `EditPlan` (`models/edit.py` — `Patch`es plus typed
+  `TriggerOp`/`XrefOp` wiring ops); `spec/edit_applier.py` applies them with **human authority**
+  (`SpecPatchApplier(human_authority=True)`): no grounding requirement on adds (they become
+  `human_provided`), removals honored even for human-provided or referenced elements (dangling
+  references pruned). The edit is **atomic** — worked on a deep copy, aborted whole on any
+  unresolved entry or inapplicable patch. Success bumps each edited spec's version, appends an
+  `EditRecord` to `project.edit_log` (the audit trail), and resets the stage to `SPEC_DRAFTED`
+  so the normal validate → approve-spec gate re-runs over the changed specs. `## Add Workflow:`
+  bodies run through the standard discovery + facts pipeline (and are appended to
+  `document_text` so grounding passes can see them); `## Remove Workflow:` drops the spec and
+  every trigger/dependency touching it.
+
 CLI: `compile <doc> --spec-dir <dir>` → edit the files → `validate <project-id>` →
-`approve-spec <project-id> [--out-dir gen]`. HTTP: `POST /projects/compile`,
-`GET/PUT /projects/{id}/spec`, `POST /projects/{id}/validate`, `POST /projects/{id}/approve`.
+`approve-spec <project-id>` (code lands under `./generated/<project-id>/<slug>/`); later
+changes via `edit <project-id> <edit-file.md>` → `validate` → `approve-spec`. HTTP:
+`POST /projects/compile`, `GET/PUT /projects/{id}/spec`, `POST /projects/{id}/edit`,
+`POST /projects/{id}/validate`, `POST /projects/{id}/approve`.
 
 ### Cross-workflow triggers (standalone workflows, explicit starts)
 

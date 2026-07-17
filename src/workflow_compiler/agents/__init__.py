@@ -7,6 +7,7 @@ from workflow_compiler.agents.discovery import (
     WorkflowDiscovery,
     WorkflowDiscoveryAgent,
 )
+from workflow_compiler.agents.edit_interpreter import EditInterpreterAgent
 from workflow_compiler.agents.fact_extraction import (
     FactExtraction,
     FactExtractionAgent,
@@ -39,6 +40,7 @@ __all__ = [
     "METADATA_REVIEW_SPEC",
     "CVPAClassifierAgent",
     "CVPAOutput",
+    "EditInterpreterAgent",
     "FactExtraction",
     "FactExtractionAgent",
     "FactsPatchApplier",

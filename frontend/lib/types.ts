@@ -110,6 +110,17 @@ export interface WorkflowSegment {
   sliced: boolean;
 }
 
+export interface EditRecord {
+  edit_id: string;
+  document: string;
+  author: string | null;
+  created_at: string;
+  workflows_added: string[];
+  workflows_removed: string[];
+  summary: Record<string, string[]>;
+  [key: string]: unknown;
+}
+
 export interface CompilationProject {
   project_id: string;
   document_text: string;
@@ -121,6 +132,7 @@ export interface CompilationProject {
   workflow_ids: Record<string, string>;
   warnings: string[];
   validation_findings: Record<string, SpecFinding[]>;
+  edit_log: EditRecord[];
   stage: ProjectStage;
   created_at: string;
   updated_at: string;

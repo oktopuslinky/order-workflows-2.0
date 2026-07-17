@@ -14,6 +14,13 @@ from workflow_compiler.models.cvpa import (
     CVPANodeAssignment,
     CVPAPhaseSummary,
 )
+from workflow_compiler.models.edit import (
+    EditPlan,
+    EditRecord,
+    TriggerOp,
+    WiringAction,
+    XrefOp,
+)
 from workflow_compiler.models.enums import (
     ApprovalStatus,
     CompilationStage,
@@ -133,6 +140,12 @@ __all__ = [
     "Patch",
     "PatchAction",
     "ReviewResult",
+    # edit (edit-request vocabulary + audit log)
+    "EditPlan",
+    "EditRecord",
+    "TriggerOp",
+    "WiringAction",
+    "XrefOp",
     # cvpa
     "CVPAClassification",
     "CVPANodeAssignment",

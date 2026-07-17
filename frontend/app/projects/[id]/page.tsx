@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { APPROVE_STEPS, STAGE_LABEL, STAGE_TONE } from "@/lib/format";
 import { DiagramPanel } from "@/components/DiagramPanel";
+import { EditRequestPanel } from "@/components/EditRequestPanel";
 import { FindingsPanel } from "@/components/FindingsPanel";
 import { ResultsView } from "@/components/ResultsView";
 import { RunningOverlay } from "@/components/RunningOverlay";
@@ -87,6 +88,7 @@ function Workspace({
   const [postValidate, setPostValidate] = useState<Record<string, string>>({});
   const [acceptIncomplete, setAcceptIncomplete] = useState(false);
   const [allowUnconfirmed, setAllowUnconfirmed] = useState(false);
+  const [showEditPanel, setShowEditPanel] = useState(false);
 
   // Re-seed buffers only when the set of slugs changes (a fresh project load).
   const seededFor = useRef(proj.project_id);
@@ -123,6 +125,23 @@ function Workspace({
     },
   });
 
+  const editRequest = useMutation({
+    mutationFn: ({ document, author }: { document: string; author: string | null }) => {
+      // Snapshot so the diff view shows what the edit changed per spec.
+      setPreValidate({ ...buffers });
+      return api.editProject(proj.project_id, document, {
+        author: author ?? undefined,
+      });
+    },
+    onSuccess: (resp) => {
+      applyServer(resp);
+      setPostValidate({ ...resp.spec_markdown });
+      setDirty(true); // the edit re-arms the gate: validate must run again
+      setShowEditPanel(false);
+      onServerUpdate();
+    },
+  });
+
   const approve = useMutation({
     mutationFn: () =>
       api.approve(proj.project_id, {
@@ -151,7 +170,8 @@ function Workspace({
     proj.spec_approval_status === "approved" ||
     Object.keys(proj.workflow_ids).length > 0;
   const blockedSlugs = slugs.filter((slug) => !proj.workflow_ids[slug]);
-  const busy = save.isPending || validate.isPending || approve.isPending;
+  const busy =
+    save.isPending || validate.isPending || approve.isPending || editRequest.isPending;
   // Flow rule: Approve only after a validate has run on the current content.
   const canApprove = !dirty && !busy;
 
@@ -202,6 +222,13 @@ function Workspace({
 
         <div className="ml-auto flex items-center gap-2">
           <button
+            onClick={() => setShowEditPanel(true)}
+            disabled={busy}
+            className="btn btn-ghost"
+          >
+            Edit request
+          </button>
+          <button
             onClick={() => save.mutate()}
             disabled={busy}
             className="btn btn-ghost"
@@ -242,6 +269,16 @@ function Workspace({
           {blockedSlugs.length === 1 ? " it" : " them"}. Fix the blocking findings and
           approve again.
         </p>
+      )}
+
+      {showEditPanel && (
+        <EditRequestPanel
+          editLog={proj.edit_log ?? []}
+          busy={editRequest.isPending}
+          error={editRequest.error ? (editRequest.error as ApiError).message : null}
+          onSubmit={(document, author) => editRequest.mutate({ document, author })}
+          onClose={() => setShowEditPanel(false)}
+        />
       )}
 
       {tab === "results" ? (

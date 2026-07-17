@@ -64,6 +64,17 @@ _DEMO_RESPONSES: dict[str, dict[str, Any]] = {
     },
     "ReviewResult": {},
     "CVPAOutput": {},
+    "EditPlan": {
+        "patches": [
+            {
+                "action": "add",
+                "target": "rule",
+                "payload": {"value": "Mock-edited: refunds require manager approval"},
+                "evidence": {"quote": "mock edit request entry"},
+            }
+        ],
+        "note": "canned mock edit plan",
+    },
     "TemporalDesignOutput": {
         "workflow_name": "DemoOrderWorkflow",
         "task_queue": "demo-orders",

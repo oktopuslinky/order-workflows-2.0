@@ -6,6 +6,7 @@ Project endpoints (the compile → validate → approve pipeline):
 - ``GET  /projects``                — list stored project ids.
 - ``GET  /projects/{id}``           — load a project + rendered spec files.
 - ``PUT  /projects/{id}/spec``      — fold edited spec Markdown back in (no LLM).
+- ``POST /projects/{id}/edit``      — apply an edit-request document, re-arm the gate.
 - ``POST /projects/{id}/validate``  — run the spec validator passes.
 - ``POST /projects/{id}/approve``   — approve specs, compile every workflow.
 
@@ -40,6 +41,7 @@ from workflow_compiler.api.schemas import (
     LocalModelList,
     ProjectApproveRequest,
     ProjectCompileRequest,
+    ProjectEditRequest,
     ProjectFilesResponse,
     ProjectIdList,
     ProjectResponse,
@@ -261,6 +263,25 @@ def create_app() -> FastAPI:
         """Fold edited spec Markdown back onto the structured specs (no LLM)."""
         project = await _guard(
             compiler.update_specs(project_id, request.spec_markdown)
+        )
+        return await _project_response(project, compiler)
+
+    @app.post(
+        "/projects/{project_id}/edit", response_model=ProjectResponse, tags=["projects"]
+    )
+    async def edit_project(
+        project_id: str,
+        request: ProjectEditRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+    ) -> ProjectResponse:
+        """Apply a workflow edit-request document; the project re-enters the spec gate."""
+        project = await _guard(
+            compiler.edit_specs(
+                project_id,
+                request.edit_document,
+                workflows=request.workflows,
+                author=request.author,
+            )
         )
         return await _project_response(project, compiler)
 

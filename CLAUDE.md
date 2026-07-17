@@ -93,6 +93,19 @@ picture before changing pipeline behavior.
   `graph_health_threshold`, default 0.9); the classic `approve` stays as the manual override, and
   the readiness checklist is absorbed into the spec's Open Questions section.
 
+- **Edit requests change compiled workflows through the same gate.** `edit_specs`
+  (`project_compiler.py`) applies a structured edit-request document (format:
+  `docs/EDIT_FORMAT_GUIDE.md`): `spec/edit_ingest.py` parses the skeleton deterministically and
+  fails fast before any LLM call; `agents/edit_interpreter.py` translates the NL entries into an
+  `EditPlan` (`models/edit.py` — `Patch`es + typed trigger/xref ops); `spec/edit_applier.py`
+  applies them via `SpecPatchApplier(human_authority=True)` (adds skip grounding and become
+  `human_provided`; removals are honored, dangling refs pruned by `validated()`). Edits are
+  **atomic** (deep copy, all-or-nothing), append an `EditRecord` to `project.edit_log`, bump the
+  spec version, and reset the project to `SPEC_DRAFTED` — validate/approve must re-run. Never
+  weaken the default (review-mode) applier to serve the edit path; the two modes are deliberate.
+  Split/merge syntax is reserved (parser rejects it) for a future phase. Generated code defaults
+  under `./generated/<project-id>/<slug>/`.
+
 ## Conventions
 
 - Pydantic v2 models everywhere; Python 3.12+; `mypy --strict` must pass (the pydantic mypy plugin

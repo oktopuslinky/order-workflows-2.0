@@ -59,6 +59,20 @@ class SpecUpdateRequest(BaseModel):
     )
 
 
+class ProjectEditRequest(BaseModel):
+    """Request body for applying a workflow edit-request document."""
+
+    edit_document: str = Field(
+        ..., description="The edit-request Markdown (see docs/EDIT_FORMAT_GUIDE.md)."
+    )
+    workflows: list[str] | None = Field(
+        default=None, description="Restrict edits to these slugs (default: any)."
+    )
+    author: str | None = Field(
+        default=None, description="Author recorded in the project's edit log."
+    )
+
+
 class ProjectApproveRequest(BaseModel):
     """Request body for approving a project's specs."""
 

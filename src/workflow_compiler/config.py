@@ -29,11 +29,11 @@ class Settings(BaseSettings):
     )
 
     llm_provider: str = Field(
-        default="local-fallback",
+        default="nemotron",
         description=(
             "Active LLM provider name (registered in ProviderFactory). Default "
-            "'local-fallback' uses the local eGPU gateway as primary and the Nemotron "
-            "API as automatic fallback."
+            "'nemotron' uses the NVIDIA cloud API. Opt into the local eGPU gateway "
+            "with 'local', or 'local-fallback' (eGPU primary, Nemotron fallback)."
         ),
     )
     llm_model: str = Field(

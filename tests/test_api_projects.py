@@ -165,3 +165,47 @@ def test_project_files_returns_zip_ready_tree(client: TestClient) -> None:
     # ... and the shared project glue files sit at the root.
     assert "contracts.py" in paths
     assert "README.md" in paths
+
+
+def test_project_edit_applies_and_rearms_gate(client: TestClient) -> None:
+    compiled = client.post("/projects/compile", json={"document_text": _DOCUMENT})
+    project_id = compiled.json()["project"]["project_id"]
+
+    edit_doc = (
+        "# Edit Request\n\n"
+        "## Workflow: demo-order-workflow\n\n"
+        "### Add\n\n"
+        "- A business rule: refunds require manager approval.\n\n"
+        "## Reason\n\nAPI test.\n"
+    )
+    response = client.post(
+        f"/projects/{project_id}/edit",
+        json={"edit_document": edit_doc, "author": "devansh"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    # The mock's canned EditPlan added a rule; the spec markdown reflects it.
+    assert "Mock-edited" in body["spec_markdown"]["demo-order-workflow"]
+    assert body["project"]["stage"] == "spec_drafted"
+    log = body["project"]["edit_log"]
+    assert len(log) == 1
+    assert log[0]["author"] == "devansh"
+    assert log[0]["resolved_patches"]["demo-order-workflow"]
+
+
+def test_project_edit_unknown_slug_is_400(client: TestClient) -> None:
+    compiled = client.post("/projects/compile", json={"document_text": _DOCUMENT})
+    project_id = compiled.json()["project"]["project_id"]
+
+    edit_doc = "# Edit Request\n\n## Workflow: ghost\n\n### Add\n- x\n"
+    response = client.post(
+        f"/projects/{project_id}/edit", json={"edit_document": edit_doc}
+    )
+    assert response.status_code == 400
+    assert "Unknown workflow slug" in response.json()["detail"]
+
+
+def test_project_edit_unknown_project_is_404(client: TestClient) -> None:
+    edit_doc = "# Edit Request\n\n## Remove Workflow: anything\n"
+    response = client.post("/projects/nope/edit", json={"edit_document": edit_doc})
+    assert response.status_code == 404

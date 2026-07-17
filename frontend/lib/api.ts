@@ -99,6 +99,21 @@ export const api = {
       body: JSON.stringify({ spec_markdown: specMarkdown }),
     }),
 
+  editProject: (
+    id: string,
+    editDocument: string,
+    opts: { workflows?: string[]; author?: string } = {},
+  ) =>
+    request<ProjectResponse>(`/projects/${encodeURIComponent(id)}/edit`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        edit_document: editDocument,
+        workflows: opts.workflows ?? null,
+        author: opts.author ?? null,
+      }),
+    }),
+
   validate: (id: string, specMarkdown?: Record<string, string>) =>
     request<ProjectResponse>(`/projects/${encodeURIComponent(id)}/validate`, {
       method: "POST",

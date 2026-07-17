@@ -504,3 +504,22 @@ async def test_edit_specs_names_dropped_operations() -> None:
 
     stored = await compiler.load_project(project.project_id)
     assert stored.model_dump(mode="json") == before  # atomic: nothing applied
+
+
+async def test_write_spec_files_clears_removed_workflow_file(tmp_path) -> None:
+    """A removed workflow's stale spec file is deleted on re-render."""
+    remove_doc = (
+        "# Edit Request\n\n## Remove Workflow: account-provisioning\n\n"
+        "## Reason\n\nRetired.\n"
+    )
+    provider = MockProvider(structured=_front_end_queue())
+    compiler = _compiler(provider)
+    project = await compiler.compile_document(_DOCUMENT)
+    compiler.write_spec_files(project, tmp_path)
+    assert (tmp_path / "account-provisioning.md").exists()
+
+    project = await compiler.edit_specs(project.project_id, remove_doc)
+    compiler.write_spec_files(project, tmp_path)
+
+    assert not (tmp_path / "account-provisioning.md").exists()
+    assert (tmp_path / "customer-onboarding.md").exists()

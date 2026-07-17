@@ -169,3 +169,57 @@ class TestReviewModeRegression:
         assert structure is not None
         assert any(a.id == "a2" for a in structure.activities)
         assert any("referenced by other elements" in f for f in findings)
+
+
+class TestHumanAuthorityFuzzyLookup:
+    """Truncated modify/remove statements match uniquely in edit mode only."""
+
+    def test_truncated_modify_old_matches_unique_statement(self) -> None:
+        spec = _spec()
+        patch = Patch(
+            action=PatchAction.MODIFY,
+            target="rule",
+            # "old" is a truncation of "Inventory must be reserved before payment".
+            payload={"old": "Inventory must be reserved",
+                     "new": "Inventory must be reserved within 5 minutes"},
+        )
+        new_spec, _summary, _warnings = EditPatchApplier().apply(spec, [patch], _DOC)
+        statements = [f.statement for f in new_spec.facts.facts
+                      if f.category is FactCategory.RULE]
+        assert statements == ["Inventory must be reserved within 5 minutes"]
+
+    def test_truncated_remove_matches_unique_statement(self) -> None:
+        spec = _spec()
+        patch = Patch(
+            action=PatchAction.REMOVE,
+            target="rule",
+            payload={"value": "Inventory must be reserved"},
+        )
+        new_spec, _summary, _warnings = EditPatchApplier().apply(spec, [patch], _DOC)
+        assert all(f.category is not FactCategory.RULE for f in new_spec.facts.facts)
+
+    def test_ambiguous_truncation_does_not_match(self) -> None:
+        spec = _spec()
+        spec.facts.facts.append(
+            WorkflowFact(id="rule-2",
+                         statement="Inventory must be reserved before shipping",
+                         category=FactCategory.RULE, confidence=0.6)
+        )
+        patch = Patch(
+            action=PatchAction.REMOVE,
+            target="rule",
+            payload={"value": "Inventory must be reserved"},
+        )
+        _new_spec, _summary, _warnings = EditPatchApplier().apply(spec, [patch], _DOC)
+        # Two candidates → no match → the patch is dropped (reported upstream).
+        assert "1 dropped" in " ".join(_summary)
+
+    def test_review_mode_lookup_stays_exact(self) -> None:
+        spec = _spec()
+        patch = Patch(
+            action=PatchAction.REMOVE,
+            target="rule",
+            payload={"value": "Inventory must be reserved"},
+        )
+        _new_spec, _findings, note = SpecPatchApplier().apply(spec, [patch], _DOC)
+        assert "1 dropped" in note

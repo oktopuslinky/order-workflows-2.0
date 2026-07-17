@@ -47,7 +47,18 @@ This file lists exactly what is verified, what still needs to be tested, and wha
   succeeded: **project `3f6be187-d4d7-4f0d-9f90-3eb84a43d70f`**, slug
   `order-fulfillment-workflow` (matches `examples/order_edit_request.md`), stage `spec_drafted`.
 
-### TODO — Tier 2 scenarios 2–6 (real cloud Nemotron; `--provider nemotron` is now the default so the flag is optional)
+### DONE (2026-07-17) — Tier 2 scenarios 2–6 all passed against real cloud Nemotron
+
+All six scenarios below were executed and verified on 2026-07-17. Fixes that came out of
+them: dropped operations are now named in the error; a satisfied ADD skips loudly instead of
+aborting; truncated modify/remove statements match via a unique-substring fallback (human-
+authority mode only); structureless specs no longer lose their flat facts on edit;
+`write_spec_files` deletes the spec file of a removed workflow; `_project_context` renders
+trigger input maps. Canonical multi-workflow example:
+`examples/ideal_multi_workflow_edit_request.md`. The original scenario scripts are kept
+below for reference.
+
+### Original scenario scripts (2–6)
 
 Run from the repo root. Project id above is live in `.workflow_state/projects/`.
 
@@ -193,9 +204,12 @@ is how the lessons persist.
 - `.env` now says `WORKFLOW_COMPILER_LLM_PROVIDER=nemotron`. The eGPU box is NOT used unless
   you pass `--provider local` / `local-fallback` (gateway auth via `LLM_GATEWAY_EMAIL`/
   `LLM_GATEWAY_PASSWORD`; models list at `/auth/config`).
-- The `edit` flow errors on *any* dropped patch ("could not be applied") — including an ADD of
-  something already present. That is deliberate (human edits must not silently vanish); tell
-  users to delete satisfied entries from the doc and re-run.
+- The `edit` flow errors on any *fatal* dropped patch ("could not be applied": unknown id,
+  unmatched modify/remove old-value) and now names the dropped operations in the error. An ADD
+  whose value is already present is treated as satisfied and skipped with a loud
+  `skipped (already present)` summary line — Tier 2 testing showed the interpreter routinely
+  emits supporting adds (e.g. "ensure this system is listed") that no edit-document change
+  could avoid, so aborting on them made real edits un-appliable.
 - `mypy src` is not baseline-clean (35 pre-existing errors). Diff against baseline; don't
   chase them. Use the `.venv` interpreter and `PYTHONIOENCODING=utf-8` when piping CLI output.
 - Never weaken the default (review-mode) `SpecPatchApplier` to serve the edit path — the

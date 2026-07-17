@@ -18,6 +18,9 @@ How it is processed:
    need no support in the original document (they are marked `[human]`), and your
    removals are honored. An entry the model cannot map aborts the whole edit —
    **edit requests are atomic**; nothing is applied unless everything applies.
+   The one exception: an **add whose value is already in the spec** is treated as
+   satisfied — it is skipped with a `skipped (already present)` line in the edit
+   summary instead of aborting the request.
 4. Every applied edit is recorded in the project's append-only **edit log**, and
    each edited workflow's `Version` is bumped (`0.1.0` → `0.1.1`).
 
@@ -208,7 +211,11 @@ sections plus explicit `### Triggers` / `### Dependencies` rewiring.
 Carrier API flakiness (OPS-142).
 ```
 
-A fuller working example lives at `examples/order_edit_request.md`.
+A fuller working example lives at `examples/order_edit_request.md`. The canonical
+**multi-workflow** example — every operation class in one document, including
+trigger/dependency rewiring and whole-workflow add/remove — is
+`examples/ideal_multi_workflow_edit_request.md` (written against the project
+compiled from `examples/ideal_multi_workflow.md`).
 
 ---
 

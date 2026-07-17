@@ -193,7 +193,8 @@ natural-language entries that an LLM translates into deterministic patches again
 specs. Your changes carry **human authority** — additions need no support in the original
 document (they are marked `[human]`) and removals are honored. The edit is **atomic**: an entry
 that cannot be translated or applied aborts the whole request with the offending entries listed,
-and nothing changes.
+and nothing changes. (An addition whose value is already in the spec is treated as satisfied and
+skipped with a `skipped (already present)` summary line rather than aborting.)
 
 On success the edited workflows' versions are bumped, an `EditRecord` is appended to the
 project's audit log, the spec files are re-written, and the project returns to the spec gate —

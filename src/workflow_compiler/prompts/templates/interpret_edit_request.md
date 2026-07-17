@@ -59,7 +59,10 @@ lists the existing wiring and all workflow slugs.
   "mode": "blocking"|"fire_and_forget", "condition": <string or null>,
   "input_map": [{"target_input": ..., "source": "workflow_input"|"step_output"|"constant",
   "source_ref": ..., "type": ...}], "result_binding": <string or null> }}.
-  For "remove", omit "trigger".
+  For "remove", omit "trigger". For "modify", the payload REPLACES the whole
+  trigger: carry over every field the edit does not change (mode, condition,
+  input_map, result_binding) from the existing trigger shown in the project
+  context — an omitted field is lost, not preserved.
 - xref_ops entry: {"action": "add"|"remove"|"modify", "reference":
   {"source_workflow": ..., "output_field": ..., "target_workflow": ...,
   "input_field": ..., "output_type": ..., "input_type": ..., "description": ...}}.
@@ -72,7 +75,9 @@ Entry: 'After "Release inventory", the system notifies the warehouse team via th
 
 Entry: '"Deprovision service" retry count changes from 3 to 5.'
 → {"action": "modify", "target": "retry", "payload": {"old": "Deprovision service: retry up to 3 times with exponential backoff", "new": "Deprovision service: retry up to 5 times with exponential backoff"}, "evidence": {"quote": "\"Deprovision service\" retry count changes from 3 to 5."}}
-  (use the EXACT current statement from the specification as "old")
+  (copy the current statement char-for-char from the specification as "old" —
+  including any "BR-n:" prefix and trailing qualifiers like "starting at 2
+  seconds"; a shortened or paraphrased "old" fails to match and aborts the edit)
 
 Entry: 'Remove the manager-approval rule for orders above $1,000.'
 → {"action": "remove", "target": "rule", "payload": {"value": "Orders above $1,000 require manager approval"}, "evidence": {"quote": "Remove the manager-approval rule for orders above $1,000."}}

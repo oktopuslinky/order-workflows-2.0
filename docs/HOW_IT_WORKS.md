@@ -798,7 +798,9 @@ The pieces, and where they live:
   (`SpecPatchApplier(human_authority=True)`): no grounding requirement on adds (they become
   `human_provided`), removals honored even for human-provided or referenced elements (dangling
   references pruned). The edit is **atomic** — worked on a deep copy, aborted whole on any
-  unresolved entry or inapplicable patch. Success bumps each edited spec's version, appends an
+  unresolved entry or inapplicable patch (the error names the dropped operations; an add whose
+  value is already present is skipped as satisfied instead, with a summary line). Success bumps
+  each edited spec's version, appends an
   `EditRecord` to `project.edit_log` (the audit trail), and resets the stage to `SPEC_DRAFTED`
   so the normal validate → approve-spec gate re-runs over the changed specs. `## Add Workflow:`
   bodies run through the standard discovery + facts pipeline (and are appended to

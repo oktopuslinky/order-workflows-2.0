@@ -577,6 +577,25 @@ class FactsPatchApplier:
             return next((i for i, f in enumerate(scalar)
                          if f.category == category and f.statement.lower() == low), -1)
 
+        def index_lookup(value: str) -> int:
+            """Locate an existing statement for modify/remove.
+
+            Exact (case-insensitive) first. In human-authority mode the value
+            arrived through an LLM that may have truncated the statement it was
+            told to copy, so fall back to a unique substring match — never used
+            for duplicate detection on adds, and never in review mode.
+            """
+            low = value.lower()
+            exact = index_ci(value)
+            if exact != -1 or self._require_grounding or len(low) < 6:
+                return exact
+            candidates = [
+                i for i, f in enumerate(scalar)
+                if f.category == category
+                and (low in f.statement.lower() or f.statement.lower() in low)
+            ]
+            return candidates[0] if len(candidates) == 1 else -1
+
         if patch.action == PatchAction.ADD:
             value = _payload_value(patch, "value", "statement", "name", "question", "reason")
             if not value or index_ci(value) != -1:
@@ -593,7 +612,7 @@ class FactsPatchApplier:
             )
             return True
         if patch.action == PatchAction.REMOVE:
-            idx = index_ci(
+            idx = index_lookup(
                 _payload_value(patch, "value", "statement", "name", "question", "reason")
             )
             if idx == -1:
@@ -603,7 +622,7 @@ class FactsPatchApplier:
         if patch.action == PatchAction.MODIFY:
             old = _payload_value(patch, "old", "from", "value", "statement")
             new = _payload_value(patch, "new", "to")
-            idx = index_ci(old)
+            idx = index_lookup(old)
             if idx == -1 or not new:
                 return False
             scalar[idx] = scalar[idx].model_copy(update={"statement": new})

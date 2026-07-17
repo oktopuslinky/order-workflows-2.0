@@ -735,11 +735,16 @@ class ProjectCompiler:
         lines = ["Workflows: " + ", ".join(sorted(s.slug for s in project.specs))]
         if project.triggers:
             lines.append("Triggers:")
-            lines.extend(
-                f"- {t.source_workflow} starts {t.target_workflow} "
-                f"({t.mode.value}{', when ' + t.condition if t.condition else ''})"
-                for t in project.triggers
-            )
+            for t in project.triggers:
+                inputs = ", ".join(
+                    f"{m.target_input}={m.source.value}:{m.source_ref}"
+                    for m in t.input_map
+                )
+                lines.append(
+                    f"- {t.source_workflow} starts {t.target_workflow} "
+                    f"({t.mode.value}{', when ' + t.condition if t.condition else ''}"
+                    f"{'; inputs: ' + inputs if inputs else ''})"
+                )
         if project.cross_references:
             lines.append("Dependencies (output → input):")
             lines.extend(
@@ -1328,6 +1333,16 @@ class ProjectCompiler:
         """Write ``overview.md`` plus one ``<slug>.md`` per spec; return the paths."""
         root = Path(directory)
         root.mkdir(parents=True, exist_ok=True)
+        # Clear stale files of workflows an edit removed, so nobody edits a
+        # spec the project no longer contains.
+        current_slugs = {spec.slug for spec in project.specs}
+        for record in project.edit_log:
+            for removed_slug in record.workflows_removed:
+                if removed_slug in current_slugs:
+                    continue  # re-added later under the same slug
+                stale = root / f"{removed_slug}.md"
+                if stale.exists():
+                    stale.unlink()
         paths: list[Path] = []
         for spec in project.specs:
             path = root / f"{spec.slug}.md"

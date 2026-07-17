@@ -100,7 +100,9 @@ picture before changing pipeline behavior.
   `EditPlan` (`models/edit.py` — `Patch`es + typed trigger/xref ops); `spec/edit_applier.py`
   applies them via `SpecPatchApplier(human_authority=True)` (adds skip grounding and become
   `human_provided`; removals are honored, dangling refs pruned by `validated()`). Edits are
-  **atomic** (deep copy, all-or-nothing), append an `EditRecord` to `project.edit_log`, bump the
+  **atomic** (deep copy, all-or-nothing; a fatal dropped patch aborts with the dropped ops named,
+  while an add whose value already exists is skipped as satisfied with a summary line), append an
+  `EditRecord` to `project.edit_log`, bump the
   spec version, and reset the project to `SPEC_DRAFTED` — validate/approve must re-run. Never
   weaken the default (review-mode) applier to serve the edit path; the two modes are deliberate.
   Split/merge syntax is reserved (parser rejects it) for a future phase. Generated code defaults

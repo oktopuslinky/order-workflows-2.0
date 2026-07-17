@@ -18,9 +18,11 @@ the project exists.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +40,7 @@ from workflow_compiler.compiler import (
 from workflow_compiler.exceptions import (
     ApprovalError,
     CompilationError,
+    EditPreviewStaleError,
     WorkflowCompilerError,
 )
 from workflow_compiler.interfaces.llm import BaseLLMProvider
@@ -53,6 +56,7 @@ from workflow_compiler.models import (
     PatchAction,
     ProjectStage,
     Provenance,
+    ResolvedEdit,
     Severity,
     SpecFinding,
     SpecItem,
@@ -77,6 +81,20 @@ from workflow_compiler.spec import (
 )
 from workflow_compiler.spec.edit_ingest import EditRequestDoc, parse_edit_request
 from workflow_compiler.storage.project_store import FileProjectStore, ProjectStore
+
+
+@dataclass(frozen=True)
+class EditPreview:
+    """Result of :meth:`ProjectCompiler.preview_edit` — nothing was persisted.
+
+    ``project`` is the would-be post-edit project (a deep copy), ``record`` its
+    would-be audit entry, and ``resolved`` the replayable LLM artifacts to send
+    back via ``edit_specs(resolved=...)`` for an LLM-free confirm.
+    """
+
+    project: CompilationProject
+    record: EditRecord
+    resolved: ResolvedEdit
 
 if TYPE_CHECKING:
     from workflow_compiler.config import Settings
@@ -184,9 +202,11 @@ class ProjectCompiler:
         project.triggers = triggers
         project.warnings = warnings
         project.stage = ProjectStage.WORKFLOWS_DISCOVERED
+        elapsed = time.perf_counter() - started
+        self._record_timing(project, self._segmentation.name, elapsed)
         _emit(progress, ProgressEvent(
             phase="agent", name=self._segmentation.name, status="done", index=1, total=2,
-            seconds=time.perf_counter() - started, stage=project.stage.value,
+            seconds=elapsed, stage=project.stage.value,
         ))
 
         total = len(segments)
@@ -200,9 +220,11 @@ class ProjectCompiler:
                 segment.text, project_id=project.project_id
             )
             project.specs.append(self._build_spec(segment.slug, state))
+            elapsed = time.perf_counter() - seg_started
+            self._record_timing(project, name, elapsed)
             _emit(progress, ProgressEvent(
                 phase="agent", name=name, status="done", index=index, total=total,
-                seconds=time.perf_counter() - seg_started, stage=state.stage.value,
+                seconds=elapsed, stage=state.stage.value,
             ))
 
         project.stage = ProjectStage.SPEC_DRAFTED
@@ -302,9 +324,11 @@ class ProjectCompiler:
             gate, _state = self._gate_findings(project, current)
             findings.extend(gate)
             findings_by_slug[spec.slug] = findings
+            elapsed = time.perf_counter() - started
+            self._record_timing(project, name, elapsed)
             _emit(progress, ProgressEvent(
                 phase="review", name=name, status="done", index=index, total=total,
-                seconds=time.perf_counter() - started,
+                seconds=elapsed,
             ))
 
         # Deterministic (no-LLM) cross-workflow integrity pass: distribute its
@@ -468,6 +492,7 @@ class ProjectCompiler:
         author: str | None = None,
         persist: bool = True,
         progress: ProgressCallback | None = None,
+        resolved: ResolvedEdit | None = None,
     ) -> CompilationProject:
         """Apply a workflow edit-request document to the project's specs.
 
@@ -479,11 +504,116 @@ class ProjectCompiler:
         (stage ``SPEC_DRAFTED``, approval ``PENDING``) so the normal
         validate → approve-spec flow re-runs, and an :class:`EditRecord` is
         appended to the audit log.
+
+        Passing ``resolved`` (from :meth:`preview_edit`) confirms a preview:
+        the stored plans are applied verbatim with **no LLM calls**. A stale
+        blob — the project changed since the preview, or the document's
+        sections no longer match — raises :class:`EditPreviewStaleError`.
         """
         project = await self._projects.load(project_id)
+        working, _record, _resolved = await self._run_edit_pipeline(
+            project,
+            edit_document,
+            workflows=workflows,
+            author=author,
+            progress=progress,
+            resolved=resolved,
+        )
+        if persist:
+            await self._projects.save(working)
+        return working
+
+    async def preview_edit(
+        self,
+        project_id: str,
+        edit_document: str,
+        *,
+        workflows: list[str] | None = None,
+        author: str | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> EditPreview:
+        """Dry-run an edit request: full parse → interpret → apply, nothing stored.
+
+        Returns the would-be project, its audit record, and the
+        :class:`ResolvedEdit` blob that :meth:`edit_specs` replays at confirm
+        time without re-interpreting (see the fingerprint rule there).
+        """
+        project = await self._projects.load(project_id)
+        working, record, resolved_out = await self._run_edit_pipeline(
+            project,
+            edit_document,
+            workflows=workflows,
+            author=author,
+            progress=progress,
+            resolved=None,
+        )
+        return EditPreview(project=working, record=record, resolved=resolved_out)
+
+    @staticmethod
+    def _record_timing(project: CompilationProject, step: str, seconds: float) -> None:
+        """Accumulate a step's wall-clock seconds onto the project (time-saved metric)."""
+        project.stage_timings[step] = project.stage_timings.get(step, 0.0) + seconds
+
+    @staticmethod
+    def _fingerprint(
+        project: CompilationProject, edit_document: str, workflows: list[str] | None
+    ) -> str:
+        """Bind a preview to (project state, document, filter) — any change invalidates."""
+        doc_hash = hashlib.sha256(edit_document.encode("utf-8")).hexdigest()
+        payload = "|".join(
+            [
+                project.project_id,
+                project.updated_at.isoformat(),
+                doc_hash,
+                ",".join(sorted(workflows or [])),
+            ]
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _verify_resolved(
+        resolved: ResolvedEdit, expected_fingerprint: str, doc: EditRequestDoc
+    ) -> None:
+        """Reject a stale or mismatched preview blob before anything is applied."""
+        stale = EditPreviewStaleError(
+            "The project changed after this preview was generated — run preview again."
+        )
+        if resolved.fingerprint != expected_fingerprint:
+            raise stale
+        if set(resolved.plans) != {section.slug for section in doc.workflows}:
+            raise stale
+        if set(resolved.drafted_workflows) != {
+            section.slug for section in doc.add_workflows
+        }:
+            raise stale
+        if (resolved.project_plan is None) == bool(doc.project_bullets):
+            raise stale
+
+    async def _run_edit_pipeline(
+        self,
+        project: CompilationProject,
+        edit_document: str,
+        *,
+        workflows: list[str] | None,
+        author: str | None,
+        progress: ProgressCallback | None,
+        resolved: ResolvedEdit | None,
+    ) -> tuple[CompilationProject, EditRecord, ResolvedEdit]:
+        """Shared edit pipeline: parse → interpret (or replay) → apply atomically.
+
+        Does **not** persist — ``edit_specs`` saves the result, ``preview_edit``
+        returns it untouched. When ``resolved`` is given every LLM touchpoint is
+        replaced by the stored artifact; otherwise each artifact is captured
+        into the returned :class:`ResolvedEdit`.
+        """
         known = {spec.slug for spec in project.specs}
         doc = parse_edit_request(edit_document, known)
         self._enforce_workflow_filter(doc, workflows, known)
+        resolved_out = ResolvedEdit(
+            fingerprint=self._fingerprint(project, edit_document, workflows)
+        )
+        if resolved is not None:
+            self._verify_resolved(resolved, resolved_out.fingerprint, doc)
 
         # All mutations happen on a deep copy: one edit document is one human
         # intent, and a partially-applied request would leave a project state
@@ -505,10 +635,15 @@ class ProjectCompiler:
                 phase="agent", name=name, status="start", index=index, total=total,
             ))
             started = time.perf_counter()
-            state = await self._compiler.extract_facts(
-                new_section.body, project_id=working.project_id
-            )
-            drafted = self._build_spec(new_section.slug, state)
+            if resolved is not None:
+                drafted = resolved.drafted_workflows[new_section.slug].model_copy(deep=True)
+            else:
+                state = await self._compiler.extract_facts(
+                    new_section.body, project_id=working.project_id
+                )
+                drafted = self._build_spec(new_section.slug, state)
+            resolved_out.drafted_workflows[new_section.slug] = drafted.model_copy(deep=True)
+            resolved_out.timings[name] = time.perf_counter() - started
             working.specs.append(drafted)
             working.segments.append(
                 self._new_segment(working, new_section.slug, drafted, new_section.body)
@@ -542,12 +677,20 @@ class ProjectCompiler:
             current = working.spec_for(section.slug)
             if current is None:  # pragma: no cover - parser guarantees existence
                 raise CompilationError(f"No spec for workflow {section.slug!r}.")
-            plan = await interpreter.interpret(
-                slug=section.slug,
-                edit_section=section.to_markdown(),
-                current_spec=render_spec(current, working.cross_references, working.triggers),
-                project_context=project_context,
-            )
+            if resolved is not None:
+                # Confirm path: replay the previewed plan — no LLM call.
+                plan = resolved.plans[section.slug]
+            else:
+                plan = await interpreter.interpret(
+                    slug=section.slug,
+                    edit_section=section.to_markdown(),
+                    current_spec=render_spec(
+                        current, working.cross_references, working.triggers
+                    ),
+                    project_context=project_context,
+                )
+            resolved_out.plans[section.slug] = plan
+            resolved_out.timings[name] = time.perf_counter() - started
             unresolved.extend(f"{section.slug}: {entry}" for entry in plan.unresolved)
             if section.entry_count() and not (
                 plan.patches or plan.trigger_ops or plan.xref_ops or plan.unresolved
@@ -564,12 +707,16 @@ class ProjectCompiler:
 
         project_plan: EditPlan | None = None
         if doc.project_bullets:
-            project_plan = await interpreter.interpret(
-                slug="(project)",
-                edit_section="\n".join(f"- {b}" for b in doc.project_bullets),
-                current_spec="(project-level request — no single workflow)",
-                project_context=project_context,
-            )
+            if resolved is not None and resolved.project_plan is not None:
+                project_plan = resolved.project_plan
+            else:
+                project_plan = await interpreter.interpret(
+                    slug="(project)",
+                    edit_section="\n".join(f"- {b}" for b in doc.project_bullets),
+                    current_spec="(project-level request — no single workflow)",
+                    project_context=project_context,
+                )
+            resolved_out.project_plan = project_plan
             unresolved.extend(f"(project): {entry}" for entry in project_plan.unresolved)
             if project_plan.patches:
                 raise CompilationError(
@@ -651,10 +798,17 @@ class ProjectCompiler:
         # everything (including the trigger/xref integrity pass — the safety
         # net for edits that broke wiring).
         working.validation_findings = {}
+        # Persist the real durations: on confirm the replay is near-instant, so
+        # the preview's measured LLM seconds (carried in the blob) are recorded.
+        step_timings = (
+            resolved.timings
+            if resolved is not None and resolved.timings
+            else resolved_out.timings
+        )
+        for step, seconds in step_timings.items():
+            self._record_timing(working, step, seconds)
         working.touch()
-        if persist:
-            await self._projects.save(working)
-        return working
+        return working, record, resolved_out
 
     @staticmethod
     def _enforce_workflow_filter(
@@ -1137,7 +1291,7 @@ class ProjectCompiler:
                     phase="approve", name=name, status="done", index=index, total=total,
                     seconds=time.perf_counter() - started, stage="blocked",
                 ))
-                continue
+                continue  # nothing compiled — no timing recorded for this slug
             state = await self._compiler.compile_prepared(
                 state,
                 review_mode=True,
@@ -1169,9 +1323,11 @@ class ProjectCompiler:
                         suggestion="review and approve the graph manually",
                     )
                 )
+            elapsed = time.perf_counter() - started
+            self._record_timing(project, name, elapsed)
             _emit(progress, ProgressEvent(
                 phase="approve", name=name, status="done", index=index, total=total,
-                seconds=time.perf_counter() - started, stage=state.stage.value,
+                seconds=elapsed, stage=state.stage.value,
             ))
 
         project.stage = (

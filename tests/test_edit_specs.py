@@ -17,7 +17,7 @@ from workflow_compiler.agents.segmentation import (
     WorkflowsDiscovery,
 )
 from workflow_compiler.compiler import ReviewConfig
-from workflow_compiler.exceptions import CompilationError
+from workflow_compiler.exceptions import CompilationError, EditPreviewStaleError
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import (
     ApprovalStatus,
@@ -523,3 +523,88 @@ async def test_write_spec_files_clears_removed_workflow_file(tmp_path) -> None:
 
     assert not (tmp_path / "account-provisioning.md").exists()
     assert (tmp_path / "customer-onboarding.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# Preview → confirm (dry-run + LLM-free replay)
+# ---------------------------------------------------------------------------
+
+
+async def test_preview_edit_does_not_persist() -> None:
+    provider = MockProvider(structured=[*_front_end_queue(), _happy_plan()])
+    compiler = _compiler(provider)
+    project = await compiler.compile_document(_DOCUMENT)
+    before = project.model_dump(mode="json")
+
+    preview = await compiler.preview_edit(
+        project.project_id, _EDIT_DOC, author="devansh"
+    )
+
+    # The preview shows the would-be result...
+    assert preview.record.resolved_patches["customer-onboarding"]
+    assert preview.record.summary["customer-onboarding"]
+    assert preview.resolved.fingerprint
+    assert set(preview.resolved.plans) == {"customer-onboarding"}
+    spec = preview.project.spec_for("customer-onboarding")
+    assert spec is not None and spec.metadata.version == "0.1.1"
+    # ...but the stored project is untouched.
+    stored = await compiler.load_project(project.project_id)
+    assert stored.model_dump(mode="json") == before
+    assert stored.edit_log == []
+
+
+async def test_preview_then_confirm_applies_without_llm() -> None:
+    # The queue holds exactly one EditPlan: the preview consumes it, so a
+    # confirm that re-interpreted would fail on the exhausted queue. Confirm
+    # must replay the stored plan instead.
+    provider = MockProvider(structured=[*_front_end_queue(), _happy_plan()])
+    compiler = _compiler(provider)
+    project = await compiler.compile_document(_DOCUMENT)
+
+    preview = await compiler.preview_edit(project.project_id, _EDIT_DOC)
+    confirmed = await compiler.edit_specs(
+        project.project_id, _EDIT_DOC, resolved=preview.resolved
+    )
+
+    assert len(confirmed.edit_log) == 1
+    assert confirmed.edit_log[0].summary == preview.record.summary
+    assert confirmed.edit_log[0].resolved_patches == preview.record.resolved_patches
+    spec = confirmed.spec_for("customer-onboarding")
+    assert spec is not None and spec.metadata.version == "0.1.1"
+    # The audit trail has exactly the previewed edit, applied once.
+    stored = await compiler.load_project(project.project_id)
+    assert len(stored.edit_log) == 1
+
+
+async def test_confirm_with_stale_fingerprint_raises() -> None:
+    provider = MockProvider(structured=[*_front_end_queue(), _happy_plan()])
+    compiler = _compiler(provider)
+    project = await compiler.compile_document(_DOCUMENT)
+
+    preview = await compiler.preview_edit(project.project_id, _EDIT_DOC)
+    # Any project change after the preview invalidates it.
+    stored = await compiler.load_project(project.project_id)
+    stored.touch()
+    await compiler.save_project(stored)
+    before = (await compiler.load_project(project.project_id)).model_dump(mode="json")
+
+    with pytest.raises(EditPreviewStaleError):
+        await compiler.edit_specs(
+            project.project_id, _EDIT_DOC, resolved=preview.resolved
+        )
+    unchanged = await compiler.load_project(project.project_id)
+    assert unchanged.model_dump(mode="json") == before
+
+
+async def test_confirm_with_mismatched_sections_raises() -> None:
+    provider = MockProvider(structured=[*_front_end_queue(), _happy_plan()])
+    compiler = _compiler(provider)
+    project = await compiler.compile_document(_DOCUMENT)
+    preview = await compiler.preview_edit(project.project_id, _EDIT_DOC)
+
+    # Same fingerprint, but the plan set no longer matches the document.
+    tampered = preview.resolved.model_copy(update={"plans": {}})
+    with pytest.raises(EditPreviewStaleError):
+        await compiler.edit_specs(project.project_id, _EDIT_DOC, resolved=tampered)
+    stored = await compiler.load_project(project.project_id)
+    assert stored.edit_log == []

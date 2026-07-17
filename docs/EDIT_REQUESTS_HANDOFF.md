@@ -1,8 +1,15 @@
-# Handoff: Workflow Edit Requests (feature branch state, 2026-07-16)
+# Handoff: Workflow Edit Requests (feature branch state, 2026-07-17)
 
 Status snapshot for the **edit-request feature** (`docs/EDIT_FORMAT_GUIDE.md`) plus the
 **provider-default change** (Nemotron cloud is now the default; the eGPU gateway is opt-in).
 This file lists exactly what is verified, what still needs to be tested, and what to build next.
+
+**Bottom line (2026-07-17):** the edit-request feature is **verification-complete** — all Tier 1
+and Tier 2 scenarios (1–6, including the multi-workflow exercise, scenario 4) passed against real
+cloud Nemotron and are committed (through `8663971`). The remaining work is the deferred
+**split/merge phase**, **repo hygiene** (partly done), and confirming this doc's assumptions still
+hold after the **HTTP auth + time-saved metric** feature landed on top (see "Landed since this
+handoff" below). Nothing on the core edit path is blocked.
 
 ## What was implemented
 
@@ -100,6 +107,20 @@ Record the transcript (commands + key output) in the PR description.
 
 ## The multi-workflow edit exercise (scenario 4, in full)
 
+> **DONE (2026-07-17, committed in `8663971`).** The full exercise below was executed against
+> real cloud Nemotron and applies in one shot. Canonical artifact:
+> `examples/ideal_multi_workflow_edit_request.md` (per-workflow add/modify/remove across two
+> workflows, a trigger modify + add, a dependency remove + add, an added payment-reconciliation
+> workflow, and a removed order-return workflow with its wiring drops logged), referenced from
+> `docs/EDIT_FORMAT_GUIDE.md`. Fixes that came out of it: `FactsPatchApplier` modify/remove
+> statement lookup falls back to a **unique-substring match in human-authority mode only** (the
+> interpreter reliably truncates statements it is told to copy verbatim — `BR-1:` prefixes,
+> trailing qualifiers — and prompt tuning alone is probabilistic; adds, ambiguous truncations,
+> and review mode stay exact-match); `write_spec_files` deletes the stale spec file of a removed
+> workflow; `_project_context` renders each trigger's input map and the interpreter prompt now
+> carries every unchanged trigger field on a modify (a modify payload replaces the whole trigger).
+> The procedure below is retained as reference for future multi-workflow changes.
+
 Goal: see how well the editing process holds up when one edit document touches **several
 workflows in the same request**, understand exactly where it goes wrong, and fix it. The
 single-workflow scenarios above prove the mechanics; this exercise is where the interesting
@@ -172,10 +193,27 @@ every touched workflow.
 anything learned about model behavior as new worked examples in the prompt template — that
 is how the lessons persist.
 
+## Landed since this handoff (reconcile against these)
+
+An **HTTP auth + time-saved metric** feature was built on top of the edit-request work (documented
+in `CLAUDE.md`; code is uncommitted in the working tree as of 2026-07-17: `api/auth.py`,
+`models/user.py`, `storage/user_store.py`, `metrics.py`, frontend `login/`, `auth.tsx`, `UserMenu`,
+`TimeSaved`, plus `test_api_auth.py` / `test_metrics.py`). Two touch-points for the edit path:
+
+- `POST /projects/{id}/edit` (and every project route) now requires `get_current_user`; projects
+  carry an `owner_id` and `author`/`reviewer` default to the signed-in user. The CLI still bypasses
+  auth. The offline `--provider mock` edit path is unaffected.
+- `ProjectCompiler` records per-step wall-clock into `project.stage_timings`; the edit path adds
+  its own timing rows. `metrics.py::compute_time_saved` is pure/no-LLM.
+
+Before calling this whole branch done, re-run the API + frontend edit smoke (scenario 6) **through
+a signed-in session** to confirm the `/edit` route and Edit-history panel behave under auth.
+
 ## Next implementation steps (in priority order)
 
-1. **Finish Tier 2 scenarios 2–6 above** and tune `interpret_edit_request.md` against the real
-   model as needed. This is the gate for calling the feature done.
+1. ~~**Finish Tier 2 scenarios 2–6**~~ — **DONE (2026-07-17)**. All six scenarios passed against
+   real cloud Nemotron; `interpret_edit_request.md` was tuned and the unique-substring fallback
+   added. See the verification section above. Feature is verification-complete.
 2. **Split/merge phase** (syntax already reserved: `## Split Workflow: <slug>`,
    `## Merge Workflows: <a> + <b>`; parser rejects with "reserved for a future release").
    Design sketch agreed during planning:
@@ -186,15 +224,29 @@ is how the lessons persist.
      precedence rules; collapse intra-pair triggers into internal transitions; retarget
      external wiring to the merged slug.
    - Both re-enter the same validate → approve-spec gate.
-3. **Repo hygiene (user-visible litter)** — the root still contains tracked one-off dirs
-   (`generated-2/`, `generated-fe24cff8/`, `generated-ideal-*/`, `specs-*`, …) from before the
-   out-dir fix. Decide which to keep as examples (`generated/` is the documented one) and
-   `git rm` the rest. New runs no longer create these.
-4. **Nice-to-haves surfaced during implementation** (not committed to):
-   - Frontend: render the `[human]` provenance markers distinctly in the spec preview;
-     show `EditRecord.resolved_patches` detail in the history panel.
-   - `edit --dry-run` (interpret + report the plan without applying) — cheap now that
-     interpretation and application are separate phases.
+3. **Repo hygiene (user-visible litter)** — *partly done.* The prefixed one-off dirs
+   (`generated-*/`, `generated_*/`, `specs-*/`, `specs_*/`) are now git-ignored (`.gitignore`
+   lines 43–46) and were untracked in `99b3314`; new runs no longer create tracked litter.
+   **Still open:** `generated/` itself still holds **tracked old-layout loose-slug dirs**
+   (`generated/order_placement/`, `generated/order_return/`, `generated/ecommerce_order_fulfillment/`,
+   `generated/subscription_upgrade_workflow/`, `generated/cancelrequestworkflow/`,
+   `generated/order_cancellation_workflow/`, `generated/order_fulfilment/`,
+   `generated/order_settlement_workflow/`) from before the `<project-id>/<slug>/` out-dir fix —
+   decide which to keep as the documented example bundle and `git rm` the rest. The working tree
+   also carries untracked run litter (`specs-edit-e2e/`, `specs-edit-multi/`, fresh
+   `generated/<project-id>/` dirs) that is ignored/uncommitted and can be deleted freely.
+4. **Nice-to-haves surfaced during implementation** (status as of 2026-07-17):
+   - ~~`edit --dry-run`~~ — **built**, and generalized into a full preview → confirm flow:
+     `preview_edit` + `POST /projects/{id}/edit/preview` + the web UI's two-step dialog. The
+     confirm replays the previewed `ResolvedEdit` blob with no LLM call, fingerprint-guarded
+     against concurrent project changes (409).
+   - ~~Show `EditRecord.resolved_patches` detail in the history panel~~ — **built**
+     (`frontend/components/EditHistory.tsx`, right-rail panel with expandable records).
+   - ~~CLI tracebacks on domain errors~~ — **fixed**: every runner prints a clean red message
+     and exits 1 (`_clean_domain_errors` in `cli/main.py`).
+   - ~~Frontend: render the `[human]` provenance markers distinctly in the spec preview~~ —
+     **built**: `frontend/lib/specHighlight.ts` matches trailing `[human]`/`[inferred]` markers
+     (`PROV_RE`) and paints them with a dedicated `cm-spec-prov` decoration in the spec editor.
    - Rollback: `edit_log` records what changed but there are no snapshots; a
      `revert <edit-id>` would need inverse patches or stored spec snapshots (explicitly
      descoped earlier — revisit only if users ask).

@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
 from workflow_compiler.models.patch import Patch
-from workflow_compiler.models.spec import CrossReference, WorkflowTrigger
+from workflow_compiler.models.spec import CrossReference, WorkflowSpec, WorkflowTrigger
 
 
 class WiringAction(StrEnum):
@@ -88,6 +88,41 @@ class EditPlan(BaseModel):
         default_factory=list, description="Edit entries the model could not translate."
     )
     note: str = Field(default="", description="Optional free-text rationale.")
+
+
+class ResolvedEdit(BaseModel):
+    """The LLM artifacts of an edit preview, replayable at confirm time.
+
+    A preview interprets the document once and hands this blob to the client;
+    confirm sends it back and the pipeline applies exactly these plans with
+    **zero LLM calls** — eliminating interpretation nondeterminism between what
+    the user reviewed and what gets applied. ``fingerprint`` binds the blob to
+    ``(project state, document, workflow filter)``; any project change in
+    between invalidates it (``EditPreviewStaleError``).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    fingerprint: str = Field(
+        default="", description="Binds this preview to the project state it was made from."
+    )
+    plans: dict[str, EditPlan] = Field(
+        default_factory=dict, description="slug → interpreted plan for its edit section."
+    )
+    project_plan: EditPlan | None = Field(
+        default=None, description="Interpreted plan for the '## Project' section, if any."
+    )
+    drafted_workflows: dict[str, WorkflowSpec] = Field(
+        default_factory=dict,
+        description="slug → spec drafted for an '## Add Workflow:' section.",
+    )
+    timings: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Wall-clock seconds per edit step measured at preview time; the "
+            "confirm records these (the replay itself is near-instant)."
+        ),
+    )
 
 
 class EditRecord(WorkflowBaseModel):

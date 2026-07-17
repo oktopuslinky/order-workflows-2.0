@@ -97,6 +97,21 @@ class CompilationProject(WorkflowBaseModel):
         default_factory=list,
         description="Append-only audit trail of applied edit requests.",
     )
+    owner_id: str | None = Field(
+        default=None,
+        description=(
+            "user_id of the account that created this project via the HTTP API; "
+            "None for CLI-created or legacy projects (visible to every account)."
+        ),
+    )
+    stage_timings: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Cumulative wall-clock seconds per pipeline step (e.g. "
+            "'workflow-segmentation', 'extract:<slug>', 'validate:<slug>', "
+            "'edit:<slug>', 'compile:<slug>'). Feeds the time-saved metric."
+        ),
+    )
     stage: ProjectStage = Field(
         default=ProjectStage.INGESTED, description="Current project stage."
     )

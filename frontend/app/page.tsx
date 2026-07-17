@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { COMPILE_STEPS, shortId } from "@/lib/format";
 import { RunningOverlay } from "@/components/RunningOverlay";
+import { TimeSavedStat } from "@/components/TimeSaved";
 
 // Sentinel model value that routes a compile through the hosted NVIDIA Nemotron
 // API instead of the local eGPU gateway. Kept in sync with the backend
@@ -61,6 +62,8 @@ export default function HomePage() {
           </Link>
         </p>
       </header>
+
+      <TimeSavedStat />
 
       <div className="grid gap-8 lg:grid-cols-[1.3fr_1fr]">
         {/* New project */}

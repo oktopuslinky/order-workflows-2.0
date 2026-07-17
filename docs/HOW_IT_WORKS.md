@@ -807,11 +807,31 @@ The pieces, and where they live:
   `document_text` so grounding passes can see them); `## Remove Workflow:` drops the spec and
   every trigger/dependency touching it.
 
+- **Preview → confirm.** `preview_edit` dry-runs the same pipeline (nothing persisted) and
+  returns the would-be summary/diff plus a `ResolvedEdit` blob — the interpreted plans, drafted
+  add-workflow specs, measured timings, and a fingerprint over the project state + document.
+  Confirming (`edit_specs(resolved=...)`, or `POST /projects/{id}/edit` with `resolved`)
+  replays those plans with **no LLM call**, so what applies is exactly what was previewed; any
+  project change in between makes the fingerprint stale (`EditPreviewStaleError` → HTTP 409 →
+  preview again). The CLI's `edit --dry-run` prints the same preview and simply re-interprets
+  on the real run.
+
+- **Time saved.** Each pipeline step's wall-clock seconds accumulate in
+  `project.stage_timings`; `metrics.py` compares them against the configurable
+  `baseline_hours` human-team **estimates** (per step category: discovery / spec / validate /
+  compile / edit) to produce `time_saved` on project responses and the `GET /metrics/summary`
+  aggregate shown in the web UI. No timings recorded → no claimed savings.
+
 CLI: `compile <doc> --spec-dir <dir>` → edit the files → `validate <project-id>` →
 `approve-spec <project-id>` (code lands under `./generated/<project-id>/<slug>/`); later
-changes via `edit <project-id> <edit-file.md>` → `validate` → `approve-spec`. HTTP:
-`POST /projects/compile`, `GET/PUT /projects/{id}/spec`, `POST /projects/{id}/edit`,
-`POST /projects/{id}/validate`, `POST /projects/{id}/approve`.
+changes via `edit <project-id> <edit-file.md>` (add `--dry-run` to preview) → `validate` →
+`approve-spec`. HTTP (all project/workflow routes behind local-account cookie auth —
+`/auth/register`, `/auth/login`, `/auth/me`; projects are shared across users by default,
+with `owner_id` kept for attribution — set `WORKFLOW_COMPILER_PROJECTS_SHARED=false` to scope
+listings/access to each project's `owner_id`):
+`POST /projects/compile`, `GET/PUT /projects/{id}/spec`, `POST /projects/{id}/edit` (+
+`/edit/preview`), `POST /projects/{id}/validate`, `POST /projects/{id}/approve`,
+`GET /metrics/summary`.
 
 ### Cross-workflow triggers (standalone workflows, explicit starts)
 

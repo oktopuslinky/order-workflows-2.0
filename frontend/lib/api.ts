@@ -3,9 +3,12 @@
 
 import type {
   CvpaPreviewResponse,
+  EditPreviewResponse,
   LocalModelList,
+  MetricsSummary,
   ProjectFilesResponse,
   ProjectResponse,
+  ResolvedEdit,
   WorkflowStateResponse,
 } from "./types";
 
@@ -28,7 +31,8 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}${path}`, init);
+    // credentials: session auth rides an HttpOnly cookie on every call.
+    response = await fetch(`${API_BASE}${path}`, { credentials: "include", ...init });
   } catch {
     throw new ApiError(
       0,
@@ -37,6 +41,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     const detail = await extractDetail(response);
+    // An expired session on an app call sends the user back to sign in.
+    // Auth endpoints handle their own 401s (login failure, me-probe).
+    if (
+      response.status === 401 &&
+      !path.startsWith("/auth/") &&
+      typeof window !== "undefined" &&
+      window.location.pathname !== "/login"
+    ) {
+      window.location.assign(
+        `/login?next=${encodeURIComponent(window.location.pathname)}`,
+      );
+    }
     throw new ApiError(response.status, detail);
   }
   return (await response.json()) as T;
@@ -59,10 +75,40 @@ async function extractDetail(response: Response): Promise<string> {
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
+export interface UserPublic {
+  user_id: string;
+  email: string;
+  display_name: string;
+}
+
 export const api = {
   health: () => request<{ status: string; version: string }>("/health"),
 
+  me: () => request<UserPublic>("/auth/me"),
+
+  login: (email: string, password: string) =>
+    request<UserPublic>("/auth/login", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ email, password }),
+    }),
+
+  register: (email: string, password: string, displayName: string) =>
+    request<UserPublic>("/auth/register", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        email,
+        password,
+        display_name: displayName,
+      }),
+    }),
+
+  logout: () => request<{ status: string }>("/auth/logout", { method: "POST" }),
+
   listProjects: () => request<ProjectIdList>("/projects"),
+
+  metricsSummary: () => request<MetricsSummary>("/metrics/summary"),
 
   listLocalModels: () =>
     request<LocalModelList>("/providers/local/models"),
@@ -102,7 +148,7 @@ export const api = {
   editProject: (
     id: string,
     editDocument: string,
-    opts: { workflows?: string[]; author?: string } = {},
+    opts: { workflows?: string[]; author?: string; resolved?: ResolvedEdit } = {},
   ) =>
     request<ProjectResponse>(`/projects/${encodeURIComponent(id)}/edit`, {
       method: "POST",
@@ -111,8 +157,26 @@ export const api = {
         edit_document: editDocument,
         workflows: opts.workflows ?? null,
         author: opts.author ?? null,
+        resolved: opts.resolved ?? null,
       }),
     }),
+
+  previewEdit: (
+    id: string,
+    editDocument: string,
+    opts: { workflows?: string[] } = {},
+  ) =>
+    request<EditPreviewResponse>(
+      `/projects/${encodeURIComponent(id)}/edit/preview`,
+      {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({
+          edit_document: editDocument,
+          workflows: opts.workflows ?? null,
+        }),
+      },
+    ),
 
   validate: (id: string, specMarkdown?: Record<string, string>) =>
     request<ProjectResponse>(`/projects/${encodeURIComponent(id)}/validate`, {

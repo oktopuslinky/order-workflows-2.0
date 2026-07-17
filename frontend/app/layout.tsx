@@ -4,6 +4,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { UserMenu } from "@/components/UserMenu";
+import { AuthGuard } from "@/lib/auth";
 
 // Runs before first paint: apply the saved theme (or the OS setting) to <html>
 // so there is no light/dark flash and no hydration mismatch.
@@ -61,9 +63,12 @@ export default function RootLayout({
                 Guide
               </Link>
               <ThemeToggle />
+              <UserMenu />
             </nav>
           </header>
-          <main className="flex-1 min-h-0 overflow-auto">{children}</main>
+          <main className="flex-1 min-h-0 overflow-auto">
+            <AuthGuard>{children}</AuthGuard>
+          </main>
         </Providers>
       </body>
     </html>

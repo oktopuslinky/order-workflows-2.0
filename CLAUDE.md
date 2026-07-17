@@ -107,6 +107,23 @@ picture before changing pipeline behavior.
   weaken the default (review-mode) applier to serve the edit path; the two modes are deliberate.
   Split/merge syntax is reserved (parser rejects it) for a future phase. Generated code defaults
   under `./generated/<project-id>/<slug>/`.
+  **Preview → confirm:** `preview_edit` dry-runs the pipeline (persists nothing) and returns a
+  `ResolvedEdit` blob (plans + drafted specs + timings + a fingerprint over project state +
+  document); `edit_specs(resolved=...)` replays it with **zero LLM calls** — a stale fingerprint
+  raises `EditPreviewStaleError` (HTTP 409). Confirm must never re-interpret; the whole point is
+  that what applies is exactly what was previewed. CLI: `edit --dry-run`.
+
+- **HTTP auth + time-saved metric.** The API uses local accounts (`api/auth.py`: scrypt +
+  HMAC-signed session cookie, users under `<state-root>/users/`); project routes require
+  `get_current_user`, projects carry `owner_id` (recorded for attribution). By default
+  (`projects_shared`) every signed-in user sees and opens every project; set
+  `WORKFLOW_COMPILER_PROJECTS_SHARED=false` to restore per-owner isolation (other accounts'
+  projects 404; `None` = legacy, always visible). `author`/`reviewer` default to the signed-in
+  user. The CLI intentionally
+  bypasses auth. `ProjectCompiler` records per-step wall-clock seconds into
+  `project.stage_timings`; `metrics.py::compute_time_saved` (pure, no LLM) compares them to the
+  `baseline_hours` config **estimates** for `ProjectResponse.time_saved` and
+  `GET /metrics/summary` — never claim savings for unmeasured projects.
 
 ## Conventions
 

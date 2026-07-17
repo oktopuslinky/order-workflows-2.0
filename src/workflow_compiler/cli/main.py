@@ -9,8 +9,10 @@ and ``show`` displays a stored workflow state.
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Console
@@ -113,6 +115,10 @@ def edit_cmd(
         Path("./specs"), "--spec-dir",
         help="Re-write the updated spec files to this directory.",
     ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Preview the edit (parse + interpret + summary) without applying anything.",
+    ),
     provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
     model: str = typer.Option(None, "--model", help="Override the model id."),
     timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
@@ -123,7 +129,7 @@ def edit_cmd(
     asyncio.run(
         _run_edit(
             project_id, edit_file, list(workflow or []), author, spec_dir,
-            provider, model, timeout,
+            provider, model, timeout, dry_run=dry_run,
         )
     )
 
@@ -244,6 +250,30 @@ def models() -> None:
     console.print("[bold]Local gateway models:[/]")
     for model_id in available:
         console.print(f"  • {model_id}")
+
+
+def _clean_domain_errors[**P, T](
+    fn: Callable[P, Coroutine[Any, Any, T]],
+) -> Callable[P, Coroutine[Any, Any, T]]:
+    """Print domain errors as a clean message and exit 1 instead of a traceback.
+
+    Domain failures (a malformed edit request, an unknown project id, a provider
+    outage) carry actionable messages — the stack trace adds nothing for a CLI
+    user. ``typer.Exit`` raised inside the runner passes through untouched.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+        from workflow_compiler.exceptions import WorkflowCompilerError
+
+        try:
+            return await fn(*args, **kwargs)
+        except WorkflowCompilerError as exc:
+            # markup=False: messages quote spec text that rich would misparse.
+            console.print(str(exc), style="red", markup=False, highlight=False)
+            raise typer.Exit(1) from None
+
+    return wrapper
 
 
 def _build_provider(
@@ -419,6 +449,7 @@ def _print_project(project: object, spec_dir: Path) -> None:
             )
 
 
+@_clean_domain_errors
 async def _run_compile_spec(
     document: Path,
     provider_name: str | None,
@@ -453,6 +484,7 @@ async def _run_compile_spec(
     )
 
 
+@_clean_domain_errors
 async def _run_validate(
     project_id: str,
     spec_dir: Path,
@@ -491,6 +523,7 @@ async def _run_validate(
     )
 
 
+@_clean_domain_errors
 async def _run_edit(
     project_id: str,
     edit_file: Path,
@@ -500,30 +533,51 @@ async def _run_edit(
     provider_name: str | None,
     model: str | None,
     timeout: float,
+    *,
+    dry_run: bool = False,
 ) -> None:
     provider = _build_provider(provider_name, model, timeout)
     console.print(f"[bold]Provider[/]: {provider.name}")
     compiler = _project_compiler(provider, review=True)
     edit_document = edit_file.read_text(encoding="utf-8")
     try:
-        console.print(f"[bold]Applying edit request[/] {edit_file} ...")
-        project = await compiler.edit_specs(
-            project_id,
-            edit_document,
-            workflows=workflows or None,
-            author=author,
-            progress=_make_progress(),
-        )
+        verb = "Previewing" if dry_run else "Applying"
+        console.print(f"[bold]{verb} edit request[/] {edit_file} ...")
+        if dry_run:
+            preview = await compiler.preview_edit(
+                project_id,
+                edit_document,
+                workflows=workflows or None,
+                author=author,
+                progress=_make_progress(),
+            )
+            project, record = preview.project, preview.record
+        else:
+            project = await compiler.edit_specs(
+                project_id,
+                edit_document,
+                workflows=workflows or None,
+                author=author,
+                progress=_make_progress(),
+            )
+            record = project.edit_log[-1]
     finally:
         await _aclose(provider)
 
-    compiler.write_spec_files(project, spec_dir)
-    record = project.edit_log[-1]
-    console.print(f"\n[bold green]Edit applied[/] (edit id {record.edit_id})")
+    if dry_run:
+        console.print("\n[bold yellow]Preview only — nothing was applied.[/]")
+    else:
+        compiler.write_spec_files(project, spec_dir)
+        console.print(f"\n[bold green]Edit applied[/] (edit id {record.edit_id})")
     for slug, lines in record.summary.items():
         console.print(f"  [cyan]{slug}[/]:")
         for line in lines:
             console.print(f"    - {line}")
+    if dry_run:
+        console.print(
+            "\nRe-run without [cyan]--dry-run[/] to apply these changes."
+        )
+        return
     _print_project(project, spec_dir)
     console.print(
         f"\nSpec files re-written to [cyan]{spec_dir}[/]. The project is back at "
@@ -533,6 +587,7 @@ async def _run_edit(
     )
 
 
+@_clean_domain_errors
 async def _run_approve_spec(
     project_id: str,
     spec_dir: Path,
@@ -632,6 +687,7 @@ async def _write_project_code(compiler: object, project: object, out_dir: Path |
         )
 
 
+@_clean_domain_errors
 async def _run_approve(
     workflow_id: str,
     reviewer: str | None,
@@ -663,6 +719,7 @@ async def _run_approve(
     _write_code(state, None if out_dir is None else out_dir / state.workflow_id)
 
 
+@_clean_domain_errors
 async def _run_reject(workflow_id: str, reviewer: str | None, reason: str | None) -> None:
     from workflow_compiler.compiler import WorkflowCompiler
 
@@ -676,6 +733,7 @@ async def _run_reject(workflow_id: str, reviewer: str | None, reason: str | None
         console.print(f"  reason: {reason}")
 
 
+@_clean_domain_errors
 async def _run_show(workflow_id: str) -> None:
     from workflow_compiler.compiler import WorkflowCompiler
 

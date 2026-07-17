@@ -72,12 +72,32 @@ class Settings(BaseSettings):
         default=True, description="Block downstream artifacts until the graph is approved."
     )
 
+    session_secret: str | None = Field(
+        default=None,
+        description=(
+            "HMAC key signing HTTP session cookies. When unset, a random secret is "
+            "generated once and persisted to <state_store_path>/session_secret."
+        ),
+    )
+    session_ttl_hours: float = Field(
+        default=720.0, gt=0.0, description="Lifetime of a signed-in session (30 days)."
+    )
+
     cors_origins: list[str] = Field(
         default_factory=lambda: [
             "http://localhost:3000",
             "http://localhost:3001",
         ],
         description="Browser origins allowed to call the HTTP API (CORS allow-list).",
+    )
+
+    projects_shared: bool = Field(
+        default=True,
+        description=(
+            "When true, every signed-in user can see and open every project "
+            "(owner_id is still recorded for attribution). Set false to restore "
+            "per-owner isolation."
+        ),
     )
 
     review_enabled: bool = Field(
@@ -101,6 +121,24 @@ class Settings(BaseSettings):
             "Spec-centric pipeline: auto-approve a workflow's graph when its review "
             "health score is at or above this value; below it the workflow halts for "
             "manual review."
+        ),
+    )
+
+    baseline_hours: dict[str, float] = Field(
+        default_factory=lambda: {
+            # Estimated hours a human team (BPM analyst + engineer) would spend
+            # per pipeline step. ESTIMATES, deliberately conservative — tune to
+            # your org (env: WORKFLOW_COMPILER_BASELINE_HOURS as a JSON object).
+            # Keyed by the categories metrics.py buckets stage_timings into.
+            "discovery": 6.0,  # per project: document analysis + workflow discovery
+            "spec": 8.0,  # per workflow: fact extraction + spec drafting
+            "validate": 3.0,  # per workflow validate pass: review + consistency check
+            "compile": 38.0,  # per workflow: graph 4h + CVPA 2h + design 8h + code 24h
+            "edit": 4.0,  # per edit section: analysis + re-spec + re-review
+        },
+        description=(
+            "Estimated human-team hours per pipeline step category, powering the "
+            "time-saved metric. Estimates, not measurements — tune to your org."
         ),
     )
 

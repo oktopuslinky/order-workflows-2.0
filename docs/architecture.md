@@ -120,6 +120,41 @@ Key invariants:
   pipeline and is appended to `document_text` for grounding) or removed (every trigger/xref
   touching the slug is dropped and logged). Split/merge syntax is reserved and rejected.
 
+- **Preview → confirm (edit dry-run).** `ProjectCompiler.preview_edit` runs the same pipeline
+  with nothing persisted and returns the would-be project, its `EditRecord`, and a
+  `ResolvedEdit` blob (`models/edit.py`): the interpreted plans, drafted add-workflow specs,
+  measured step timings, and a **fingerprint** over
+  `(project_id, updated_at, sha256(document), workflow filter)`. Confirm =
+  `edit_specs(resolved=...)`: the fingerprint and section sets are verified (mismatch →
+  `EditPreviewStaleError`, HTTP 409 — any concurrent project change invalidates the preview)
+  and the stored plans are replayed with **zero LLM calls**, so what was previewed is exactly
+  what applies (interpretation nondeterminism cannot leak in between). The server stays
+  stateless: the blob round-trips through the client; the deterministic applier still
+  re-validates every operation against the current spec. Surfaces: the web UI's two-step
+  Preview → Confirm dialog, `POST /projects/{id}/edit/preview`, and the CLI's `edit --dry-run`
+  (which simply re-interprets on a real run — fine for a terminal flow).
+
+- **Auth + ownership (HTTP surface only).** `api/auth.py`: local accounts (`models/user.py`,
+  `storage/user_store.py` under `<state-root>/users/`), stdlib scrypt password hashing, and an
+  HMAC-signed session cookie (secret from `WORKFLOW_COMPILER_SESSION_SECRET` or a generated
+  `<state-root>/session_secret`). Every project/workflow route requires `get_current_user`;
+  `CompilationProject.owner_id` is recorded for attribution; by default (`projects_shared`)
+  every signed-in user sees and opens every project, and `WORKFLOW_COMPILER_PROJECTS_SHARED=false`
+  restores per-owner scoping (listings filtered, 404 for other accounts' projects, unowned/CLI
+  projects always visible). `author`/`reviewer` default to the signed-in
+  user. The CLI bypasses auth by design — it drives the compiler directly, and filesystem
+  access already implies full control.
+
+- **Time-saved metric.** `ProjectCompiler` records each step's wall-clock seconds into
+  `CompilationProject.stage_timings` (keys: `workflow-segmentation`, `extract:<slug>`,
+  `validate:<slug>`, `edit:<slug>`, `compile:<slug>`; the preview's measured LLM seconds are
+  carried in `ResolvedEdit.timings` so a confirm records real durations, not the ~0s replay).
+  `metrics.py::compute_time_saved` — pure, deterministic, no LLM — compares them against the
+  configurable `Settings.baseline_hours` estimates and powers `ProjectResponse.time_saved` and
+  `GET /metrics/summary`. Baselines are labeled estimates everywhere; projects without recorded
+  timings report `None` (no fabricated savings). Re-runs accumulate honestly — a human team
+  re-validating would also re-spend the time.
+
 Projects persist via `storage/project_store.py` (`<state-root>/projects/<id>.json`, same atomic
 write pattern); per-workflow states are unchanged apart from an optional `project_id` back-link
 and `outgoing_triggers`.

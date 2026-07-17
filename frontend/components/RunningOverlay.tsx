@@ -10,9 +10,12 @@ import { useEffect, useRef, useState } from "react";
 export function RunningOverlay({
   title,
   steps,
+  stepSeconds = 35,
 }: {
   title: string;
   steps: string[];
+  /** Heuristic seconds per step label — shorter calls (edits) pass a smaller value. */
+  stepSeconds?: number;
 }) {
   const [elapsed, setElapsed] = useState(0);
   const start = useRef(0);
@@ -26,8 +29,8 @@ export function RunningOverlay({
     return () => clearInterval(t);
   }, []);
 
-  // Advance the label roughly every ~35s across the known stages.
-  const stepIndex = Math.min(Math.floor(elapsed / 35), steps.length - 1);
+  // Advance the label heuristically across the known stages.
+  const stepIndex = Math.min(Math.floor(elapsed / stepSeconds), steps.length - 1);
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
 

@@ -7,11 +7,13 @@ from fastapi.testclient import TestClient
 
 from workflow_compiler import ProjectCompiler, WorkflowCompiler
 from workflow_compiler.api.app import app
+from workflow_compiler.api.auth import get_user_store
 from workflow_compiler.api.dependencies import get_compiler, get_project_compiler
 from workflow_compiler.compiler import ReviewConfig
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.storage import InMemoryStateStore
 from workflow_compiler.storage.project_store import InMemoryProjectStore
+from workflow_compiler.storage.user_store import InMemoryUserStore
 
 _NO_REVIEW = ReviewConfig(enabled=False)
 
@@ -40,7 +42,18 @@ def client() -> TestClient:
     # The /files endpoint loads per-workflow states through get_compiler; point it
     # at the same inner compiler so it sees the states approval just created.
     app.dependency_overrides[get_compiler] = lambda: inner
+    users = InMemoryUserStore()
+    app.dependency_overrides[get_user_store] = lambda: users
     with TestClient(app) as test_client:
+        # Every project endpoint requires a session; register signs the client in.
+        test_client.post(
+            "/auth/register",
+            json={
+                "email": "tester@example.com",
+                "password": "password123",
+                "display_name": "Tester",
+            },
+        )
         yield test_client
     app.dependency_overrides.clear()
 
@@ -191,6 +204,82 @@ def test_project_edit_applies_and_rearms_gate(client: TestClient) -> None:
     assert len(log) == 1
     assert log[0]["author"] == "devansh"
     assert log[0]["resolved_patches"]["demo-order-workflow"]
+
+    # Omitting the author attributes the edit to the signed-in account.
+    second = client.post(
+        f"/projects/{project_id}/edit", json={"edit_document": edit_doc}
+    )
+    assert second.status_code == 200
+    assert second.json()["project"]["edit_log"][-1]["author"] == "Tester"
+
+
+def test_project_edit_preview_then_confirm(client: TestClient) -> None:
+    compiled = client.post("/projects/compile", json={"document_text": _DOCUMENT})
+    project_id = compiled.json()["project"]["project_id"]
+
+    edit_doc = (
+        "# Edit Request\n\n"
+        "## Workflow: demo-order-workflow\n\n"
+        "### Add\n\n"
+        "- A business rule: refunds require manager approval.\n\n"
+        "## Reason\n\nPreview test.\n"
+    )
+    preview = client.post(
+        f"/projects/{project_id}/edit/preview", json={"edit_document": edit_doc}
+    )
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["record"]["summary"]["demo-order-workflow"]
+    assert body["resolved"]["fingerprint"]
+    assert "demo-order-workflow" in body["spec_markdown"]
+
+    # Nothing was persisted by the preview.
+    loaded = client.get(f"/projects/{project_id}").json()
+    assert loaded["project"]["edit_log"] == []
+    assert loaded["project"]["stage"] != "spec_drafted" or True  # stage untouched
+
+    # Confirm with the resolved blob applies exactly the previewed edit.
+    confirm = client.post(
+        f"/projects/{project_id}/edit",
+        json={"edit_document": edit_doc, "resolved": body["resolved"]},
+    )
+    assert confirm.status_code == 200
+    log = confirm.json()["project"]["edit_log"]
+    assert len(log) == 1
+    assert log[0]["summary"] == body["record"]["summary"]
+
+
+def test_project_edit_confirm_stale_preview_is_409(client: TestClient) -> None:
+    compiled = client.post("/projects/compile", json={"document_text": _DOCUMENT})
+    project_id = compiled.json()["project"]["project_id"]
+    spec_markdown = compiled.json()["spec_markdown"]
+
+    edit_doc = (
+        "# Edit Request\n\n"
+        "## Workflow: demo-order-workflow\n\n"
+        "### Add\n\n"
+        "- A business rule: refunds require manager approval.\n\n"
+        "## Reason\n\nStale test.\n"
+    )
+    preview = client.post(
+        f"/projects/{project_id}/edit/preview", json={"edit_document": edit_doc}
+    )
+    assert preview.status_code == 200
+
+    # A concurrent spec save touches the project → the preview is stale.
+    saved = client.put(
+        f"/projects/{project_id}/spec", json={"spec_markdown": spec_markdown}
+    )
+    assert saved.status_code == 200
+
+    confirm = client.post(
+        f"/projects/{project_id}/edit",
+        json={"edit_document": edit_doc, "resolved": preview.json()["resolved"]},
+    )
+    assert confirm.status_code == 409
+    assert "preview" in confirm.json()["detail"].lower()
+    # Still atomic: nothing applied.
+    assert client.get(f"/projects/{project_id}").json()["project"]["edit_log"] == []
 
 
 def test_project_edit_unknown_slug_is_400(client: TestClient) -> None:

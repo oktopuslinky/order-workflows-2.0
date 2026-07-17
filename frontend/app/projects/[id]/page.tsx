@@ -7,12 +7,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { APPROVE_STEPS, STAGE_LABEL, STAGE_TONE } from "@/lib/format";
 import { DiagramPanel } from "@/components/DiagramPanel";
+import { EditHistory } from "@/components/EditHistory";
 import { EditRequestPanel } from "@/components/EditRequestPanel";
 import { FindingsPanel } from "@/components/FindingsPanel";
 import { ResultsView } from "@/components/ResultsView";
 import { RunningOverlay } from "@/components/RunningOverlay";
 import { SpecEditor } from "@/components/SpecEditor";
 import { SpecPreview } from "@/components/SpecPreview";
+import { TimeSavedCard } from "@/components/TimeSaved";
 import {
   DependencyChecklist,
   EventKindEditor,
@@ -20,7 +22,12 @@ import {
   TriggerCards,
   ValidateDiff,
 } from "@/components/StructuredWidgets";
-import type { ProjectResponse, ProjectStage } from "@/lib/types";
+import type {
+  EditRecord,
+  ProjectResponse,
+  ProjectStage,
+  ResolvedEdit,
+} from "@/lib/types";
 
 const VALIDATED_STAGES: ProjectStage[] = [
   "spec_validated",
@@ -89,6 +96,8 @@ function Workspace({
   const [acceptIncomplete, setAcceptIncomplete] = useState(false);
   const [allowUnconfirmed, setAllowUnconfirmed] = useState(false);
   const [showEditPanel, setShowEditPanel] = useState(false);
+  // The just-applied edit, for the success banner (cleared on validate/dismiss).
+  const [lastEdit, setLastEdit] = useState<EditRecord | null>(null);
 
   // Re-seed buffers only when the set of slugs changes (a fresh project load).
   const seededFor = useRef(proj.project_id);
@@ -121,23 +130,31 @@ function Workspace({
       applyServer(resp);
       setPostValidate({ ...resp.spec_markdown });
       setDirty(false);
+      setLastEdit(null);
       onServerUpdate();
     },
   });
 
   const editRequest = useMutation({
-    mutationFn: ({ document, author }: { document: string; author: string | null }) => {
+    mutationFn: ({
+      document,
+      resolved,
+    }: {
+      document: string;
+      resolved: ResolvedEdit;
+    }) => {
       // Snapshot so the diff view shows what the edit changed per spec.
+      // The server attributes the edit to the signed-in account and replays
+      // the previewed operations (no LLM re-interpretation).
       setPreValidate({ ...buffers });
-      return api.editProject(proj.project_id, document, {
-        author: author ?? undefined,
-      });
+      return api.editProject(proj.project_id, document, { resolved });
     },
     onSuccess: (resp) => {
       applyServer(resp);
       setPostValidate({ ...resp.spec_markdown });
       setDirty(true); // the edit re-arms the gate: validate must run again
       setShowEditPanel(false);
+      setLastEdit(resp.project.edit_log.at(-1) ?? null);
       onServerUpdate();
     },
   });
@@ -253,6 +270,25 @@ function Workspace({
         </div>
       </div>
 
+      {lastEdit && tab === "spec" && (
+        <p className="tone-pass flex items-center gap-2 border-b px-4 py-1 text-xs">
+          <span>
+            Edit applied —{" "}
+            {Object.values(lastEdit.summary).flat().length} change
+            {Object.values(lastEdit.summary).flat().length === 1 ? "" : "s"} across{" "}
+            {Object.keys(lastEdit.summary).length} workflow
+            {Object.keys(lastEdit.summary).length === 1 ? "" : "s"}. Review the
+            diff in the right rail, then Validate.
+          </span>
+          <button
+            onClick={() => setLastEdit(null)}
+            aria-label="Dismiss"
+            className="ml-auto cursor-pointer font-medium hover:opacity-70"
+          >
+            ×
+          </button>
+        </p>
+      )}
       {dirty && tab === "spec" && (
         <p className="tone-gate border-b px-4 py-1 text-xs">
           Edited since last validate — Validate must run before Approve.
@@ -273,16 +309,33 @@ function Workspace({
 
       {showEditPanel && (
         <EditRequestPanel
+          projectId={proj.project_id}
+          slugs={slugs}
           editLog={proj.edit_log ?? []}
-          busy={editRequest.isPending}
-          error={editRequest.error ? (editRequest.error as ApiError).message : null}
-          onSubmit={(document, author) => editRequest.mutate({ document, author })}
+          specBefore={buffers}
+          confirmBusy={editRequest.isPending}
+          confirmError={
+            editRequest.error ? (editRequest.error as ApiError).message : null
+          }
+          confirmErrorStatus={
+            editRequest.error ? (editRequest.error as ApiError).status : null
+          }
+          onConfirm={(document, resolved) =>
+            editRequest.mutate({ document, resolved })
+          }
           onClose={() => setShowEditPanel(false)}
         />
       )}
 
       {tab === "results" ? (
-        <ResultsView project={proj} onRefetch={onServerUpdate} />
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+          {data.time_saved && (
+            <div className="px-4 pt-3">
+              <TimeSavedCard report={data.time_saved} />
+            </div>
+          )}
+          <ResultsView project={proj} onRefetch={onServerUpdate} />
+        </div>
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-[180px_1fr_320px] grid-rows-[minmax(0,1fr)]">
           {/* Left: workflow tabs */}
@@ -376,6 +429,8 @@ function Workspace({
               after={postValidate[active] ?? ""}
               onReAdd={reAdd}
             />
+            <EditHistory records={proj.edit_log ?? []} />
+            {data.time_saved && <TimeSavedCard report={data.time_saved} />}
             {(!canApprove || acceptIncomplete || allowUnconfirmed) && (
               <div className="card p-3 text-xs">
                 <p className="eyebrow mb-2">Approve overrides</p>

@@ -15,10 +15,12 @@ from workflow_compiler.agents import (
     WorkflowDiscovery,
 )
 from workflow_compiler.api.app import app
+from workflow_compiler.api.auth import get_user_store
 from workflow_compiler.api.dependencies import get_compiler
 from workflow_compiler.compiler import ReviewConfig
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.storage import InMemoryStateStore
+from workflow_compiler.storage.user_store import InMemoryUserStore
 
 # Exact MockProvider queue → run with the default-on review pipeline disabled
 # (review behavior is covered in tests/test_review_pipeline.py).
@@ -46,7 +48,18 @@ def compiler() -> WorkflowCompiler:
 @pytest.fixture
 def client(compiler: WorkflowCompiler) -> TestClient:
     app.dependency_overrides[get_compiler] = lambda: compiler
+    users = InMemoryUserStore()
+    app.dependency_overrides[get_user_store] = lambda: users
     with TestClient(app) as test_client:
+        # Every workflow endpoint requires a session; register signs the client in.
+        test_client.post(
+            "/auth/register",
+            json={
+                "email": "tester@example.com",
+                "password": "password123",
+                "display_name": "Tester",
+            },
+        )
         yield test_client
     app.dependency_overrides.clear()
 

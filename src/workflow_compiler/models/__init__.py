@@ -17,6 +17,7 @@ from workflow_compiler.models.cvpa import (
 from workflow_compiler.models.edit import (
     EditPlan,
     EditRecord,
+    ResolvedEdit,
     TriggerOp,
     WiringAction,
     XrefOp,
@@ -143,6 +144,7 @@ __all__ = [
     # edit (edit-request vocabulary + audit log)
     "EditPlan",
     "EditRecord",
+    "ResolvedEdit",
     "TriggerOp",
     "WiringAction",
     "XrefOp",

@@ -110,11 +110,42 @@ export interface WorkflowSegment {
   sliced: boolean;
 }
 
+export interface EditPatch {
+  action: string;
+  target: string;
+  payload?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface WiringOp {
+  action: string;
+  source_workflow?: string;
+  target_workflow?: string;
+  [key: string]: unknown;
+}
+
+/** Opaque preview handoff — round-tripped to the server verbatim on confirm. */
+export interface ResolvedEdit {
+  fingerprint: string;
+  [key: string]: unknown;
+}
+
+export interface EditPreviewResponse {
+  record: EditRecord;
+  resolved: ResolvedEdit;
+  spec_markdown: Record<string, string>;
+  workflows_added: string[];
+  workflows_removed: string[];
+}
+
 export interface EditRecord {
   edit_id: string;
   document: string;
   author: string | null;
   created_at: string;
+  resolved_patches: Record<string, EditPatch[]>;
+  trigger_ops: WiringOp[];
+  xref_ops: WiringOp[];
   workflows_added: string[];
   workflows_removed: string[];
   summary: Record<string, string[]>;
@@ -138,9 +169,34 @@ export interface CompilationProject {
   updated_at: string;
 }
 
+export interface TimeSavedRow {
+  step: string;
+  category: string;
+  label: string;
+  human_baseline_hours: number;
+  actual_seconds: number;
+  saved_hours: number;
+}
+
+/** Measured pipeline time vs. estimated human-team hours. Baselines are estimates. */
+export interface TimeSavedReport {
+  rows: TimeSavedRow[];
+  total_baseline_hours: number;
+  total_actual_seconds: number;
+  total_saved_hours: number;
+}
+
+export interface MetricsSummary {
+  projects: number;
+  total_baseline_hours: number;
+  total_actual_seconds: number;
+  total_saved_hours: number;
+}
+
 export interface ProjectResponse {
   project: CompilationProject;
   spec_markdown: Record<string, string>;
+  time_saved: TimeSavedReport | null;
   // slug → structural Mermaid source, built deterministically from the current
   // specs (a preview of what graph approval will build).
   diagrams: Record<string, string>;

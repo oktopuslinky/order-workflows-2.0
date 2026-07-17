@@ -228,4 +228,10 @@ compiled from `examples/ideal_multi_workflow.md`).
 - [ ] New workflows have a full document-format body
 - [ ] No workflow is both edited and removed
 - [ ] `## Reason` says why (it goes in the audit log)
+- [ ] Preview first: `edit --dry-run` on the CLI, or the web UI's **Preview edit** step —
+      nothing is applied until you confirm, and the web confirm replays exactly what the
+      preview showed (no re-interpretation)
 - [ ] After applying: review the re-written spec files, then `validate` → `approve-spec`
+
+The web UI ships this guide in-app at `/guide/edits` (with slug chips that insert
+`## Workflow:` sections for you).

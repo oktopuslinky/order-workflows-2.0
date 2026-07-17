@@ -57,12 +57,20 @@ export default function GuidePage() {
               </li>
             ))}
           </ol>
-          <Link
-            href="/"
-            className="mt-6 inline-block text-sm text-[var(--faint)] hover:text-[var(--accent)]"
-          >
-            ← Back to projects
-          </Link>
+          <div className="mt-6 flex flex-col gap-1">
+            <Link
+              href="/guide/edits"
+              className="text-sm text-[var(--faint)] hover:text-[var(--accent)]"
+            >
+              Edit request format →
+            </Link>
+            <Link
+              href="/"
+              className="text-sm text-[var(--faint)] hover:text-[var(--accent)]"
+            >
+              ← Back to projects
+            </Link>
+          </div>
         </div>
       </nav>
 

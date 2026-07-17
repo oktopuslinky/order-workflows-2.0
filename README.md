@@ -200,11 +200,17 @@ On success the edited workflows' versions are bumped, an `EditRecord` is appende
 project's audit log, the spec files are re-written, and the project returns to the spec gate —
 run `validate` then `approve-spec` to regenerate graphs, designs, and code.
 
+`--dry-run` previews the edit — full parse + interpretation + per-workflow summary — without
+applying or writing anything; re-run without the flag to apply. (The web UI goes further: its
+preview hands the interpreted operations back on confirm, so the apply replays exactly what was
+previewed with no second LLM call.)
+
 | Flag | Default | Description |
 |---|---|---|
 | `--workflow SLUG` | all | Only allow edits touching these workflow slug(s) (repeatable). |
 | `--author NAME` | — | Author recorded in the edit log. |
 | `--spec-dir DIR` | `./specs` | Where the updated spec files are re-written. |
+| `--dry-run` | off | Preview the edit (nothing is applied or saved). |
 | `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
 
 ### `approve-spec <project-id>` — compile every workflow through to code
@@ -305,6 +311,23 @@ reasoning models can also be slow; bump `--timeout` (e.g. `300.0`) to avoid
 uvicorn workflow_compiler.api.app:app --reload
 ```
 
+**Authentication.** The HTTP surface uses local accounts: register/sign in once and a signed
+HttpOnly session cookie rides every call. Projects created via the API carry an `owner_id`
+(recorded for attribution). By default every signed-in user can see and open every project;
+set `WORKFLOW_COMPILER_PROJECTS_SHARED=false` to restore per-owner isolation, where you see
+only your own projects (plus unowned legacy/CLI ones) and other accounts' projects answer 404.
+`author`/`reviewer` fields default to the signed-in user's display name. Accounts live as JSON
+under the state store (scrypt-hashed passwords, no external services); the CLI talks to the
+compiler directly and needs no login. This protects the HTTP surface only — anyone with
+filesystem access to the state store can read it.
+
+| Method | Path             | Body                                  | Purpose                                  |
+|--------|------------------|---------------------------------------|------------------------------------------|
+| POST   | `/auth/register` | `{email, password, display_name?}`    | Create a local account (signs you in).   |
+| POST   | `/auth/login`    | `{email, password}`                   | Sign in (sets the session cookie).       |
+| POST   | `/auth/logout`   | —                                     | Sign out.                                |
+| GET    | `/auth/me`       | —                                     | The signed-in user (401 when signed out).|
+
 Project endpoints (the compile → validate → approve pipeline; spec files travel as
 `spec_markdown: {slug: markdown}`):
 
@@ -314,9 +337,16 @@ Project endpoints (the compile → validate → approve pipeline; spec files tra
 | GET    | `/projects`                 | —                                           | List stored project ids.                        |
 | GET    | `/projects/{id}`            | —                                           | Load a project + rendered spec files.           |
 | PUT    | `/projects/{id}/spec`       | `{spec_markdown}`                           | Fold edited spec Markdown back in (no LLM).     |
-| POST   | `/projects/{id}/edit`       | `{edit_document, workflows?, author?}`      | Apply an edit-request document; re-arms the gate. |
+| POST   | `/projects/{id}/edit`       | `{edit_document, workflows?, author?, resolved?}` | Apply an edit-request document; re-arms the gate. Pass `resolved` from a preview to replay it with no LLM call (stale preview → 409). |
+| POST   | `/projects/{id}/edit/preview` | `{edit_document, workflows?}`             | Dry-run the edit: would-be summary, post-edit spec Markdown, and the `resolved` handoff blob. Persists nothing. |
 | POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes.   |
 | POST   | `/projects/{id}/approve`    | `{workflows?, reviewer?, spec_markdown?, accept_incomplete?, allow_unconfirmed_references?}` | Approve specs, compile every workflow. |
+| GET    | `/metrics/summary`          | —                                           | Total time saved across your projects (measured pipeline seconds vs. the configurable `baseline_hours` human-team estimates). |
+
+Project responses include `time_saved`: each pipeline step's measured wall-clock seconds
+(persisted per project as `stage_timings`) compared against configurable human-team estimates
+(`WORKFLOW_COMPILER_BASELINE_HOURS`, a JSON object of hours per step category). The baselines
+are **estimates, not measurements** — tune them to your organization.
 
 Per-workflow endpoints (viewing plus the manual override for below-threshold graphs):
 

@@ -14,6 +14,9 @@ export function ThemeToggle() {
 
   useEffect(() => {
     const current = document.documentElement.dataset.theme;
+    // Post-mount sync to the pre-paint theme; deliberately not during render so
+    // it can't cause a hydration mismatch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme(current === "dark" ? "dark" : "light");
   }, []);
 

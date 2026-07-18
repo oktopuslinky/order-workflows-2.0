@@ -57,6 +57,13 @@ def _register(client: TestClient, email: str, name: str) -> dict[str, str]:
     return payload
 
 
+def _project_ids(client: TestClient) -> list[str]:
+    """The visible project ids from the summary-shaped ``GET /projects`` payload."""
+    response = client.get("/projects")
+    assert response.status_code == 200
+    return [summary["project_id"] for summary in response.json()["projects"]]
+
+
 def test_register_login_me_logout_roundtrip(compiler: ProjectCompiler) -> None:
     with TestClient(app) as client:
         registered = _register(client, "Alice@Example.com", "Alice")
@@ -132,8 +139,8 @@ def test_projects_are_scoped_to_their_owner(
         project_id = compiled.json()["project"]["project_id"]
         assert compiled.json()["project"]["owner_id"] is not None
 
-        assert project_id in alice.get("/projects").json()["project_ids"]
-        assert project_id not in bob.get("/projects").json()["project_ids"]
+        assert project_id in _project_ids(alice)
+        assert project_id not in _project_ids(bob)
         # Another account's project answers 404, indistinguishable from absent.
         assert bob.get(f"/projects/{project_id}").status_code == 404
         assert alice.get(f"/projects/{project_id}").status_code == 200
@@ -150,7 +157,7 @@ def test_projects_shared_visible_across_users(compiler: ProjectCompiler) -> None
         project_id = compiled.json()["project"]["project_id"]
         assert compiled.json()["project"]["owner_id"] is not None
 
-        assert project_id in bob.get("/projects").json()["project_ids"]
+        assert project_id in _project_ids(bob)
         assert bob.get(f"/projects/{project_id}").status_code == 200
 
 
@@ -166,5 +173,69 @@ def test_legacy_unowned_projects_stay_visible(compiler: ProjectCompiler) -> None
         project.owner_id = None
         asyncio.run(compiler.save_project(project))
 
-        assert project_id in bob.get("/projects").json()["project_ids"]
+        assert project_id in _project_ids(bob)
         assert bob.get(f"/projects/{project_id}").status_code == 200
+
+
+def test_me_exposes_default_preferences(compiler: ProjectCompiler) -> None:
+    with TestClient(app) as client:
+        _register(client, "alice@example.com", "Alice")
+        prefs = client.get("/auth/me").json()["preferences"]
+        assert prefs["projects_page_size"] == 10
+        assert prefs["baseline_hours"] == {}
+
+
+def test_update_profile_persists_name_and_preferences(compiler: ProjectCompiler) -> None:
+    with TestClient(app) as client:
+        _register(client, "alice@example.com", "Alice")
+        updated = client.put(
+            "/auth/me",
+            json={
+                "display_name": "Alice R.",
+                "preferences": {
+                    "baseline_hours": {"compile": 10.0},
+                    "projects_page_size": 25,
+                },
+            },
+        )
+        assert updated.status_code == 200
+        body = updated.json()
+        assert body["display_name"] == "Alice R."
+        assert body["preferences"]["projects_page_size"] == 25
+        assert body["preferences"]["baseline_hours"] == {"compile": 10.0}
+        # Survives a fresh read (persisted to the user store).
+        me = client.get("/auth/me").json()
+        assert me["display_name"] == "Alice R."
+        assert me["preferences"]["baseline_hours"] == {"compile": 10.0}
+
+
+def test_update_profile_partial_leaves_other_fields(compiler: ProjectCompiler) -> None:
+    with TestClient(app) as client:
+        _register(client, "alice@example.com", "Alice")
+        client.put("/auth/me", json={"preferences": {"projects_page_size": 50}})
+        # Name omitted → unchanged; preferences applied.
+        me = client.get("/auth/me").json()
+        assert me["display_name"] == "Alice"
+        assert me["preferences"]["projects_page_size"] == 50
+
+
+def test_settings_defaults_returns_config_baselines(compiler: ProjectCompiler) -> None:
+    with TestClient(app) as client:
+        _register(client, "alice@example.com", "Alice")
+        defaults = client.get("/settings/defaults")
+        assert defaults.status_code == 200
+        body = defaults.json()
+        # Mirrors config.py Settings.baseline_hours categories.
+        assert set(body["baseline_hours"]) >= {
+            "discovery",
+            "spec",
+            "validate",
+            "compile",
+            "edit",
+        }
+        assert body["projects_page_size"] == 10
+
+
+def test_settings_defaults_requires_auth(compiler: ProjectCompiler) -> None:
+    with TestClient(app) as client:
+        assert client.get("/settings/defaults").status_code == 401

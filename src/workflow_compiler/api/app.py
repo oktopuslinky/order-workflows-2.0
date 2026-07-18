@@ -3,12 +3,22 @@
 Project endpoints (the compile → validate → approve pipeline):
 
 - ``POST /projects/compile``        — segment a document into reviewed specs.
-- ``GET  /projects``                — list stored project ids.
+- ``GET  /projects``                — list visible projects as summaries.
 - ``GET  /projects/{id}``           — load a project + rendered spec files.
+- ``PATCH /projects/{id}``          — set/clear a project nickname (metadata only).
 - ``PUT  /projects/{id}/spec``      — fold edited spec Markdown back in (no LLM).
 - ``POST /projects/{id}/edit``      — apply an edit-request document, re-arm the gate.
 - ``POST /projects/{id}/validate``  — run the spec validator passes.
 - ``POST /projects/{id}/approve``   — approve specs, compile every workflow.
+
+Long stages can also run in the background so they can be canceled and survive
+the user navigating away (one run per project at a time, unlimited across
+projects; canceling never persists a partial result):
+
+- ``POST /projects/{id}/jobs``      — start validate/approve as a background run.
+- ``GET  /jobs``                    — list the caller's runs (``?project_id=``).
+- ``GET  /jobs/{job_id}``           — one run's status (+ project when done).
+- ``POST /jobs/{job_id}/cancel``    — cancel a run, leaving the project untouched.
 
 Per-workflow endpoints (viewing plus the manual override for workflows whose
 graph health fell below the auto-approve threshold):
@@ -20,7 +30,10 @@ graph health fell below the auto-approve threshold):
 - ``GET  /health``            — liveness probe.
 
 Auth (local accounts; see ``api/auth.py``): ``POST /auth/register``,
-``POST /auth/login``, ``POST /auth/logout``, ``GET /auth/me``. Every project
+``POST /auth/login``, ``POST /auth/logout``, ``GET /auth/me``,
+``PUT /auth/me`` (display name + preferences). ``GET /settings/defaults``
+exposes the org-wide baseline estimates so the Settings UI can offer reset.
+Every project
 and workflow endpoint requires a signed-in session. Projects carry an
 ``owner_id`` (recorded for attribution — who created/edits each workflow). By
 default (``projects_shared``) every signed-in user can see and open every
@@ -31,10 +44,12 @@ projects (``owner_id`` is None, e.g. CLI-created) stay visible to everyone.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 
 from workflow_compiler import __version__
 from workflow_compiler.api.auth import (
@@ -51,22 +66,29 @@ from workflow_compiler.api.dependencies import (
     get_project_compiler,
     project_compiler_for_model,
 )
+from workflow_compiler.api.jobs import Job, JobConflictError, JobManager
 from workflow_compiler.api.schemas import (
     ApproveRequest,
     CvpaPreviewRequest,
     CvpaPreviewResponse,
     EditPreviewResponse,
+    JobResponse,
+    JobStartRequest,
     LocalModelList,
     LoginRequest,
     MetricsSummary,
+    ProfileUpdateRequest,
     ProjectApproveRequest,
     ProjectCompileRequest,
     ProjectEditRequest,
     ProjectFilesResponse,
-    ProjectIdList,
+    ProjectListResponse,
     ProjectResponse,
+    ProjectSummary,
     RegisterRequest,
     RejectRequest,
+    RenameProjectRequest,
+    SettingsDefaults,
     SpecUpdateRequest,
     UserPublic,
     WorkflowIdList,
@@ -93,6 +115,8 @@ from workflow_compiler.project_compiler import ProjectCompiler
 from workflow_compiler.spec import render_spec
 from workflow_compiler.storage.user_store import UserStore
 
+logger = logging.getLogger(__name__)
+
 
 def _check_owner(project: CompilationProject, user: User) -> None:
     """404 for another account's project — don't leak that the id exists.
@@ -110,7 +134,33 @@ def _check_owner(project: CompilationProject, user: User) -> None:
 
 def _public(user: User) -> UserPublic:
     return UserPublic(
-        user_id=user.user_id, email=user.email, display_name=user.display_name
+        user_id=user.user_id,
+        email=user.email,
+        display_name=user.display_name,
+        preferences=user.preferences,
+    )
+
+
+def _effective_baselines(user: User | None) -> dict[str, float]:
+    """Merge the caller's per-user baseline overrides over the org-wide defaults.
+
+    Only the categories the user set override; the rest inherit the config
+    estimates. ``None`` (no signed-in user) returns the config defaults.
+    """
+    defaults = get_settings().baseline_hours
+    if user is None:
+        return defaults
+    return {**defaults, **user.preferences.baseline_hours}
+
+
+def _project_summary(project: CompilationProject) -> ProjectSummary:
+    """Project a full project onto the lightweight list row."""
+    return ProjectSummary(
+        project_id=project.project_id,
+        nickname=project.nickname,
+        stage=project.stage,
+        workflow_count=len(project.specs),
+        updated_at=project.updated_at,
     )
 
 
@@ -147,6 +197,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Background-run registry (validate/approve). One instance per app so tests
+    # that rebuild the app start clean; a run is an asyncio.Task that outlives
+    # the request, and cancelling one never persists a partial result.
+    jobs = JobManager()
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:
@@ -208,6 +263,31 @@ def create_app() -> FastAPI:
     async def me(user: User = Depends(get_current_user)) -> UserPublic:
         """Return the signed-in user (401 when there is no valid session)."""
         return _public(user)
+
+    @app.put("/auth/me", response_model=UserPublic, tags=["auth"])
+    async def update_me(
+        request: ProfileUpdateRequest,
+        user: User = Depends(get_current_user),
+        store: UserStore = Depends(get_user_store),
+    ) -> UserPublic:
+        """Update the signed-in user's display name and/or preferences.
+
+        Omitted fields are left unchanged; preferences (page size + baseline
+        overrides) are replaced wholesale when provided.
+        """
+        if request.display_name is not None:
+            user.display_name = request.display_name.strip()
+        if request.preferences is not None:
+            user.preferences = request.preferences
+        await store.save(user)
+        return _public(user)
+
+    @app.get("/settings/defaults", response_model=SettingsDefaults, tags=["meta"])
+    async def settings_defaults(
+        user: User = Depends(get_current_user),
+    ) -> SettingsDefaults:
+        """Org-wide defaults powering the Settings UI (show 'default: X' + reset)."""
+        return SettingsDefaults(baseline_hours=dict(get_settings().baseline_hours))
 
     @app.get("/providers/local/models", response_model=LocalModelList, tags=["providers"])
     async def local_models() -> LocalModelList:
@@ -273,16 +353,22 @@ def create_app() -> FastAPI:
         return WorkflowIdList(workflow_ids=ids)
 
     async def _project_response(
-        project: CompilationProject, compiler: ProjectCompiler
+        project: CompilationProject,
+        compiler: ProjectCompiler,
+        user: User | None = None,
     ) -> ProjectResponse:
-        """Wrap a project with its rendered spec Markdown and structural diagrams."""
+        """Wrap a project with its rendered spec Markdown and structural diagrams.
+
+        ``user`` supplies per-user baseline overrides for the time-saved figure;
+        when omitted the org-wide config defaults are used.
+        """
         return ProjectResponse(
             project=project,
             spec_markdown={
                 spec.slug: render_spec(spec, project.cross_references, project.triggers)
                 for spec in project.specs
             },
-            time_saved=compute_time_saved(project, get_settings().baseline_hours),
+            time_saved=compute_time_saved(project, _effective_baselines(user)),
             diagrams=await compiler.build_diagrams(project),
         )
 
@@ -299,9 +385,11 @@ def create_app() -> FastAPI:
             compiler.compile_document(request.document_text, persist=request.persist)
         )
         project.owner_id = user.user_id
+        if request.nickname and request.nickname.strip():
+            project.nickname = request.nickname.strip()
         if request.persist:
             await compiler.save_project(project)
-        return await _project_response(project, compiler)
+        return await _project_response(project, compiler, user)
 
     @app.post(
         "/projects/compile-upload", response_model=ProjectResponse, tags=["projects"]
@@ -310,6 +398,7 @@ def create_app() -> FastAPI:
         file: UploadFile = File(..., description="A .docx/.pdf/.md/.html/.txt document."),
         persist: bool = Form(default=True),
         model: str | None = Form(default=None),
+        nickname: str | None = Form(default=None),
         compiler: ProjectCompiler = Depends(get_project_compiler),
         user: User = Depends(get_current_user),
     ) -> ProjectResponse:
@@ -327,9 +416,11 @@ def create_app() -> FastAPI:
             compiler = project_compiler_for_model(model)
         project = await _guard(compiler.compile_document(content.text, persist=persist))
         project.owner_id = user.user_id
+        if nickname and nickname.strip():
+            project.nickname = nickname.strip()
         if persist:
             await compiler.save_project(project)
-        return await _project_response(project, compiler)
+        return await _project_response(project, compiler, user)
 
     @app.get("/metrics/summary", response_model=MetricsSummary, tags=["projects"])
     async def metrics_summary(
@@ -344,10 +435,18 @@ def create_app() -> FastAPI:
         summary = MetricsSummary()
         shared = get_settings().projects_shared
         for project_id in await _guard(compiler.list_projects()):
-            project = await _guard(compiler.load_project(project_id))
+            try:
+                project = await compiler.load_project(project_id)
+            except (StateNotFoundError, ValidationError):
+                # One corrupt/legacy project file must not take down the whole
+                # metrics page; per-project endpoints still surface the error.
+                logger.warning(
+                    "Skipping unloadable project %r in metrics summary", project_id
+                )
+                continue
             if not shared and project.owner_id not in (None, user.user_id):
                 continue
-            report = compute_time_saved(project, get_settings().baseline_hours)
+            report = compute_time_saved(project, _effective_baselines(user))
             if report is None:
                 continue
             summary.projects += 1
@@ -356,25 +455,34 @@ def create_app() -> FastAPI:
             summary.total_saved_hours += report.total_saved_hours
         return summary
 
-    @app.get("/projects", response_model=ProjectIdList, tags=["projects"])
+    @app.get("/projects", response_model=ProjectListResponse, tags=["projects"])
     async def list_projects(
         compiler: ProjectCompiler = Depends(get_project_compiler),
         user: User = Depends(get_current_user),
-    ) -> ProjectIdList:
-        """List visible project ids.
+    ) -> ProjectListResponse:
+        """List visible projects as summaries (newest first).
 
         With ``projects_shared`` (the default) every stored project is listed;
-        otherwise the caller's own projects plus unowned legacy ones.
+        otherwise the caller's own projects plus unowned legacy ones. Each
+        project is loaded to project its label/stage/timestamp for the UI;
+        unloadable files are skipped (per-project endpoints still surface the
+        error).
         """
-        ids = await _guard(compiler.list_projects())
-        if get_settings().projects_shared:
-            return ProjectIdList(project_ids=ids)
-        visible: list[str] = []
-        for project_id in ids:
-            project = await _guard(compiler.load_project(project_id))
-            if project.owner_id in (None, user.user_id):
-                visible.append(project_id)
-        return ProjectIdList(project_ids=visible)
+        shared = get_settings().projects_shared
+        summaries: list[ProjectSummary] = []
+        for project_id in await _guard(compiler.list_projects()):
+            try:
+                project = await compiler.load_project(project_id)
+            except (StateNotFoundError, ValidationError):
+                logger.warning(
+                    "Skipping unloadable project %r in project listing", project_id
+                )
+                continue
+            if not shared and project.owner_id not in (None, user.user_id):
+                continue
+            summaries.append(_project_summary(project))
+        summaries.sort(key=lambda s: s.updated_at, reverse=True)
+        return ProjectListResponse(projects=summaries)
 
     @app.get("/projects/{project_id}", response_model=ProjectResponse, tags=["projects"])
     async def get_project(
@@ -385,7 +493,25 @@ def create_app() -> FastAPI:
         """Load a stored project plus its rendered spec files."""
         project = await _guard(compiler.load_project(project_id))
         _check_owner(project, user)
-        return await _project_response(project, compiler)
+        return await _project_response(project, compiler, user)
+
+    @app.patch(
+        "/projects/{project_id}", response_model=ProjectSummary, tags=["projects"]
+    )
+    async def rename_project(
+        project_id: str,
+        request: RenameProjectRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> ProjectSummary:
+        """Set or clear a project's nickname (a cheap metadata update — no recompile)."""
+        project = await _guard(compiler.load_project(project_id))
+        _check_owner(project, user)
+        nickname = (request.nickname or "").strip()
+        project.nickname = nickname or None
+        project.touch()
+        await compiler.save_project(project)
+        return _project_summary(project)
 
     @app.get(
         "/projects/{project_id}/files", response_model=ProjectFilesResponse, tags=["projects"]
@@ -430,7 +556,7 @@ def create_app() -> FastAPI:
         project = await _guard(
             compiler.update_specs(project_id, request.spec_markdown)
         )
-        return await _project_response(project, compiler)
+        return await _project_response(project, compiler, user)
 
     @app.post(
         "/projects/{project_id}/edit", response_model=ProjectResponse, tags=["projects"]
@@ -452,7 +578,7 @@ def create_app() -> FastAPI:
                 resolved=request.resolved,
             )
         )
-        return await _project_response(project, compiler)
+        return await _project_response(project, compiler, user)
 
     @app.post(
         "/projects/{project_id}/edit/preview",
@@ -509,7 +635,7 @@ def create_app() -> FastAPI:
                 project_id, markdown_by_slug=request.spec_markdown or None
             )
         )
-        return await _project_response(project, compiler)
+        return await _project_response(project, compiler, user)
 
     @app.post(
         "/projects/{project_id}/approve", response_model=ProjectResponse, tags=["projects"]
@@ -532,7 +658,126 @@ def create_app() -> FastAPI:
                 allow_unconfirmed_references=request.allow_unconfirmed_references,
             )
         )
-        return await _project_response(project, compiler)
+        return await _project_response(project, compiler, user)
+
+    # ------------------------------------------------------------------ #
+    # Background jobs: cancelable validate/approve that survive navigation
+    # ------------------------------------------------------------------ #
+    # The synchronous /validate and /approve above stay for the CLI-parity path
+    # and existing tests. The frontend instead starts a run here so it can cancel
+    # it and let it keep running after the user leaves the project page.
+
+    def _authorize_job(job: Job, user: User) -> None:
+        """404 a job the caller may not see — mirrors project visibility."""
+        if get_settings().projects_shared:
+            return
+        if job.owner_id is not None and job.owner_id != user.user_id:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"No job with id {job.job_id!r}."
+            )
+
+    def _job_response(job: Job, project: ProjectResponse | None = None) -> JobResponse:
+        return JobResponse(
+            job_id=job.job_id,
+            project_id=job.project_id,
+            kind=job.kind,
+            status=job.status,
+            error=job.error,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+            project=project,
+        )
+
+    @app.post(
+        "/projects/{project_id}/jobs",
+        response_model=JobResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["jobs"],
+    )
+    async def start_project_job(
+        project_id: str,
+        request: JobStartRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> JobResponse:
+        """Start validate/approve in the background and return immediately (202).
+
+        The run keeps going if the client navigates away; poll ``GET /jobs`` to
+        follow it and ``POST /jobs/{id}/cancel`` to stop it (nothing is persisted
+        on cancel, so the project is left as it was). At most one run per project
+        may be in flight — a second start answers 409.
+        """
+        _check_owner(await _guard(compiler.load_project(project_id)), user)
+
+        def run() -> Awaitable[object]:
+            if request.kind == "validate":
+                return compiler.validate_specs(
+                    project_id, markdown_by_slug=request.spec_markdown or None
+                )
+            return compiler.approve_spec(
+                project_id,
+                workflows=request.workflows,
+                reviewer=request.reviewer or user.display_name,
+                markdown_by_slug=request.spec_markdown or None,
+                accept_incomplete=request.accept_incomplete,
+                allow_unconfirmed_references=request.allow_unconfirmed_references,
+            )
+
+        try:
+            job = await jobs.start(
+                project_id=project_id,
+                kind=request.kind,
+                owner_id=user.user_id,
+                run=run,
+            )
+        except JobConflictError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        return _job_response(job)
+
+    @app.get("/jobs", response_model=list[JobResponse], tags=["jobs"])
+    async def list_jobs(
+        project_id: str | None = None,
+        user: User = Depends(get_current_user),
+    ) -> list[JobResponse]:
+        """Jobs visible to the caller (all users' when projects are shared)."""
+        owner_filter = None if get_settings().projects_shared else user.user_id
+        return [
+            _job_response(j)
+            for j in jobs.list(owner_id=owner_filter, project_id=project_id)
+        ]
+
+    @app.get("/jobs/{job_id}", response_model=JobResponse, tags=["jobs"])
+    async def get_job(
+        job_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> JobResponse:
+        """One job's status, with the finished project embedded on success."""
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"No job with id {job_id!r}.")
+        _authorize_job(job, user)
+        project: ProjectResponse | None = None
+        if job.status == "succeeded":
+            loaded = await _guard(compiler.load_project(job.project_id))
+            project = await _project_response(loaded, compiler, user)
+        return _job_response(job, project)
+
+    @app.post("/jobs/{job_id}/cancel", response_model=JobResponse, tags=["jobs"])
+    async def cancel_job(
+        job_id: str,
+        user: User = Depends(get_current_user),
+    ) -> JobResponse:
+        """Cancel a running job. Anything the run had not yet persisted is not
+        saved, so the project is left exactly as it was before the run started.
+        Canceling an already-finished job is a no-op that returns its state."""
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"No job with id {job_id!r}.")
+        _authorize_job(job, user)
+        settled = await jobs.cancel(job_id)
+        assert settled is not None  # just fetched above; cancel returns the same job
+        return _job_response(settled)
 
     @app.post(
         "/projects/{project_id}/cvpa", response_model=CvpaPreviewResponse, tags=["projects"]

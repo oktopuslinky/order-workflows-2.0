@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from workflow_compiler.models.base import WorkflowBaseModel
 
@@ -42,6 +42,21 @@ _TAGS: dict[Severity, str] = {
 }
 
 
+def _legacy_severity(message: str) -> Severity:
+    """Severity for a pre-SpecFinding flat finding string, from its prefix.
+
+    ``blocked:`` and ``graph health …`` were gate messages (today written as
+    BLOCKING); ``ingest:`` recorded folded-in edits (INFO); everything else was
+    an advisory ``grounding:`` / ``consistency:`` validator note (WARNING).
+    """
+    head = message.split(":", 1)[0].strip().lower()
+    if head == "blocked" or message.startswith("graph health"):
+        return Severity.BLOCKING
+    if head == "ingest":
+        return Severity.INFO
+    return Severity.WARNING
+
+
 class SpecFinding(WorkflowBaseModel):
     """One structured spec-validation finding with severity and location."""
 
@@ -62,6 +77,14 @@ class SpecFinding(WorkflowBaseModel):
     suggestion: str | None = Field(
         default=None, description="Concrete action that resolves the finding."
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_string(cls, data: object) -> object:
+        """Projects saved before SpecFinding existed stored findings as flat strings."""
+        if isinstance(data, str):
+            return {"message": data, "severity": _legacy_severity(data)}
+        return data
 
     @property
     def tag(self) -> str:

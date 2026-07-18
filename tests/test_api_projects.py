@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -11,8 +14,9 @@ from workflow_compiler.api.auth import get_user_store
 from workflow_compiler.api.dependencies import get_compiler, get_project_compiler
 from workflow_compiler.compiler import ReviewConfig
 from workflow_compiler.llm.providers.mock import MockProvider
+from workflow_compiler.models import CompilationProject
 from workflow_compiler.storage import InMemoryStateStore
-from workflow_compiler.storage.project_store import InMemoryProjectStore
+from workflow_compiler.storage.project_store import FileProjectStore, InMemoryProjectStore
 from workflow_compiler.storage.user_store import InMemoryUserStore
 
 _NO_REVIEW = ReviewConfig(enabled=False)
@@ -72,7 +76,11 @@ def test_project_compile_returns_specs(client: TestClient) -> None:
 
     project_id = body["project"]["project_id"]
     listed = client.get("/projects")
-    assert project_id in listed.json()["project_ids"]
+    summaries = listed.json()["projects"]
+    row = next(s for s in summaries if s["project_id"] == project_id)
+    assert row["stage"] == "spec_drafted"
+    assert row["workflow_count"] >= 1
+    assert row["nickname"] is None
     got = client.get(f"/projects/{project_id}")
     assert got.status_code == 200
     assert got.json()["project"]["project_id"] == project_id
@@ -298,3 +306,111 @@ def test_project_edit_unknown_project_is_404(client: TestClient) -> None:
     edit_doc = "# Edit Request\n\n## Remove Workflow: anything\n"
     response = client.post("/projects/nope/edit", json={"edit_document": edit_doc})
     assert response.status_code == 404
+
+
+def test_project_compile_with_nickname(client: TestClient) -> None:
+    response = client.post(
+        "/projects/compile",
+        json={"document_text": _DOCUMENT, "nickname": "  Orders pipeline  "},
+    )
+    assert response.status_code == 200
+    project_id = response.json()["project"]["project_id"]
+    # Nickname is trimmed and stored on the project ...
+    assert response.json()["project"]["nickname"] == "Orders pipeline"
+    # ... and surfaces on the list summary.
+    row = next(
+        s for s in client.get("/projects").json()["projects"]
+        if s["project_id"] == project_id
+    )
+    assert row["nickname"] == "Orders pipeline"
+
+
+def test_project_rename_sets_and_clears_nickname(client: TestClient) -> None:
+    compiled = client.post("/projects/compile", json={"document_text": _DOCUMENT})
+    project_id = compiled.json()["project"]["project_id"]
+
+    named = client.patch(f"/projects/{project_id}", json={"nickname": "Refund flow"})
+    assert named.status_code == 200
+    assert named.json()["nickname"] == "Refund flow"
+    assert named.json()["project_id"] == project_id
+    # Persisted on the full project too.
+    assert client.get(f"/projects/{project_id}").json()["project"]["nickname"] == "Refund flow"
+
+    # An empty/blank nickname clears it back to None.
+    cleared = client.patch(f"/projects/{project_id}", json={"nickname": "   "})
+    assert cleared.status_code == 200
+    assert cleared.json()["nickname"] is None
+
+
+def test_project_rename_unknown_project_is_404(client: TestClient) -> None:
+    assert client.patch("/projects/nope", json={"nickname": "x"}).status_code == 404
+
+
+def test_per_user_baseline_override_changes_time_saved(client: TestClient) -> None:
+    # Compile → validate → approve so the project accrues compile stage_timings.
+    compiled = client.post("/projects/compile", json={"document_text": _DOCUMENT})
+    project_id = compiled.json()["project"]["project_id"]
+    client.post(f"/projects/{project_id}/validate", json={"spec_markdown": {}})
+    approved = client.post(
+        f"/projects/{project_id}/approve", json={"accept_incomplete": True}
+    )
+    assert approved.json()["project"]["stage"] == "completed"
+
+    baseline_saved = client.get(f"/projects/{project_id}").json()["time_saved"]
+    assert baseline_saved is not None
+
+    # Slash the human 'compile' baseline; the saved-hours figure must drop.
+    client.put(
+        "/auth/me",
+        json={"preferences": {"baseline_hours": {"compile": 0.5}, "projects_page_size": 10}},
+    )
+    lowered = client.get(f"/projects/{project_id}").json()["time_saved"]
+    assert lowered is not None
+    assert lowered["total_saved_hours"] < baseline_saved["total_saved_hours"]
+    # The metrics summary reflects the same per-user override.
+    assert (
+        client.get("/metrics/summary").json()["total_saved_hours"]
+        == pytest.approx(lowered["total_saved_hours"])
+    )
+
+
+def test_metrics_summary_skips_unloadable_projects(tmp_path: Path) -> None:
+    # A corrupt or legacy project file on disk must not 500 the metrics page.
+    provider = MockProvider(script_defaults=True)
+    inner = WorkflowCompiler(
+        llm_provider=provider, state_store=InMemoryStateStore(), review=_NO_REVIEW
+    )
+    store = FileProjectStore(tmp_path)
+    compiler = ProjectCompiler(
+        llm_provider=provider,
+        workflow_compiler=inner,
+        project_store=store,
+        segmentation_review=False,
+    )
+    good = CompilationProject(
+        document_text="doc", stage_timings={"workflow-segmentation": 30.0}
+    )
+    asyncio.run(store.save(good))
+    (tmp_path / "projects" / "broken.json").write_text("{not valid json", encoding="utf-8")
+
+    app.dependency_overrides[get_project_compiler] = lambda: compiler
+    app.dependency_overrides[get_compiler] = lambda: inner
+    users = InMemoryUserStore()
+    app.dependency_overrides[get_user_store] = lambda: users
+    try:
+        with TestClient(app) as test_client:
+            test_client.post(
+                "/auth/register",
+                json={
+                    "email": "tester@example.com",
+                    "password": "password123",
+                    "display_name": "Tester",
+                },
+            )
+            response = test_client.get("/metrics/summary")
+            assert response.status_code == 200
+            body = response.json()
+            assert body["projects"] == 1
+            assert body["total_actual_seconds"] == pytest.approx(30.0)
+    finally:
+        app.dependency_overrides.clear()

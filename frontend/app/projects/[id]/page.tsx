@@ -1,11 +1,12 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import { APPROVE_STEPS, STAGE_LABEL, STAGE_TONE } from "@/lib/format";
+import { useRuns } from "@/lib/runs";
+import { APPROVE_STEPS, shortId, STAGE_LABEL, STAGE_TONE } from "@/lib/format";
 import { DiagramPanel } from "@/components/DiagramPanel";
 import { EditHistory } from "@/components/EditHistory";
 import { EditRequestPanel } from "@/components/EditRequestPanel";
@@ -15,6 +16,7 @@ import { RunningOverlay } from "@/components/RunningOverlay";
 import { SpecEditor } from "@/components/SpecEditor";
 import { SpecPreview } from "@/components/SpecPreview";
 import { TimeSavedCard } from "@/components/TimeSaved";
+import { WorkspaceSkeleton } from "@/components/Skeleton";
 import {
   DependencyChecklist,
   EventKindEditor,
@@ -23,6 +25,7 @@ import {
   ValidateDiff,
 } from "@/components/StructuredWidgets";
 import type {
+  CompilationProject,
   EditRecord,
   ProjectResponse,
   ProjectStage,
@@ -46,9 +49,7 @@ export default function WorkspacePage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {project.isLoading && (
-        <p className="p-6 text-sm text-[var(--muted)]">Loading project…</p>
-      )}
+      {project.isLoading && <WorkspaceSkeleton />}
       {project.error && (
         <div className="p-6 text-sm text-[var(--block)]">
           {(project.error as ApiError).message}
@@ -69,6 +70,124 @@ export default function WorkspacePage() {
   );
 }
 
+/**
+ * Project identity in the action bar: the nickname (editable in place, same
+ * flow as the Projects list) with the full project id alongside, so it's
+ * always clear which project is open.
+ */
+function ProjectIdentity({
+  project,
+  onRenamed,
+}: {
+  project: CompilationProject;
+  onRenamed: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(project.nickname ?? "");
+
+  const rename = useMutation({
+    mutationFn: (nickname: string | null) =>
+      api.renameProject(project.project_id, nickname),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      setEditing(false);
+      onRenamed();
+    },
+  });
+
+  const label = project.nickname?.trim();
+
+  if (editing) {
+    return (
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          rename.mutate(draft.trim() || null);
+        }}
+        className="flex min-w-0 items-center gap-1.5 rounded-md border border-[var(--accent)] px-1.5 py-0.5"
+      >
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setEditing(false);
+          }}
+          placeholder="Project nickname"
+          aria-label="Project nickname"
+          className="w-44 min-w-0 bg-transparent px-1 text-sm outline-none"
+        />
+        <button
+          type="submit"
+          disabled={rename.isPending}
+          className="btn btn-primary px-2 py-0.5 text-xs"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(false)}
+          className="btn btn-ghost px-2 py-0.5 text-xs"
+        >
+          Cancel
+        </button>
+        {rename.error && (
+          <span className="text-xs text-[var(--block)]">
+            {(rename.error as ApiError).message}
+          </span>
+        )}
+      </form>
+    );
+  }
+
+  return (
+    <div className="group flex min-w-0 items-baseline gap-1.5">
+      <span
+        className={`truncate text-sm ${
+          label
+            ? "font-semibold text-[var(--ink)]"
+            : "font-mono text-[var(--muted)]"
+        }`}
+        title={label || project.project_id}
+      >
+        {label || shortId(project.project_id)}
+      </span>
+      <button
+        type="button"
+        onClick={() => {
+          setDraft(project.nickname ?? "");
+          setEditing(true);
+        }}
+        aria-label={label ? `Rename ${label}` : "Name this project"}
+        title="Rename"
+        className="rounded-md p-1 text-[var(--faint)] transition hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
+      </button>
+      <span
+        className="hidden select-all font-mono text-[11px] text-[var(--faint)] md:inline"
+        title="Project id"
+      >
+        {project.project_id}
+      </span>
+    </div>
+  );
+}
+
 function Workspace({
   data,
   onServerUpdate,
@@ -78,6 +197,12 @@ function Workspace({
 }) {
   const proj = data.project;
   const slugs = proj.specs.map((s) => s.slug);
+
+  // Background validate/approve runs live in the global RunsProvider, so a run
+  // this page started keeps going after the user navigates home and back.
+  const runs = useRuns();
+  const job = runs.jobForProject(proj.project_id);
+  const running = job?.status === "running";
 
   const [buffers, setBuffers] = useState<Record<string, string>>(
     () => ({ ...data.spec_markdown }),
@@ -121,17 +246,13 @@ function Workspace({
     },
   });
 
-  const validate = useMutation({
+  // Starting a run only kicks it off (it finishes in the background). The
+  // result is applied by the completion effect below, keyed on the job id, so
+  // it runs even if the user was on another page when the run finished.
+  const startValidate = useMutation({
     mutationFn: () => {
       setPreValidate({ ...buffers });
-      return api.validate(proj.project_id, buffers);
-    },
-    onSuccess: (resp) => {
-      applyServer(resp);
-      setPostValidate({ ...resp.spec_markdown });
-      setDirty(false);
-      setLastEdit(null);
-      onServerUpdate();
+      return runs.start(proj.project_id, { kind: "validate", spec_markdown: buffers });
     },
   });
 
@@ -159,19 +280,54 @@ function Workspace({
     },
   });
 
-  const approve = useMutation({
-    mutationFn: () =>
-      api.approve(proj.project_id, {
-        specMarkdown: buffers,
-        acceptIncomplete,
-        allowUnconfirmedReferences: allowUnconfirmed,
-      }),
-    onSuccess: (resp) => {
-      applyServer(resp);
-      onServerUpdate();
-      setTab("results");
+  const startApprove = useMutation({
+    mutationFn: () => {
+      setPreValidate({ ...buffers });
+      return runs.start(proj.project_id, {
+        kind: "approve",
+        spec_markdown: buffers,
+        accept_incomplete: acceptIncomplete,
+        allow_unconfirmed_references: allowUnconfirmed,
+      });
     },
   });
+
+  const cancelRun = useMutation({
+    mutationFn: (jobId: string) => runs.cancel(jobId),
+  });
+
+  // Apply a finished run's result once, on the running → terminal edge — but
+  // only for a run we actually saw in flight on this page (sawRunning). A run
+  // that finished while the user was elsewhere already had the project query
+  // refreshed by the RunsProvider, so we must not re-hijack the tab for it. We
+  // pull the embedded ProjectResponse from GET /jobs/{id} so the diff view and
+  // tab switch happen exactly as they did in the old synchronous onSuccess.
+  const handledJob = useRef<string | null>(null);
+  const sawRunning = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!job || job.project_id !== proj.project_id) return;
+    if (job.status === "running") {
+      sawRunning.current.add(job.job_id);
+      return;
+    }
+    if (!sawRunning.current.has(job.job_id)) return;
+    if (handledJob.current === job.job_id) return;
+    handledJob.current = job.job_id;
+    if (job.status !== "succeeded") return; // failed/canceled: nothing to apply
+    api.getJob(job.job_id).then((full) => {
+      if (!full.project) return;
+      applyServer(full.project);
+      setPostValidate({ ...full.project.spec_markdown });
+      if (job.kind === "validate") {
+        setDirty(false);
+        setLastEdit(null);
+      } else {
+        setTab("results");
+      }
+      onServerUpdate();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.job_id, job?.status]);
 
   const findings = proj.validation_findings[active] ?? [];
   const blockingCount = useMemo(
@@ -187,10 +343,13 @@ function Workspace({
     proj.spec_approval_status === "approved" ||
     Object.keys(proj.workflow_ids).length > 0;
   const blockedSlugs = slugs.filter((slug) => !proj.workflow_ids[slug]);
-  const busy =
-    save.isPending || validate.isPending || approve.isPending || editRequest.isPending;
+  const starting = startValidate.isPending || startApprove.isPending;
+  const busy = save.isPending || editRequest.isPending || running || starting;
   // Flow rule: Approve only after a validate has run on the current content.
   const canApprove = !dirty && !busy;
+  // Cover the brief window between clicking a run and the job appearing in the
+  // polled list, so the overlay never flickers off mid-start.
+  const showOverlay = running || starting;
 
   function updateActive(md: string) {
     setBuffers((b) => ({ ...b, [active]: md }));
@@ -215,6 +374,7 @@ function Workspace({
         >
           ←
         </Link>
+        <ProjectIdentity project={proj} onRenamed={onServerUpdate} />
         <span className={`pill ${STAGE_TONE[proj.stage]}`}>
           {STAGE_LABEL[proj.stage]}
         </span>
@@ -252,21 +412,41 @@ function Workspace({
           >
             Save
           </button>
-          <button
-            onClick={() => validate.mutate()}
-            disabled={busy}
-            className="btn btn-gate"
-          >
-            Validate
-          </button>
-          <button
-            onClick={() => approve.mutate()}
-            disabled={!canApprove}
-            title={dirty ? "Run Validate first (approve checks the last validate)" : ""}
-            className="btn btn-pass"
-          >
-            Approve
-          </button>
+          {running && job?.kind === "validate" ? (
+            <button
+              onClick={() => job && cancelRun.mutate(job.job_id)}
+              disabled={cancelRun.isPending}
+              className="btn btn-danger"
+            >
+              {cancelRun.isPending ? "Canceling…" : "Cancel validate"}
+            </button>
+          ) : (
+            <button
+              onClick={() => startValidate.mutate()}
+              disabled={busy}
+              className="btn btn-gate"
+            >
+              Validate
+            </button>
+          )}
+          {running && job?.kind === "approve" ? (
+            <button
+              onClick={() => job && cancelRun.mutate(job.job_id)}
+              disabled={cancelRun.isPending}
+              className="btn btn-danger"
+            >
+              {cancelRun.isPending ? "Canceling…" : "Cancel approve"}
+            </button>
+          ) : (
+            <button
+              onClick={() => startApprove.mutate()}
+              disabled={!canApprove}
+              title={dirty ? "Run Validate first (approve checks the last validate)" : ""}
+              className="btn btn-pass"
+            >
+              Approve
+            </button>
+          )}
         </div>
       </div>
 
@@ -294,9 +474,16 @@ function Workspace({
           Edited since last validate — Validate must run before Approve.
         </p>
       )}
-      {(approve.error || validate.error || save.error) && (
+      {(startApprove.error || startValidate.error || save.error || cancelRun.error) && (
         <p className="tone-block border-b px-4 py-1 text-xs">
-          {((approve.error || validate.error || save.error) as ApiError).message}
+          {
+            (
+              (startApprove.error ||
+                startValidate.error ||
+                save.error ||
+                cancelRun.error) as ApiError
+            ).message
+          }
         </p>
       )}
       {proj.spec_approval_status === "approved" && blockedSlugs.length > 0 && (
@@ -375,10 +562,12 @@ function Workspace({
 
           {/* Center: editor / preview */}
           <section className="relative flex min-h-0 flex-col bg-[var(--surface)]">
-            {(validate.isPending || approve.isPending) && (
+            {showOverlay && (
               <RunningOverlay
-                title={approve.isPending ? "Compiling to Temporal code" : "Validating spec"}
-                steps={approve.isPending ? APPROVE_STEPS : ["Folding edits", "LLM review passes"]}
+                title={job?.kind === "approve" ? "Compiling to Temporal code" : "Validating spec"}
+                steps={job?.kind === "approve" ? APPROVE_STEPS : ["Folding edits", "LLM review passes"]}
+                onCancel={job ? () => cancelRun.mutate(job.job_id) : undefined}
+                canceling={cancelRun.isPending}
               />
             )}
             <div className="flex items-center gap-1 border-b border-[var(--border)] px-2 py-1 text-xs">

@@ -62,6 +62,21 @@ export function fmtDuration(seconds: number): string {
   return `${(seconds / 3600).toFixed(1)} h`;
 }
 
+/** ISO timestamp → compact relative age ("just now", "5m", "2h", "3d", "Jul 4"). */
+export function fmtRelative(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const secs = Math.max(0, (Date.now() - then) / 1000);
+  if (secs < 45) return "just now";
+  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+  if (secs < 86400) return `${Math.round(secs / 3600)}h ago`;
+  if (secs < 7 * 86400) return `${Math.round(secs / 86400)}d ago`;
+  return new Date(then).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
 /** Hours → "X h" with a working-days hint for large values (8-hour days). */
 export function fmtHours(hours: number): string {
   const rounded = hours >= 10 ? Math.round(hours).toString() : hours.toFixed(1);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import { fmtDuration, fmtHours } from "@/lib/format";
 import type { TimeSavedReport } from "@/lib/types";
@@ -64,8 +65,11 @@ export function TimeSavedCard({ report }: { report: TimeSavedReport }) {
         </tbody>
       </table>
       <p className="mt-2 text-[10px] text-[var(--faint)]">
-        Human-team hours are configurable estimates
-        (WORKFLOW_COMPILER_BASELINE_HOURS), not measurements.
+        Human-team hours are configurable estimates, not measurements —{" "}
+        <Link href="/settings" className="link-accent">
+          adjust them in Settings
+        </Link>
+        .
       </p>
     </div>
   );
@@ -99,7 +103,11 @@ export function TimeSavedStat() {
         className="basis-full text-[10px] text-[var(--faint)]"
         title="Working day = 8 hours. Baselines are configurable estimates, not measurements."
       >
-        Estimates — tune WORKFLOW_COMPILER_BASELINE_HOURS to your org.
+        Estimates —{" "}
+        <Link href="/settings" className="link-accent">
+          tune the baselines in Settings
+        </Link>
+        .
       </span>
     </div>
   );

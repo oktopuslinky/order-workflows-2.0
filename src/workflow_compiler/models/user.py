@@ -17,6 +17,30 @@ from pydantic import Field
 from workflow_compiler.models.base import WorkflowBaseModel
 
 
+class UserPreferences(WorkflowBaseModel):
+    """Per-user UI/metric preferences, persisted alongside the account.
+
+    Kept small and additive: every field has a default so existing on-disk
+    user JSON (which omits the whole block) keeps loading.
+    """
+
+    baseline_hours: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "Per-user overrides of the org-wide time-saved baselines. Keys match "
+            "the metric categories (discovery/spec/validate/compile/edit); only "
+            "the keys present override, the rest inherit config defaults. Empty "
+            "means use the config defaults entirely."
+        ),
+    )
+    projects_page_size: int = Field(
+        default=10,
+        ge=1,
+        le=200,
+        description="How many projects to show per page in the Projects list.",
+    )
+
+
 class User(WorkflowBaseModel):
     """One local account (identity + project ownership on the HTTP surface)."""
 
@@ -30,4 +54,8 @@ class User(WorkflowBaseModel):
     password_salt: str = Field(..., description="Hex salt the digest was computed with.")
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC), description="Registration timestamp."
+    )
+    preferences: UserPreferences = Field(
+        default_factory=UserPreferences,
+        description="Per-user UI/metric preferences (page size, baseline overrides).",
     )

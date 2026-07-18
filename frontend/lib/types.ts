@@ -154,6 +154,7 @@ export interface EditRecord {
 
 export interface CompilationProject {
   project_id: string;
+  nickname: string | null;
   document_text: string;
   segments: WorkflowSegment[];
   specs: WorkflowSpec[];
@@ -193,6 +194,33 @@ export interface MetricsSummary {
   total_saved_hours: number;
 }
 
+/** Per-user UI/metric preferences, persisted on the account. */
+export interface UserPreferences {
+  // Per-user overrides of the org-wide baselines, keyed by metric category
+  // (discovery/spec/validate/compile/edit). Empty = inherit config defaults.
+  baseline_hours: Record<string, number>;
+  projects_page_size: number;
+}
+
+/** Lightweight project row for the Projects list (label, stage, timestamp). */
+export interface ProjectSummary {
+  project_id: string;
+  nickname: string | null;
+  stage: ProjectStage;
+  workflow_count: number;
+  updated_at: string;
+}
+
+export interface ProjectListResponse {
+  projects: ProjectSummary[];
+}
+
+/** Org-wide defaults so the Settings UI can show "default: X" and offer reset. */
+export interface SettingsDefaults {
+  baseline_hours: Record<string, number>;
+  projects_page_size: number;
+}
+
 export interface ProjectResponse {
   project: CompilationProject;
   spec_markdown: Record<string, string>;
@@ -205,6 +233,35 @@ export interface ProjectResponse {
 export interface CvpaPreviewResponse {
   slug: string;
   diagram: string;
+}
+
+export type JobKind = "validate" | "approve";
+export type JobStatus = "running" | "succeeded" | "failed" | "canceled";
+
+/**
+ * A background validate/approve run. Lives server-side, so it survives the user
+ * navigating away or refreshing; `project` is embedded only when the run has
+ * succeeded (from `GET /jobs/{id}`), never in the list.
+ */
+export interface Job {
+  job_id: string;
+  project_id: string;
+  kind: JobKind;
+  status: JobStatus;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  project: ProjectResponse | null;
+}
+
+/** Parameters for starting a background run (approve-only fields ignored for validate). */
+export interface JobStartBody {
+  kind: JobKind;
+  spec_markdown?: Record<string, string>;
+  workflows?: string[];
+  reviewer?: string;
+  accept_incomplete?: boolean;
+  allow_unconfirmed_references?: boolean;
 }
 
 export interface GeneratedFile {

@@ -130,9 +130,9 @@ class Settings(BaseSettings):
             # per pipeline step. ESTIMATES, deliberately conservative — tune to
             # your org (env: WORKFLOW_COMPILER_BASELINE_HOURS as a JSON object).
             # Keyed by the categories metrics.py buckets stage_timings into.
-            "discovery": 6.0,  # per project: document analysis + workflow discovery
-            "spec": 8.0,  # per workflow: fact extraction + spec drafting
-            "validate": 3.0,  # per workflow validate pass: review + consistency check
+            "discovery": 2.0,  # per project: document analysis + workflow discovery
+            "spec": 4.0,  # per workflow: fact extraction + spec drafting
+            "validate": 1.0,  # per workflow validate pass: review + consistency check
             "compile": 38.0,  # per workflow: graph 4h + CVPA 2h + design 8h + code 24h
             "edit": 4.0,  # per edit section: analysis + re-spec + re-review
         },

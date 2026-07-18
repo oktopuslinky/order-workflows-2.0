@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
@@ -62,6 +63,14 @@ export function UserMenu() {
           <p className="truncate px-2 pb-2 text-xs text-[var(--muted)]">
             {user.email}
           </p>
+          <Link
+            role="menuitem"
+            href="/settings"
+            onClick={() => setOpen(false)}
+            className="block rounded-md border-t border-[var(--border)] px-2 py-1.5 text-left text-[var(--muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
+          >
+            Settings
+          </Link>
           <button
             role="menuitem"
             onClick={async () => {

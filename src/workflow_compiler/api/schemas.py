@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from workflow_compiler.metrics import TimeSavedReport
@@ -9,9 +12,11 @@ from workflow_compiler.models import (
     CompilationProject,
     EditRecord,
     GeneratedFile,
+    ProjectStage,
     ResolvedEdit,
     WorkflowState,
 )
+from workflow_compiler.models.user import UserPreferences
 
 
 class MetricsSummary(BaseModel):
@@ -46,6 +51,37 @@ class UserPublic(BaseModel):
     user_id: str = Field(...)
     email: str = Field(...)
     display_name: str = Field(...)
+    preferences: UserPreferences = Field(
+        default_factory=UserPreferences,
+        description="Per-user UI/metric preferences (page size, baseline overrides).",
+    )
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Request body for updating the signed-in user's profile/preferences.
+
+    Both fields are optional so a caller can update just the display name or
+    just the preferences; omitted (``None``) fields are left unchanged.
+    """
+
+    display_name: str | None = Field(
+        default=None, min_length=1, description="New display name (unchanged when omitted)."
+    )
+    preferences: UserPreferences | None = Field(
+        default=None, description="Replacement preferences block (unchanged when omitted)."
+    )
+
+
+class SettingsDefaults(BaseModel):
+    """Org-wide defaults, so the Settings UI can show 'default: X' and offer reset."""
+
+    baseline_hours: dict[str, float] = Field(
+        default_factory=dict,
+        description="Config default human-team hours per metric category.",
+    )
+    projects_page_size: int = Field(
+        default=10, description="Default projects-per-page when the user has not set one."
+    )
 
 
 class ApproveRequest(BaseModel):
@@ -83,6 +119,9 @@ class ProjectCompileRequest(BaseModel):
     model: str | None = Field(
         default=None,
         description="Optional local gateway model id for this compile (else the server default).",
+    )
+    nickname: str | None = Field(
+        default=None, description="Optional human-friendly label for the new project."
     )
 
 
@@ -179,6 +218,50 @@ class ProjectResponse(BaseModel):
     )
 
 
+class JobStartRequest(BaseModel):
+    """Request body for starting a background run (validate or approve).
+
+    Carries the union of both stages' parameters; the approve-only knobs are
+    ignored for a ``validate`` job."""
+
+    kind: Literal["validate", "approve"] = Field(
+        ..., description="Which stage to run in the background."
+    )
+    spec_markdown: dict[str, str] = Field(
+        default_factory=dict, description="Edited spec Markdown by slug (folded in first)."
+    )
+    workflows: list[str] | None = Field(
+        default=None, description="approve: slugs to approve (default: all)."
+    )
+    reviewer: str | None = Field(
+        default=None, description="approve: reviewer identity (default: signed-in user)."
+    )
+    accept_incomplete: bool = Field(
+        default=False, description="approve: proceed despite unanswered required questions."
+    )
+    allow_unconfirmed_references: bool = Field(
+        default=False, description="approve: proceed without confirming cross-workflow links."
+    )
+
+
+class JobResponse(BaseModel):
+    """A background run's status. ``project`` is embedded only when the run has
+    succeeded, so a single ``GET /jobs/{id}`` yields the finished result."""
+
+    job_id: str
+    project_id: str
+    kind: str
+    status: str = Field(
+        ..., description="running | succeeded | failed | canceled."
+    )
+    error: str | None = Field(default=None, description="Failure message when status is failed.")
+    created_at: datetime
+    updated_at: datetime
+    project: ProjectResponse | None = Field(
+        default=None, description="The finished project — present only when status is succeeded."
+    )
+
+
 class CvpaPreviewRequest(BaseModel):
     """Request body for an on-demand CVPA phase-coloring preview."""
 
@@ -196,6 +279,34 @@ class ProjectIdList(BaseModel):
     """Response listing stored project ids."""
 
     project_ids: list[str] = Field(default_factory=list)
+
+
+class ProjectSummary(BaseModel):
+    """Lightweight project row for the Projects list — enough to label, search, sort."""
+
+    project_id: str = Field(..., description="Stable project identifier.")
+    nickname: str | None = Field(
+        default=None, description="Human-friendly label (None until named)."
+    )
+    stage: ProjectStage = Field(..., description="Current project stage.")
+    workflow_count: int = Field(
+        default=0, description="Number of discovered workflows (specs) in the project."
+    )
+    updated_at: datetime = Field(..., description="Last mutation timestamp.")
+
+
+class RenameProjectRequest(BaseModel):
+    """Request body for setting or clearing a project's nickname."""
+
+    nickname: str | None = Field(
+        default=None, description="New nickname; null or empty clears it."
+    )
+
+
+class ProjectListResponse(BaseModel):
+    """Response listing visible projects as summaries (newest first)."""
+
+    projects: list[ProjectSummary] = Field(default_factory=list)
 
 
 class ProjectFilesResponse(BaseModel):

@@ -104,6 +104,13 @@ class CompilationProject(WorkflowBaseModel):
             "None for CLI-created or legacy projects (visible to every account)."
         ),
     )
+    nickname: str | None = Field(
+        default=None,
+        description=(
+            "Optional human-friendly label shown in the UI in place of the "
+            "project_id. None for legacy projects and until the user names it."
+        ),
+    )
     stage_timings: dict[str, float] = Field(
         default_factory=dict,
         description=(

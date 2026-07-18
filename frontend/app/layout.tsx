@@ -5,6 +5,7 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UserMenu } from "@/components/UserMenu";
+import { NavLink } from "@/components/NavLink";
 import { AuthGuard } from "@/lib/auth";
 
 // Runs before first paint: apply the saved theme (or the OS setting) to <html>
@@ -50,18 +51,8 @@ export default function RootLayout({
               document → spec → validate → approve → code
             </span>
             <nav className="ml-auto flex items-center gap-1 text-sm">
-              <Link
-                href="/"
-                className="rounded-md px-2.5 py-1 text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
-              >
-                Projects
-              </Link>
-              <Link
-                href="/guide"
-                className="rounded-md px-2.5 py-1 text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--ink)]"
-              >
-                Guide
-              </Link>
+              <NavLink href="/">Projects</NavLink>
+              <NavLink href="/guide">Guide</NavLink>
               <ThemeToggle />
               <UserMenu />
             </nav>

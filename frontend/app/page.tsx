@@ -5,9 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import { COMPILE_STEPS, shortId } from "@/lib/format";
+import { COMPILE_STEPS } from "@/lib/format";
 import { RunningOverlay } from "@/components/RunningOverlay";
 import { TimeSavedStat } from "@/components/TimeSaved";
+import { ProjectsPanel } from "@/components/ProjectsPanel";
 
 // Sentinel model value that routes a compile through the hosted NVIDIA Nemotron
 // API instead of the local eGPU gateway. Kept in sync with the backend
@@ -19,13 +20,9 @@ export default function HomePage() {
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [nickname, setNickname] = useState("");
   const [model, setModel] = useState(NEMOTRON_CLOUD);
   const fileInput = useRef<HTMLInputElement>(null);
-
-  const projects = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
 
   const localModels = useQuery({
     queryKey: ["local-models"],
@@ -36,8 +33,8 @@ export default function HomePage() {
   const compile = useMutation({
     mutationFn: () =>
       file
-        ? api.compileUpload(file, true, model || undefined)
-        : api.compileText(text, true, model || undefined),
+        ? api.compileUpload(file, true, model || undefined, nickname || undefined)
+        : api.compileText(text, true, model || undefined, nickname || undefined),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       router.push(`/projects/${data.project.project_id}`);
@@ -161,6 +158,19 @@ export default function HomePage() {
             </p>
           )}
 
+          <div className="mt-3 flex items-center gap-2">
+            <label htmlFor="nickname" className="text-sm text-[var(--muted)]">
+              Nickname
+            </label>
+            <input
+              id="nickname"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder="Optional — e.g. Orders pipeline"
+              className="flex-1 rounded-md border border-[var(--border-strong)] bg-transparent px-2 py-1 text-sm outline-none focus:border-[var(--accent)]"
+            />
+          </div>
+
           <button
             disabled={!canCompile}
             onClick={() => compile.mutate()}
@@ -171,34 +181,7 @@ export default function HomePage() {
         </section>
 
         {/* Existing projects */}
-        <section className="card p-5">
-          <h2 className="text-lg font-semibold">Projects</h2>
-          {projects.isLoading && (
-            <p className="mt-3 text-sm text-[var(--muted)]">Loading…</p>
-          )}
-          {projects.error && (
-            <p className="mt-3 text-sm text-[var(--block)]">
-              {(projects.error as ApiError).message}
-            </p>
-          )}
-          {projects.data && projects.data.project_ids.length === 0 && (
-            <p className="mt-3 text-sm text-[var(--muted)]">
-              No projects yet. Compile a document to begin.
-            </p>
-          )}
-          <ul className="mt-3 flex flex-col gap-2">
-            {projects.data?.project_ids.map((id) => (
-              <li key={id}>
-                <Link
-                  href={`/projects/${id}`}
-                  className="block rounded-lg border border-[var(--border)] px-3 py-2 font-mono text-sm text-[var(--muted)] transition hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:text-[var(--ink)]"
-                >
-                  {shortId(id)}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <ProjectsPanel />
       </div>
     </div>
   );

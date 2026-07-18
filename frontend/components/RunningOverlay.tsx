@@ -11,11 +11,16 @@ export function RunningOverlay({
   title,
   steps,
   stepSeconds = 35,
+  onCancel,
+  canceling = false,
 }: {
   title: string;
   steps: string[];
   /** Heuristic seconds per step label — shorter calls (edits) pass a smaller value. */
   stepSeconds?: number;
+  /** When provided, a Cancel button is shown; cancelling keeps the prior state. */
+  onCancel?: () => void;
+  canceling?: boolean;
 }) {
   const [elapsed, setElapsed] = useState(0);
   const start = useRef(0);
@@ -43,6 +48,15 @@ export function RunningOverlay({
         <p className="mt-2 font-mono text-xs text-[var(--faint)]">
           {mm}:{ss} elapsed · LLM stages can take 1–3 minutes
         </p>
+        {onCancel && (
+          <button
+            onClick={onCancel}
+            disabled={canceling}
+            className="btn btn-ghost mt-3 px-3 py-1 text-xs"
+          >
+            {canceling ? "Canceling…" : "Cancel — keep current version"}
+          </button>
+        )}
       </div>
     </div>
   );

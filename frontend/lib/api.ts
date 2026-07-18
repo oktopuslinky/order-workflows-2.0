@@ -4,17 +4,19 @@
 import type {
   CvpaPreviewResponse,
   EditPreviewResponse,
+  Job,
+  JobStartBody,
   LocalModelList,
   MetricsSummary,
   ProjectFilesResponse,
+  ProjectListResponse,
   ProjectResponse,
+  ProjectSummary,
   ResolvedEdit,
+  SettingsDefaults,
+  UserPreferences,
   WorkflowStateResponse,
 } from "./types";
-
-export interface ProjectIdList {
-  project_ids: string[];
-}
 
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "http://localhost:8000";
@@ -79,6 +81,7 @@ export interface UserPublic {
   user_id: string;
   email: string;
   display_name: string;
+  preferences: UserPreferences;
 }
 
 export const api = {
@@ -106,7 +109,29 @@ export const api = {
 
   logout: () => request<{ status: string }>("/auth/logout", { method: "POST" }),
 
-  listProjects: () => request<ProjectIdList>("/projects"),
+  updateProfile: (update: {
+    display_name?: string;
+    preferences?: UserPreferences;
+  }) =>
+    request<UserPublic>("/auth/me", {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        display_name: update.display_name ?? null,
+        preferences: update.preferences ?? null,
+      }),
+    }),
+
+  settingsDefaults: () => request<SettingsDefaults>("/settings/defaults"),
+
+  listProjects: () => request<ProjectListResponse>("/projects"),
+
+  renameProject: (id: string, nickname: string | null) =>
+    request<ProjectSummary>(`/projects/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: jsonHeaders,
+      body: JSON.stringify({ nickname }),
+    }),
 
   metricsSummary: () => request<MetricsSummary>("/metrics/summary"),
 
@@ -116,7 +141,12 @@ export const api = {
   getProject: (id: string) =>
     request<ProjectResponse>(`/projects/${encodeURIComponent(id)}`),
 
-  compileText: (documentText: string, persist = true, model?: string) =>
+  compileText: (
+    documentText: string,
+    persist = true,
+    model?: string,
+    nickname?: string,
+  ) =>
     request<ProjectResponse>("/projects/compile", {
       method: "POST",
       headers: jsonHeaders,
@@ -124,14 +154,21 @@ export const api = {
         document_text: documentText,
         persist,
         model: model || null,
+        nickname: nickname || null,
       }),
     }),
 
-  compileUpload: (file: File, persist = true, model?: string) => {
+  compileUpload: (
+    file: File,
+    persist = true,
+    model?: string,
+    nickname?: string,
+  ) => {
     const form = new FormData();
     form.append("file", file);
     form.append("persist", String(persist));
     if (model) form.append("model", model);
+    if (nickname) form.append("nickname", nickname);
     return request<ProjectResponse>("/projects/compile-upload", {
       method: "POST",
       body: form,
@@ -206,6 +243,25 @@ export const api = {
         allow_unconfirmed_references: opts.allowUnconfirmedReferences ?? false,
       }),
     }),
+
+  // Background runs (validate/approve). Start returns immediately; the run keeps
+  // going server-side after navigation. Poll listJobs / getJob, cancel to stop.
+  startJob: (id: string, body: JobStartBody) =>
+    request<Job>(`/projects/${encodeURIComponent(id)}/jobs`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    }),
+
+  listJobs: (projectId?: string) =>
+    request<Job[]>(
+      `/jobs${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
+    ),
+
+  getJob: (jobId: string) => request<Job>(`/jobs/${encodeURIComponent(jobId)}`),
+
+  cancelJob: (jobId: string) =>
+    request<Job>(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
 
   classifyCvpa: (id: string, workflow: string) =>
     request<CvpaPreviewResponse>(`/projects/${encodeURIComponent(id)}/cvpa`, {

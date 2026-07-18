@@ -326,27 +326,47 @@ filesystem access to the state store can read it.
 | POST   | `/auth/register` | `{email, password, display_name?}`    | Create a local account (signs you in).   |
 | POST   | `/auth/login`    | `{email, password}`                   | Sign in (sets the session cookie).       |
 | POST   | `/auth/logout`   | —                                     | Sign out.                                |
-| GET    | `/auth/me`       | —                                     | The signed-in user (401 when signed out).|
+| GET    | `/auth/me`       | —                                     | The signed-in user + preferences (401 when signed out).|
+| PUT    | `/auth/me`       | `{display_name?, preferences?}`       | Update display name and/or preferences (page size, per-user baseline overrides). Omitted fields unchanged. |
+| GET    | `/settings/defaults` | —                                 | Org-wide baseline-hour defaults (so the Settings UI can show defaults + reset). |
 
 Project endpoints (the compile → validate → approve pipeline; spec files travel as
 `spec_markdown: {slug: markdown}`):
 
 | Method | Path                        | Body                                        | Purpose                                        |
 |--------|-----------------------------|---------------------------------------------|------------------------------------------------|
-| POST   | `/projects/compile`         | `{document_text, persist?, model?}`         | Segment into per-workflow specs (spec gate). `model` picks a local gateway model. |
-| GET    | `/projects`                 | —                                           | List stored project ids.                        |
+| POST   | `/projects/compile`         | `{document_text, persist?, model?, nickname?}` | Segment into per-workflow specs (spec gate). `model` picks a local gateway model; `nickname` sets an optional label. |
+| GET    | `/projects`                 | —                                           | List visible projects as summaries (`{projects: [{project_id, nickname, stage, workflow_count, updated_at}]}`, newest first). |
 | GET    | `/projects/{id}`            | —                                           | Load a project + rendered spec files.           |
+| PATCH  | `/projects/{id}`            | `{nickname}`                                | Set or clear the project nickname (metadata only — no recompile). Returns the summary. |
 | PUT    | `/projects/{id}/spec`       | `{spec_markdown}`                           | Fold edited spec Markdown back in (no LLM).     |
 | POST   | `/projects/{id}/edit`       | `{edit_document, workflows?, author?, resolved?}` | Apply an edit-request document; re-arms the gate. Pass `resolved` from a preview to replay it with no LLM call (stale preview → 409). |
 | POST   | `/projects/{id}/edit/preview` | `{edit_document, workflows?}`             | Dry-run the edit: would-be summary, post-edit spec Markdown, and the `resolved` handoff blob. Persists nothing. |
-| POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes.   |
-| POST   | `/projects/{id}/approve`    | `{workflows?, reviewer?, spec_markdown?, accept_incomplete?, allow_unconfirmed_references?}` | Approve specs, compile every workflow. |
+| POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes (synchronous). |
+| POST   | `/projects/{id}/approve`    | `{workflows?, reviewer?, spec_markdown?, accept_incomplete?, allow_unconfirmed_references?}` | Approve specs, compile every workflow (synchronous). |
 | GET    | `/metrics/summary`          | —                                           | Total time saved across your projects (measured pipeline seconds vs. the configurable `baseline_hours` human-team estimates). |
+
+Validate and approve can also run as **cancelable background runs** that keep going after
+the user navigates away (the web UI uses these). A run is an in-process task; **cancelling
+never persists a partial result**, so the project is left exactly as it was. At most one run
+per project may be in flight (a second start answers `409`), but any number of *different*
+projects may run at once. Runs live in memory — a server restart drops them (nothing was
+persisted, so the project simply stays in its pre-run state).
+
+| Method | Path                        | Body / Params                               | Purpose                                          |
+|--------|-----------------------------|---------------------------------------------|--------------------------------------------------|
+| POST   | `/projects/{id}/jobs`       | `{kind: "validate"\|"approve", spec_markdown?, …approve knobs}` | Start a background run; returns `202` + the run descriptor immediately. |
+| GET    | `/jobs`                     | `?project_id=` (optional)                   | List the caller's runs, newest first (all users' when `projects_shared`). |
+| GET    | `/jobs/{job_id}`            | —                                           | One run's status; the finished project is embedded when `status == "succeeded"`. |
+| POST   | `/jobs/{job_id}/cancel`     | —                                           | Cancel a run, leaving the project untouched (no-op once terminal). |
 
 Project responses include `time_saved`: each pipeline step's measured wall-clock seconds
 (persisted per project as `stage_timings`) compared against configurable human-team estimates
 (`WORKFLOW_COMPILER_BASELINE_HOURS`, a JSON object of hours per step category). The baselines
-are **estimates, not measurements** — tune them to your organization.
+are **estimates, not measurements** — tune them to your organization. Each signed-in user can
+also override the baselines for their own view from the **Settings** page (`PUT /auth/me`
+`preferences.baseline_hours`); their overrides take precedence over the org-wide config default,
+and `time_saved`/`/metrics/summary` recompute live with the caller's values.
 
 Per-workflow endpoints (viewing plus the manual override for below-threshold graphs):
 

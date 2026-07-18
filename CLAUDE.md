@@ -122,8 +122,15 @@ picture before changing pipeline behavior.
   user. The CLI intentionally
   bypasses auth. `ProjectCompiler` records per-step wall-clock seconds into
   `project.stage_timings`; `metrics.py::compute_time_saved` (pure, no LLM) compares them to the
-  `baseline_hours` config **estimates** for `ProjectResponse.time_saved` and
-  `GET /metrics/summary` — never claim savings for unmeasured projects.
+  `baseline_hours` **estimates** for `ProjectResponse.time_saved` and
+  `GET /metrics/summary` — never claim savings for unmeasured projects. Each user can override
+  those baselines for their own view via `User.preferences.baseline_hours` (edited on the
+  Settings page / `PUT /auth/me`); the two call sites merge the user's overrides over the config
+  default (`app.py::_effective_baselines`), so `compute_time_saved` itself is untouched — it still
+  just takes a baseline dict. `User.preferences` (a `UserPreferences` submodel, default-valued so
+  legacy user JSON keeps loading) also carries `projects_page_size`. Projects have an optional
+  `nickname`; `GET /projects` returns lightweight summaries (nickname/stage/count/updated) and
+  `PATCH /projects/{id}` renames without recompiling.
 
 ## Conventions
 

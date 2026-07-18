@@ -1,0 +1,14 @@
+import { chromium } from "playwright";
+const OUT=process.env.SHOT_DIR; const BASE="http://localhost:3001";
+const b=await chromium.launch({headless:true});
+const p=await (await b.newContext({viewport:{width:1600,height:1000}})).newPage();
+p.on("console",m=>console.log("CON",m.type(),m.text().slice(0,120)));
+p.on("requestfailed",r=>console.log("FAIL",r.url().slice(0,120)));
+await p.goto(`${BASE}/login`,{waitUntil:"domcontentloaded"});
+await p.waitForTimeout(2500);
+console.log("URL",p.url());
+console.log("TITLE",await p.title());
+console.log("H1", (await p.$$eval("h1,h2,p,button",els=>els.map(e=>e.textContent.trim()).filter(Boolean).slice(0,15))).join(" | "));
+console.log("INPUTS", (await p.$$eval("input",els=>els.map(e=>e.id||e.type||e.name))).join(","));
+await p.screenshot({path:`${OUT}/diag-login.png`});
+await b.close();

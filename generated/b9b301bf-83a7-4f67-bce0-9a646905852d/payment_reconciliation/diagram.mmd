@@ -1,0 +1,28 @@
+flowchart TD
+    start(["Start"])
+    end_node(["End"])
+    activity_1["Fetch settlement record"]
+    activity_2["Fetch order total"]
+    activity_3["Compare amounts"]
+    activity_4["Mark reconciled"]
+    activity_5["File discrepancy report and notify"]
+    decision_1{"Do amounts match?"}
+    event_1(["payment.captured"])
+    start --> activity_1
+    activity_1 --> activity_2
+    activity_2 --> activity_3
+    activity_3 --> decision_1
+    decision_1 -->|yes| activity_4
+    decision_1 -->|no| activity_5
+    activity_4 --> activity_5
+    activity_5 --> end_node
+    start -.->|event| event_1
+    event_1 -.->|triggers| activity_1
+    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;
+    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
+    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;
+    class start,activity_1,activity_2,event_1 capture;
+    class decision_1 validate;
+    class activity_3,activity_4 process;
+    class end_node,activity_5 activate;

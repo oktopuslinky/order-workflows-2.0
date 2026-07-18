@@ -37,6 +37,7 @@ class OpenAICompatibleProvider(HttpChatProvider):
     # that ends in a path segment such as ``/v1/``.
     CHAT_ENDPOINT: ClassVar[str] = "chat/completions"
     EMBEDDINGS_ENDPOINT: ClassVar[str] = "embeddings"
+    MODELS_ENDPOINT: ClassVar[str] = "models"
 
     def __init__(
         self,
@@ -174,6 +175,16 @@ class OpenAICompatibleProvider(HttpChatProvider):
             usage=usage,
             raw=data,
         )
+
+    # -- discovery ----------------------------------------------------------
+
+    async def list_models(self) -> list[str]:
+        """Return the ids of models the server exposes (OpenAI ``GET /models``)."""
+        data = await self._get(self.MODELS_ENDPOINT)
+        items = data.get("data")
+        if not isinstance(items, list):
+            raise ProviderResponseError(f"{self.name} models response missing 'data'.")
+        return [item["id"] for item in items if isinstance(item, dict) and "id" in item]
 
     # -- embeddings ---------------------------------------------------------
 

@@ -23,6 +23,10 @@ class GraphEditError(WorkflowCompilerError):
     """Raised when a graph edit operation is invalid."""
 
 
+class EditPreviewStaleError(WorkflowCompilerError):
+    """Raised when an edit preview no longer matches the stored project state."""
+
+
 class StateNotFoundError(WorkflowCompilerError):
     """Raised when a requested workflow state does not exist in the store."""
 

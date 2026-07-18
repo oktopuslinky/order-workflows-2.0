@@ -15,6 +15,7 @@ class CompilationStage(StrEnum):
     REVIEWED = "reviewed"
     CLASSIFIED = "classified"
     TEMPORAL_DESIGNED = "temporal_designed"
+    CODE_GENERATED = "code_generated"
     DIAGRAMMED = "diagrammed"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -39,6 +40,22 @@ class CVPAPhase(StrEnum):
     UNCLASSIFIED = "unclassified"
 
 
+class EventKind(StrEnum):
+    """How the workflow relates to an event — the distinction the graph builder
+    and Temporal design need to wire it correctly.
+
+    - ``TRIGGER``: the event *starts* the workflow (an inbound request/message).
+    - ``SIGNAL_WAIT``: the workflow *pauses mid-flow* to receive an external
+      signal, usually bounded by a deadline (a Temporal ``wait_condition``).
+    - ``OUTPUT_EMIT``: the workflow *produces* a value (an activity's return);
+      it is never something the workflow waits for.
+    """
+
+    TRIGGER = "trigger"
+    SIGNAL_WAIT = "signal_wait"
+    OUTPUT_EMIT = "output_emit"
+
+
 class NodeType(StrEnum):
     """Canonical node kinds in a workflow graph."""
 
@@ -51,6 +68,7 @@ class NodeType(StrEnum):
     SUBPROCESS = "subprocess"
     SIGNAL = "signal"
     TIMER = "timer"
+    TRIGGER = "trigger"
 
 
 class EdgeType(StrEnum):

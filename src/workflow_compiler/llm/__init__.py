@@ -14,6 +14,8 @@ from workflow_compiler.llm.config import ProviderConfig
 from workflow_compiler.llm.factory import ProviderFactory
 from workflow_compiler.llm.json_utils import extract_json
 from workflow_compiler.llm.providers import (
+    FallbackProvider,
+    GatewaySessionProvider,
     MockProvider,
     NemotronProvider,
     OpenAICompatibleProvider,
@@ -29,6 +31,8 @@ from workflow_compiler.llm.types import (
 __all__ = [
     "BaseLLMProvider",
     "ChatMessage",
+    "FallbackProvider",
+    "GatewaySessionProvider",
     "HttpChatProvider",
     "LLMResponse",
     "LLMUsage",

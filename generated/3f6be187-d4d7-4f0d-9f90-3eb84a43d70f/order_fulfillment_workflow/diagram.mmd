@@ -1,0 +1,77 @@
+flowchart TD
+    start(["Start"])
+    end_node(["End"])
+    activity_1["Validate order and payment"]
+    activity_2["Reserve inventory"]
+    activity_3["Send order confirmation"]
+    activity_4["Notify warehouse to begin picking"]
+    activity_5["Pick and pack items"]
+    activity_6["Create shipment via Carrier API"]
+    activity_7["Ship order"]
+    activity_8["Release reserved inventory"]
+    activity_9["Obtain manager approval for orders above $1,000"]
+    activity_10["Notify finance team for orders above $1,000"]
+    decision_1{"Is payment valid?"}
+    decision_2{"Did shipment creation fail after retries?"}
+    decision_3{"Is order value above $1,000?"}
+    exception_1(["Payment Declined"])
+    exception_2(["Shipment Creation Failed"])
+    exception_3(["SLA-breach alert"])
+    compensation_1["Release Inventory"]
+    event_1(["Order Submitted"])
+    event_2(["Order Confirmed"])
+    event_3(["Shipment Created"])
+    event_4(["Order Delivered"])
+    event_5(["Order Cancelled"])
+    event_6(["Order Failed"])
+    gateway_fork_1{{"Parallel split"}}
+    gateway_join_1{{"Parallel join"}}
+    state_1["Order received"]
+    state_2["Payment Validation"]
+    state_3["Inventory Reservation"]
+    state_4["Order Cancelled"]
+    state_5["Picking and Packing"]
+    state_6["Shipment Creation"]
+    state_7["Order Shipped"]
+    state_8["Order Failed"]
+    start --> activity_1
+    activity_1 --> decision_3
+    decision_3 -->|yes| activity_9
+    decision_3 -->|no| gateway_fork_1
+    decision_1 -->|yes| gateway_fork_1
+    decision_1 -->|no| exception_1
+    gateway_fork_1 -->|parallel| activity_2
+    activity_2 -->|parallel| gateway_join_1
+    gateway_fork_1 -->|parallel| activity_3
+    activity_3 -->|parallel| gateway_join_1
+    gateway_fork_1 -->|parallel| activity_4
+    activity_4 -->|parallel| gateway_join_1
+    gateway_join_1 --> activity_5
+    activity_5 --> activity_6
+    activity_6 --> decision_2
+    decision_2 -->|yes| activity_8
+    decision_2 -->|no| activity_7
+    activity_7 --> activity_8
+    activity_8 --> activity_9
+    activity_9 --> activity_10
+    activity_10 --> end_node
+    activity_1 -.->|on error| exception_1
+    activity_6 -.->|on error| exception_2
+    activity_6 -.->|on error| exception_3
+    activity_2 -.->|compensate| compensation_1
+    compensation_1 --> end_node
+    start -.->|event| event_1
+    event_1 -.->|triggers| activity_1
+    activity_3 -.->|emits| event_2
+    activity_6 -.->|emits| event_3
+    activity_7 -.->|emits| event_4
+    state_1 -->|transition| state_2
+    state_2 -->|transition| state_3
+    state_2 -->|transition| state_4
+    state_3 -->|transition| state_5
+    state_5 -->|transition| state_6
+    state_6 -->|transition| state_7
+    state_6 -->|transition| state_8
+    exception_3 -->|terminates| end_node
+    exception_1 -->|terminates| end_node
+    exception_2 -->|terminates| end_node

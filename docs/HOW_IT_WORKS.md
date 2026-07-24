@@ -177,6 +177,7 @@ automatic health-score threshold (with `approve`/`reject` as the manual override
 ## 5. Installation & configuration (so the rest makes sense)
 
 ```bash
+# Requires Python 3.12+ (use a virtual environment — see README.md for full steps)
 pip install -e ".[dev]"          # installs the package + the `workflow-compiler` CLI
 cp .env.example .env             # then edit .env
 ```
@@ -920,26 +921,261 @@ per `GeneratedFile` under `<out-dir>/<slug>/`. `reject`/`show` build a compiler 
 LLM** because they don't need one. The compiling commands stream a timestamped step log via the
 progress callback.
 
+`compile`, `validate`, `approve-spec`, and `approve` use the LLM (set the local gateway or
+`NVIDIA_API_KEY`, or pass `--provider mock` — the mock answers every stage with a scripted demo
+workflow, so every command runs offline); `reject` and `show` need no LLM. `models` lists the
+models the local eGPU gateway exposes (`workflow-compiler models`). `--version` prints the
+version, and `workflow-compiler <command> --help` is always the authoritative reference.
+
+For the local gateway, `--model ID` selects the **local** model (discover ids with
+`workflow-compiler models`); `--provider nemotron` bypasses the eGPU and uses the hosted API.
+
+#### `compile <document>` — segment into editable specs, stop at the spec gate
+
+Discovers **every** workflow in the document, extracts facts per workflow (with the sequential
+review pipeline), and writes one editable spec file per workflow plus an `overview.md` to
+`--spec-dir`:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--provider NAME` | from `.env` | Override the LLM provider (e.g. `mock`). |
+| `--model ID` | from `.env` | Override the model id. |
+| `--timeout SECONDS` | `120` | Per-request timeout. |
+| `--persist` / `--no-persist` | persist | Whether to save the resulting project to the store. |
+| `--review` / `--no-review` | review | Sequential review passes (completeness → grounding → consistency) over the LLM stages. |
+| `--spec-dir DIR` | `./specs` | Where to write the spec files. |
+
+```bash
+workflow-compiler compile big_business_doc.docx --spec-dir ./specs
+# → specs/overview.md, specs/customer-onboarding.md, specs/account-provisioning.md, ...
+workflow-compiler compile examples/order_workflow.md --provider mock   # offline, no API key
+```
+
+Each spec file contains the workflow's metadata, activities/decisions/exceptions/compensations
+(with stable `[ids]`), plus **Assumptions**, **Ambiguities**, **Open Questions** (the readiness
+checklist rendered as fill-in questions), **Cross-Workflow Dependencies** (output→input links
+you confirm by ticking their checkbox), and **Triggers** (executable cross-workflow starts).
+Edit the files in any editor — keep the `[id]` markers on lines you modify; new lines you add
+are recorded as *human-provided*.
+
+A **Triggers** entry says this workflow *starts* another (always standalone) workflow:
+
+```markdown
+## Triggers
+- [x] triggers `account-provisioning` (blocking) when `application approved`
+  result: provisioning_result
+  input customer_record_id: step output `a2` (str)
+```
+
+The mode is `blocking` (the caller awaits the target's result, bound to the `result:` name) or
+`fire-and-forget`; the optional ``when `…` `` predicate makes the trigger conditional (LLM-drafted
+— review it and tick the checkbox to confirm); each indented `input` line maps one field of the
+target's typed input from your workflow's input, an earlier step's output, or a constant.
+
+#### `validate <project-id>` — fold edits back in and re-check the specs
+
+```bash
+workflow-compiler validate <project-id> --spec-dir ./specs
+```
+
+Deterministically parses your edits back onto the structured spec, then runs three LLM review
+passes against the original document (completeness / grounding / consistency) plus a
+**deterministic cross-workflow integrity pass** over every trigger and dependency. Machine-
+extracted statements without support are removed; **your** additions are only ever *flagged* for
+confirmation, never deleted. The files are re-written with the fixes and findings. Iterate
+edit ⇄ validate until you are satisfied.
+
+Findings are two-tier and printed with precise refs (`TAG slug Section > field: message`):
+
+- `BLOCK` (red) — structural breakage that prevents generation: a trigger targeting a workflow
+  not in the project, an input map naming a field the target does not declare, an unisolated
+  document segment, unmet required checklist items. **`validate` exits non-zero while any
+  blocking finding remains**, and `approve-spec` refuses (override with `--accept-incomplete`).
+- `WARN` (yellow) — should be confirmed but doesn't block: type mismatches on a hand-off,
+  unconfirmed trigger predicates, a blocking trigger with no result binding.
+
+#### `edit <project-id> <edit-file>` — change compiled workflows with an edit request
+
+```bash
+workflow-compiler edit <project-id> examples/order_edit_request.md --spec-dir ./specs --author alice
+```
+
+Applies a **workflow edit-request document** (format: [`EDIT_FORMAT_GUIDE.md`](EDIT_FORMAT_GUIDE.md))
+to a compiled project: structured sections (`## Workflow: <slug>` with `### Add` / `### Modify` /
+`### Remove`, plus `### Triggers` / `### Dependencies`, `## Add Workflow:` and
+`## Remove Workflow:`) hold natural-language entries that an LLM translates into deterministic
+patches against the current specs. Your changes carry **human authority** — additions need no
+support in the original document (they are marked `[human]`) and removals are honored. The edit
+is **atomic**: an entry that cannot be translated or applied aborts the whole request with the
+offending entries listed, and nothing changes. (An addition whose value is already in the spec is
+treated as satisfied and skipped with a `skipped (already present)` summary line rather than
+aborting.)
+
+On success the edited workflows' versions are bumped, an `EditRecord` is appended to the
+project's audit log, the spec files are re-written, and the project returns to the spec gate —
+run `validate` then `approve-spec` to regenerate graphs, designs, and code.
+
+`--dry-run` previews the edit — full parse + interpretation + per-workflow summary — without
+applying or writing anything; re-run without the flag to apply. (The web UI goes further: its
+preview hands the interpreted operations back on confirm, so the apply replays exactly what was
+previewed with no second LLM call.)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--workflow SLUG` | all | Only allow edits touching these workflow slug(s) (repeatable). |
+| `--author NAME` | — | Author recorded in the edit log. |
+| `--spec-dir DIR` | `./specs` | Where the updated spec files are re-written. |
+| `--dry-run` | off | Preview the edit (nothing is applied or saved). |
+| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
+
+#### `approve-spec <project-id>` — compile every workflow through to code
+
+```bash
+workflow-compiler approve-spec <project-id> --spec-dir ./specs
+```
+
+Approves the specs and runs each workflow **independently** through graph building, structural
+review, CVPA, Temporal design, and code generation. The graph gate is automatic: health ≥ the
+configured threshold continues; below it the workflow is left pending (`approve <workflow-id>`
+remains the manual override). Unanswered required questions block a workflow unless you pass
+`--accept-incomplete`; unconfirmed dependencies block approval unless you pass
+`--allow-unconfirmed`. Each completed workflow's runnable Temporal bundle is written under
+`<out-dir>/<project-id>/<slug>/` — `--out-dir` defaults to `./generated`, so repeated runs
+never litter the working directory with loose bundle folders.
+
+**Every workflow generates as a standalone Temporal workflow** — its own `workflow.py`,
+`activities.py`, `shared.py`, `worker.py`, `starter.py`, and a `test_stepthrough.py` local
+harness. Confirmed triggers additionally generate a `triggers.py` in the *source* workflow's
+bundle: activities that start the target by workflow-type name on the target's own task queue
+(`id_conflict_policy=USE_EXISTING` keeps retries idempotent; blocking triggers await
+`handle.result()`). The target's bundle is untouched — it always runs independently. Multi-
+workflow projects also get a top-level `contracts.py` (every workflow's typed input) and a
+project `README.md` documenting the trigger topology and task queues.
+
+Every generated workflow exposes **read-only debug queries** (`current_step`,
+`decisions_taken`, `triggers_fired`) — safe in production. Opt into interactive step-through
+with `WORKFLOW_COMPILER_STEPWISE=1`: each top-level step then waits for an `advance` signal.
+The generated `test_stepthrough.py` runs the bundle under a time-skipping test environment
+with the stub activities (triggers mocked) and prints those queries — the quickest way to see
+which branch a conditional actually takes.
+
+#### `approve <workflow_id>` — manual override for a below-threshold graph
+
+When a workflow's graph health lands below the auto-approve threshold at `approve-spec`, it is
+left pending. Inspect it (`show`), then approve it manually to produce CVPA + Temporal design +
+code:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--reviewer NAME` | — | Reviewer identity recorded on the approval. |
+| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
+| `--out PATH` | — | Write the CVPA-colored Mermaid diagram to a file. |
+| `--out-dir DIR` | `./generated` | Root for generated output; the bundle lands in `<out-dir>/<workflow-id>/`. |
+
+```bash
+workflow-compiler approve <workflow_id> --reviewer alice --out workflow.mmd
+```
+
+#### `reject <workflow_id>` — halt a pending workflow (no LLM)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--reviewer NAME` | — | Reviewer identity. |
+| `--reason TEXT` | — | Why the graph was rejected (recorded in the report). |
+
+#### `show <workflow_id>` — display a stored workflow (no LLM, no flags)
+
+#### Windows console note
+
+The progress/table output contains Unicode (e.g. `→`). On a legacy `cp1252` console this raises
+`UnicodeEncodeError`. Run with UTF-8 mode: `set PYTHONUTF8=1` (PowerShell: `$env:PYTHONUTF8=1`).
+This is a console-rendering issue only — it does not affect the generated code. Nemotron's
+reasoning models can also be slow; bump `--timeout` (e.g. `300.0`) to avoid
+`ProviderTimeoutError` on a slow request.
+
 ### 9.3 HTTP API (`api/app.py`, FastAPI)
 
-| Method | Path | Body | Does |
-|---|---|---|---|
-| POST | `/projects/compile` | `{document_text, persist?}` | segment into per-workflow specs (spec gate) |
-| GET | `/projects` | — | list stored project ids |
-| GET | `/projects/{id}` | — | load a project + rendered spec files |
-| PUT | `/projects/{id}/spec` | `{spec_markdown}` | fold edited spec Markdown back in (no LLM) |
-| POST | `/projects/{id}/validate` | `{spec_markdown?}` | ingest edits + run the spec validator passes |
-| POST | `/projects/{id}/approve` | `{workflows?, reviewer?, spec_markdown?, …}` | approve specs, compile every workflow |
-| POST | `/approve` | `{workflow_id, reviewer?}` | manual override → CVPA + Temporal design + code |
-| POST | `/reject` | `{workflow_id, reviewer?, reason?}` | reject |
-| GET | `/workflow/{id}` | — | load a stored state |
-| GET | `/workflows` | — | list stored ids |
-| GET | `/health` | — | liveness |
+Run it with `uvicorn workflow_compiler.api.app:app --reload`; interactive docs live at `/docs`.
+
+**Authentication.** The HTTP surface uses local accounts: register/sign in once and a signed
+HttpOnly session cookie rides every call. Projects created via the API carry an `owner_id`
+(recorded for attribution). By default every signed-in user can see and open every project;
+set `WORKFLOW_COMPILER_PROJECTS_SHARED=false` to restore per-owner isolation, where you see
+only your own projects (plus unowned legacy/CLI ones) and other accounts' projects answer 404.
+`author`/`reviewer` fields default to the signed-in user's display name. Accounts live as JSON
+under the state store (scrypt-hashed passwords, no external services); the CLI talks to the
+compiler directly and needs no login. This protects the HTTP surface only — anyone with
+filesystem access to the state store can read it.
+
+| Method | Path             | Body                                  | Purpose                                  |
+|--------|------------------|---------------------------------------|------------------------------------------|
+| POST   | `/auth/register` | `{email, password, display_name?}`    | Create a local account (signs you in).   |
+| POST   | `/auth/login`    | `{email, password}`                   | Sign in (sets the session cookie).       |
+| POST   | `/auth/logout`   | —                                     | Sign out.                                |
+| GET    | `/auth/me`       | —                                     | The signed-in user + preferences (401 when signed out).|
+| PUT    | `/auth/me`       | `{display_name?, preferences?}`       | Update display name and/or preferences (page size, per-user baseline overrides). Omitted fields unchanged. |
+| GET    | `/settings/defaults` | —                                 | Org-wide baseline-hour defaults (so the Settings UI can show defaults + reset). |
+
+Project endpoints (the compile → validate → approve pipeline; spec files travel as
+`spec_markdown: {slug: markdown}`):
+
+| Method | Path                        | Body                                        | Purpose                                        |
+|--------|-----------------------------|---------------------------------------------|------------------------------------------------|
+| POST   | `/projects/compile`         | `{document_text, persist?, model?, nickname?}` | Segment into per-workflow specs (spec gate). `model` picks a local gateway model; `nickname` sets an optional label. |
+| GET    | `/projects`                 | —                                           | List visible projects as summaries (`{projects: [{project_id, nickname, stage, workflow_count, updated_at}]}`, newest first). |
+| GET    | `/projects/{id}`            | —                                           | Load a project + rendered spec files.           |
+| PATCH  | `/projects/{id}`            | `{nickname}`                                | Set or clear the project nickname (metadata only — no recompile). Returns the summary. |
+| PUT    | `/projects/{id}/spec`       | `{spec_markdown}`                           | Fold edited spec Markdown back in (no LLM).     |
+| POST   | `/projects/{id}/edit`       | `{edit_document, workflows?, author?, resolved?}` | Apply an edit-request document; re-arms the gate. Pass `resolved` from a preview to replay it with no LLM call (stale preview → 409). |
+| POST   | `/projects/{id}/edit/preview` | `{edit_document, workflows?}`             | Dry-run the edit: would-be summary, post-edit spec Markdown, and the `resolved` handoff blob. Persists nothing. |
+| POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes (synchronous). |
+| POST   | `/projects/{id}/approve`    | `{workflows?, reviewer?, spec_markdown?, accept_incomplete?, allow_unconfirmed_references?}` | Approve specs, compile every workflow (synchronous). |
+| GET    | `/metrics/summary`          | —                                           | Total time saved across your projects (measured pipeline seconds vs. the configurable `baseline_hours` human-team estimates). |
+
+Validate and approve can also run as **cancelable background runs** that keep going after
+the user navigates away (the web UI uses these). A run is an in-process task; **cancelling
+never persists a partial result**, so the project is left exactly as it was. At most one run
+per project may be in flight (a second start answers `409`), but any number of *different*
+projects may run at once. Runs live in memory — a server restart drops them (nothing was
+persisted, so the project simply stays in its pre-run state).
+
+| Method | Path                        | Body / Params                               | Purpose                                          |
+|--------|-----------------------------|---------------------------------------------|--------------------------------------------------|
+| POST   | `/projects/{id}/jobs`       | `{kind: "validate"\|"approve", spec_markdown?, …approve knobs}` | Start a background run; returns `202` + the run descriptor immediately. |
+| GET    | `/jobs`                     | `?project_id=` (optional)                   | List the caller's runs, newest first (all users' when `projects_shared`). |
+| GET    | `/jobs/{job_id}`            | —                                           | One run's status; the finished project is embedded when `status == "succeeded"`. |
+| POST   | `/jobs/{job_id}/cancel`     | —                                           | Cancel a run, leaving the project untouched (no-op once terminal). |
+
+Project responses include `time_saved`: each pipeline step's measured wall-clock seconds
+(persisted per project as `stage_timings`) compared against configurable human-team estimates
+(`WORKFLOW_COMPILER_BASELINE_HOURS`, a JSON object of hours per step category). The baselines
+are **estimates, not measurements** — tune them to your organization. Each signed-in user can
+also override the baselines for their own view from the **Settings** page (`PUT /auth/me`
+`preferences.baseline_hours`); their overrides take precedence over the org-wide config default,
+and `time_saved`/`/metrics/summary` recompute live with the caller's values.
+
+Per-workflow endpoints (viewing plus the manual override for below-threshold graphs):
+
+| Method | Path                | Body / Params                              | Purpose                                   |
+|--------|---------------------|--------------------------------------------|-------------------------------------------|
+| POST   | `/approve`          | `{workflow_id, reviewer?}`                 | Approve → run CVPA + Temporal.            |
+| POST   | `/reject`           | `{workflow_id, reviewer?, reason?}`        | Reject a graph.                           |
+| GET    | `/workflow/{id}`    | —                                          | Load a stored workflow state.             |
+| GET    | `/workflows`        | —                                          | List stored workflow ids.                 |
+| GET    | `/providers/local/models` | —                                    | List models the local eGPU gateway exposes (for the picker). |
+| GET    | `/health`           | —                                          | Liveness probe.                           |
 
 The compiler is provided once via `get_compiler` (a cached `from_settings()`), and tests override it
 with a mock-backed compiler. A small `_guard` helper maps domain exceptions to HTTP codes:
-`StateNotFoundError → 404`, `ApprovalError → 409`, `CompilationError → 400`. Run it with
-`uvicorn workflow_compiler.api.app:app --reload`; interactive docs live at `/docs`.
+`StateNotFoundError → 404`, `ApprovalError → 409`, `CompilationError → 400`.
+
+Example:
+
+```bash
+curl -s localhost:8000/projects/compile \
+  -H 'content-type: application/json' \
+  -d '{"document_text": "When a customer submits an order, validate payment, then ship it."}'
+```
 
 ---
 

@@ -42,6 +42,8 @@ dev = [
     "ruff>=0.5",
     # Test-only fixture generation
     "reportlab>=4.1",
+    # Runtime tests for the generated Temporal bundles
+    "temporalio>=1.7",
 ]
 
 [project.scripts]

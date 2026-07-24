@@ -9,8 +9,9 @@ into canonical artifacts — metadata, facts, a deterministic graph, a Mermaid d
 review report, a CVPA classification, a Temporal design, and runnable Temporal Python code — through
 a staged pipeline with a human approval gate in the middle.
 
-`README.md` is the authoritative reference for CLI flags and the HTTP API. `docs/architecture.md`
-and `docs/HOW_IT_WORKS.md` are the authoritative references for design; keep all three in sync when
+`README.md` is a lean overview + install/quickstart guide. `docs/HOW_IT_WORKS.md` is the
+authoritative reference for CLI flags (§9.2), the HTTP API (§9.3), and the full design;
+`docs/architecture.md` holds the component/sequence diagrams. Keep all three in sync when
 behavior changes (the working tree shows they are updated alongside code).
 
 ## Commands

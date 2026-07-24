@@ -1,0 +1,31 @@
+flowchart TD
+    start(["Start"])
+    end_node(["End"])
+    activity_1["Authorise return"]
+    activity_2["Receive returned item"]
+    activity_3["Issue refund"]
+    decision_1{"Is return eligible?"}
+    exception_1(["ReturnNotEligible"])
+    exception_2(["RefundFailed"])
+    compensation_1["Cancel Return Process"]
+    event_1(["[ev1] return.requested"])
+    start --> activity_1
+    activity_1 --> decision_1
+    decision_1 -->|yes| activity_2
+    decision_1 -->|no| exception_1
+    activity_2 --> activity_3
+    activity_3 --> end_node
+    activity_3 -.->|on error| exception_2
+    exception_2 -.->|compensate| compensation_1
+    compensation_1 --> end_node
+    start -.->|event| event_1
+    event_1 -.->|triggers| activity_1
+    exception_1 -->|terminates| end_node
+    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;
+    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
+    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;
+    class start,event_1 capture;
+    class activity_1,decision_1,exception_1 validate;
+    class activity_2,activity_3 process;
+    class end_node,exception_2,compensation_1 activate;

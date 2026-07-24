@@ -1,0 +1,27 @@
+"""Activities for the {{ workflow_class }} workflow.
+
+Each activity is a thin, retryable unit of work. Replace the ``NotImplementedError``
+with real logic; activities may use I/O, SDKs, and blocking calls freely.
+"""
+
+from __future__ import annotations
+
+from temporalio import activity
+
+{% if input_classes %}
+from shared import (
+{% for cls in input_classes %}
+    {{ cls.name }},
+{% endfor %}
+)
+{% endif %}
+
+{% for a in activities %}
+
+@activity.defn(name="{{ a.activity_name }}")
+async def {{ a.fn_name }}(arg: {{ a.input_class }}) -> {{ a.return_type }}:
+    """{{ a.description or 'TODO: implement this activity.' }}"""
+    activity.logger.info("Running {{ a.fn_name }}", extra={"input": arg})
+    # TODO: implement {{ a.fn_name }}. Returns a placeholder so the bundle runs as-is.
+    return {{ a.placeholder }}
+{% endfor %}

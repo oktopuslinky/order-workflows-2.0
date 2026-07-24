@@ -1,0 +1,776 @@
+{
+  "project": {
+    "project_id": "4605e083-4561-4091-8fd4-694d6f40d0f0",
+    "document_text": "# Customer Lifecycle Operations\n\nThis document describes two related but distinct business processes operated by the Customer Platform team: customer onboarding and account provisioning. Provisioning consumes the customer record produced by onboarding.\n\n## Onboarding Purpose\n\nThe customer onboarding workflow registers a new customer: it validates the application, verifies the customer's identity, creates the customer record, and notifies the customer of the outcome.\n\n## Onboarding Trigger\n\nThe workflow starts when a customer application is submitted and an application.received request reaches the Onboarding Service.\n\n## Onboarding Inputs and Outputs\n\nInputs\napplication_id \u2014 identifier of the submitted application\nemail \u2014 the applicant's email address\n\nOutputs\ncustomer_record_id \u2014 identifier of the created customer record\nonboarding_status \u2014 registered or rejected\n\n## Onboarding Process\n\nThe Onboarding Service validates the application using application_id\nand returns whether the application is complete.\nIf the application is incomplete, the workflow raises\nApplicationIncomplete and rejects the application; if the application is complete, the workflow continues.\nThe Identity Service verifies the customer identity for email and\nreturns a verification_id.\nThe Customer Service creates the customer record and returns a\ncustomer_record_id.\nThe Notification Service notifies the customer of the registration\noutcome.\n\n## Onboarding Error Handling\n\nApplicationIncomplete: the application is missing required fields \u2192\nreject the application and end the workflow.\nIdentityCheckFailed: identity verification fails \u2192 reject the\napplication and end the workflow.\n\n## Onboarding Retries\n\nVerify the customer identity: retry up to 3 times with exponential\nbackoff starting at 2 seconds.\nNotify the customer: retry up to 5 times; failure is non-fatal.\n\n## Provisioning Purpose\n\nThe account provisioning workflow prepares a registered customer's account for use: it reserves an account number, configures the account, and activates it. If activation fails after configuration, the configuration is rolled back.\n\n## Provisioning Trigger\n\nThe workflow starts when a customer record is registered and an account.provision request reaches the Provisioning Service. It requires the customer_record_id produced by customer onboarding.\n\n## Provisioning Inputs and Outputs\n\nInputs\ncustomer_record_id \u2014 identifier of the registered customer record\nplan_code \u2014 the subscription plan to provision\n\nOutputs\naccount_id \u2014 identifier of the activated account\nprovisioning_status \u2014 active or failed\n\n## Provisioning Process\n\nThe Provisioning Service reserves an account number for\ncustomer_record_id and returns an account_id.\nThe Provisioning Service configures the account for plan_code.\nIf the configuration is invalid, the workflow raises\nConfigurationInvalid; if the configuration is valid, the workflow continues.\nThe Provisioning Service activates the account and returns the final\nprovisioning_status.\n\n## Provisioning Error Handling\n\nConfigurationInvalid: the plan configuration cannot be applied \u2192 roll\nback the provisioning (release the account number) and end the workflow.\nActivationFailed: activation does not complete \u2192 roll back the\nprovisioning (deconfigure the account, release the account number).\n\n## Provisioning Retries\n\nConfigure the account: retry up to 3 times with exponential backoff\nstarting at 1 second.\n\n## Provisioning Compensation\n\nRelease the account number compensates Reserves an account number \u2014\nreturn the reserved number if provisioning is rolled back.\nDeconfigure the account compensates Configures the account \u2014 undo the\nplan configuration if provisioning is rolled back after configuration.",
+    "segments": [
+      {
+        "id": "w1",
+        "slug": "customer-onboarding",
+        "name": "Customer Onboarding",
+        "purpose": "Registers a new customer by validating the application, verifying identity, creating a customer record, and notifying the customer",
+        "section_titles": [
+          "Customer Lifecycle Operations",
+          "Onboarding Purpose",
+          "Onboarding Trigger",
+          "Onboarding Inputs and Outputs",
+          "Onboarding Process",
+          "Onboarding Error Handling",
+          "Onboarding Retries"
+        ],
+        "text": "# Customer Lifecycle Operations\n\nThis document describes two related but distinct business processes operated by the Customer Platform team: customer onboarding and account provisioning. Provisioning consumes the customer record produced by onboarding.\n## Onboarding Purpose\n\nThe customer onboarding workflow registers a new customer: it validates the application, verifies the customer's identity, creates the customer record, and notifies the customer of the outcome.\n## Onboarding Trigger\n\nThe workflow starts when a customer application is submitted and an application.received request reaches the Onboarding Service.\n## Onboarding Inputs and Outputs\n\nInputs\napplication_id \u2014 identifier of the submitted application\nemail \u2014 the applicant's email address\n\nOutputs\ncustomer_record_id \u2014 identifier of the created customer record\nonboarding_status \u2014 registered or rejected\n## Onboarding Process\n\nThe Onboarding Service validates the application using application_id\nand returns whether the application is complete.\nIf the application is incomplete, the workflow raises\nApplicationIncomplete and rejects the application; if the application is complete, the workflow continues.\nThe Identity Service verifies the customer identity for email and\nreturns a verification_id.\nThe Customer Service creates the customer record and returns a\ncustomer_record_id.\nThe Notification Service notifies the customer of the registration\noutcome.\n## Onboarding Error Handling\n\nApplicationIncomplete: the application is missing required fields \u2192\nreject the application and end the workflow.\nIdentityCheckFailed: identity verification fails \u2192 reject the\napplication and end the workflow.\n## Onboarding Retries\n\nVerify the customer identity: retry up to 3 times with exponential\nbackoff starting at 2 seconds.\nNotify the customer: retry up to 5 times; failure is non-fatal.",
+        "sliced": true
+      },
+      {
+        "id": "w2",
+        "slug": "account-provisioning",
+        "name": "Account Provisioning",
+        "purpose": "Prepares a registered customer's account for use by reserving a number, configuring, and activating it",
+        "section_titles": [
+          "Customer Lifecycle Operations",
+          "Provisioning Purpose",
+          "Provisioning Trigger",
+          "Provisioning Inputs and Outputs",
+          "Provisioning Process",
+          "Provisioning Error Handling",
+          "Provisioning Retries"
+        ],
+        "text": "# Customer Lifecycle Operations\n\nThis document describes two related but distinct business processes operated by the Customer Platform team: customer onboarding and account provisioning. Provisioning consumes the customer record produced by onboarding.\n## Provisioning Purpose\n\nThe account provisioning workflow prepares a registered customer's account for use: it reserves an account number, configures the account, and activates it. If activation fails after configuration, the configuration is rolled back.\n## Provisioning Trigger\n\nThe workflow starts when a customer record is registered and an account.provision request reaches the Provisioning Service. It requires the customer_record_id produced by customer onboarding.\n## Provisioning Inputs and Outputs\n\nInputs\ncustomer_record_id \u2014 identifier of the registered customer record\nplan_code \u2014 the subscription plan to provision\n\nOutputs\naccount_id \u2014 identifier of the activated account\nprovisioning_status \u2014 active or failed\n## Provisioning Process\n\nThe Provisioning Service reserves an account number for\ncustomer_record_id and returns an account_id.\nThe Provisioning Service configures the account for plan_code.\nIf the configuration is invalid, the workflow raises\nConfigurationInvalid; if the configuration is valid, the workflow continues.\nThe Provisioning Service activates the account and returns the final\nprovisioning_status.\n## Provisioning Error Handling\n\nConfigurationInvalid: the plan configuration cannot be applied \u2192 roll\nback the provisioning (release the account number) and end the workflow.\nActivationFailed: activation does not complete \u2192 roll back the\nprovisioning (deconfigure the account, release the account number).\n## Provisioning Retries\n\nConfigure the account: retry up to 3 times with exponential backoff\nstarting at 1 second.",
+        "sliced": true
+      }
+    ],
+    "specs": [
+      {
+        "slug": "customer-onboarding",
+        "metadata": {
+          "name": "Customer Onboarding Workflow",
+          "description": "Registers a new customer by validating the application, verifying identity, creating a customer record, and notifying the customer of the outcome.",
+          "purpose": "Registers a new customer by validating the application, verifying identity, creating a customer record, and notifying the customer of the outcome.",
+          "actors": [
+            "Customer",
+            "Onboarding Service",
+            "Identity Service",
+            "Customer Service",
+            "Notification Service",
+            "Provisioning Service"
+          ],
+          "systems": [
+            "Onboarding Service",
+            "Identity Service",
+            "Customer Service",
+            "Notification Service",
+            "Provisioning Service"
+          ],
+          "trigger_events": [],
+          "start_states": [
+            "new application submitted"
+          ],
+          "end_states": [
+            "rejected",
+            "registered"
+          ],
+          "version": "0.1.0",
+          "domain": null,
+          "owner": null,
+          "source_format": null,
+          "tags": [],
+          "extra": {
+            "self_reported_confidence": "0.800"
+          },
+          "created_at": null
+        },
+        "facts": {
+          "facts": [
+            {
+              "id": "input-1",
+              "statement": "application_id",
+              "category": "input",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "input-2",
+              "statement": "email",
+              "category": "input",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "output-1",
+              "statement": "customer_record_id",
+              "category": "output",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "output-2",
+              "statement": "onboarding_status",
+              "category": "output",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "activity-1",
+              "statement": "Validate Application",
+              "category": "activity",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "activity-2",
+              "statement": "Verify Identity",
+              "category": "activity",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "activity-3",
+              "statement": "Create Customer Record",
+              "category": "activity",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "activity-4",
+              "statement": "Notify Customer",
+              "category": "activity",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "decision-1",
+              "statement": "Is Application Complete?",
+              "category": "decision",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "rule-1",
+              "statement": "Application must be complete to proceed",
+              "category": "rule",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "rule-2",
+              "statement": "Identity verification required",
+              "category": "rule",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "event-1",
+              "statement": "application.received",
+              "category": "event",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "event-2",
+              "statement": "onboarding_status",
+              "category": "event",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "api-1",
+              "statement": "Onboarding Service.validateApplication",
+              "category": "api",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "api-2",
+              "statement": "Identity Service.verifyIdentity",
+              "category": "api",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "api-3",
+              "statement": "Customer Service.createCustomerRecord",
+              "category": "api",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "api-4",
+              "statement": "Notification Service.notifyCustomer",
+              "category": "api",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "system-1",
+              "statement": "Onboarding Service",
+              "category": "system",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "system-2",
+              "statement": "Identity Service",
+              "category": "system",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "system-3",
+              "statement": "Customer Service",
+              "category": "system",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "system-4",
+              "statement": "Notification Service",
+              "category": "system",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "exception-1",
+              "statement": "ApplicationIncomplete",
+              "category": "exception",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "exception-2",
+              "statement": "IdentityCheckFailed",
+              "category": "exception",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "retry-1",
+              "statement": "Verify customer identity: up to 3 times with exponential backoff (starting at 2 seconds)",
+              "category": "retry",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "retry-2",
+              "statement": "Notify customer: up to 5 times (non-fatal on failure)",
+              "category": "retry",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            }
+          ],
+          "structure": {
+            "activities": [
+              {
+                "id": "a1",
+                "name": "Validate Application",
+                "parallel_group": null
+              },
+              {
+                "id": "a2",
+                "name": "Verify Identity",
+                "parallel_group": null
+              },
+              {
+                "id": "a3",
+                "name": "Create Customer Record",
+                "parallel_group": null
+              },
+              {
+                "id": "a4",
+                "name": "Notify Customer",
+                "parallel_group": null
+              }
+            ],
+            "decisions": [
+              {
+                "id": "d1",
+                "question": "Is Application Complete?",
+                "after": "a1",
+                "yes_target": "a2",
+                "no_target": "e1"
+              }
+            ],
+            "exceptions": [
+              {
+                "id": "e1",
+                "reason": "ApplicationIncomplete",
+                "raised_by": "a1"
+              },
+              {
+                "id": "e2",
+                "reason": "IdentityCheckFailed",
+                "raised_by": "a2"
+              }
+            ],
+            "compensations": [],
+            "events": [
+              {
+                "id": "ev1",
+                "name": "application.received",
+                "emitted_by": "start",
+                "kind": "trigger"
+              },
+              {
+                "id": "ev2",
+                "name": "onboarding_status",
+                "emitted_by": "a4",
+                "kind": "output_emit"
+              }
+            ],
+            "triggers": [],
+            "transitions": []
+          }
+        },
+        "assumptions": [],
+        "ambiguities": [],
+        "open_questions": [
+          {
+            "text": "What deadline bounds each wait (e.g. 24 hours)?",
+            "provenance": "llm_inferred",
+            "resolved": false,
+            "answer": null,
+            "ref": "R6-bounded-waits"
+          },
+          {
+            "text": "What is the deadline for the application to be processed after submission?",
+            "provenance": "llm_inferred",
+            "resolved": false,
+            "answer": null,
+            "ref": null
+          }
+        ],
+        "suggested_edits": [],
+        "provenance": {}
+      },
+      {
+        "slug": "account-provisioning",
+        "metadata": {
+          "name": "Account Provisioning Workflow",
+          "description": "Prepares a registered customer's account for use by reserving an account number, configuring it based on a subscription plan, and activating it.",
+          "purpose": "Prepares a registered customer's account for use by reserving an account number, configuring it based on a subscription plan, and activating it.",
+          "actors": [
+            "Customer Platform team",
+            "Provisioning Service"
+          ],
+          "systems": [
+            "Provisioning Service"
+          ],
+          "trigger_events": [
+            "customer record registered and account.provision request received"
+          ],
+          "start_states": [
+            "customer record registered"
+          ],
+          "end_states": [
+            "provisioning_status: active",
+            "provisioning_status: failed"
+          ],
+          "version": "0.1.0",
+          "domain": null,
+          "owner": null,
+          "source_format": null,
+          "tags": [],
+          "extra": {
+            "self_reported_confidence": "0.900"
+          },
+          "created_at": null
+        },
+        "facts": {
+          "facts": [
+            {
+              "id": "input-1",
+              "statement": "customer_record_id",
+              "category": "input",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "input-2",
+              "statement": "plan_code",
+              "category": "input",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "output-1",
+              "statement": "account_id",
+              "category": "output",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "output-2",
+              "statement": "provisioning_status",
+              "category": "output",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "activity-1",
+              "statement": "Reserve account number",
+              "category": "activity",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "activity-2",
+              "statement": "Configure account",
+              "category": "activity",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "activity-3",
+              "statement": "Activate account",
+              "category": "activity",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "decision-1",
+              "statement": "Is configuration valid?",
+              "category": "decision",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "decision-2",
+              "statement": "Is activation successful?",
+              "category": "decision",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "rule-1",
+              "statement": "If configuration is invalid, raise ConfigurationInvalid and roll back provisioning",
+              "category": "rule",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "rule-2",
+              "statement": "Configure account with retry up to 3 times with exponential backoff starting at 1 second",
+              "category": "rule",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "event-1",
+              "statement": "account.provision request",
+              "category": "event",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "event-2",
+              "statement": "account_id",
+              "category": "event",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "event-3",
+              "statement": "provisioning_status",
+              "category": "event",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "api-1",
+              "statement": "Provisioning Service (reserve account number, configure account, activate account)",
+              "category": "api",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "system-1",
+              "statement": "Provisioning Service",
+              "category": "system",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "system-2",
+              "statement": "Customer Platform",
+              "category": "system",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "exception-1",
+              "statement": "ConfigurationInvalid",
+              "category": "exception",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "exception-2",
+              "statement": "ActivationFailed",
+              "category": "exception",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "retry-1",
+              "statement": "Configure account: up to 3 times with exponential backoff starting at 1 second",
+              "category": "retry",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "compensation-1",
+              "statement": "Roll back provisioning compensates Reserve account number",
+              "category": "compensation",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            },
+            {
+              "id": "compensation-2",
+              "statement": "Deconfigure and roll back compensates Configure account",
+              "category": "compensation",
+              "subject": null,
+              "source_span": null,
+              "confidence": 0.6
+            }
+          ],
+          "structure": {
+            "activities": [
+              {
+                "id": "a1",
+                "name": "Reserve account number",
+                "parallel_group": null
+              },
+              {
+                "id": "a2",
+                "name": "Configure account",
+                "parallel_group": null
+              },
+              {
+                "id": "a3",
+                "name": "Activate account",
+                "parallel_group": null
+              }
+            ],
+            "decisions": [
+              {
+                "id": "d1",
+                "question": "Is configuration valid?",
+                "after": "a2",
+                "yes_target": "a3",
+                "no_target": "e1"
+              },
+              {
+                "id": "d2",
+                "question": "Is activation successful?",
+                "after": "a3",
+                "yes_target": "end",
+                "no_target": "e2"
+              }
+            ],
+            "exceptions": [
+              {
+                "id": "e1",
+                "reason": "ConfigurationInvalid",
+                "raised_by": "a2"
+              },
+              {
+                "id": "e2",
+                "reason": "ActivationFailed",
+                "raised_by": "a3"
+              }
+            ],
+            "compensations": [
+              {
+                "id": "c1",
+                "name": "Roll back provisioning",
+                "compensates": "a1"
+              },
+              {
+                "id": "c2",
+                "name": "Deconfigure and roll back",
+                "compensates": "a2"
+              }
+            ],
+            "events": [
+              {
+                "id": "ev1",
+                "name": "account.provision request",
+                "emitted_by": "start",
+                "kind": "trigger"
+              },
+              {
+                "id": "ev2",
+                "name": "account_id",
+                "emitted_by": "a1",
+                "kind": "output_emit"
+              },
+              {
+                "id": "ev3",
+                "name": "provisioning_status",
+                "emitted_by": "a3",
+                "kind": "output_emit"
+              }
+            ],
+            "triggers": [],
+            "transitions": []
+          }
+        },
+        "assumptions": [],
+        "ambiguities": [],
+        "open_questions": [
+          {
+            "text": "What deadline bounds each wait (e.g. 24 hours)?",
+            "provenance": "llm_inferred",
+            "resolved": false,
+            "answer": null,
+            "ref": "R6-bounded-waits"
+          }
+        ],
+        "suggested_edits": [],
+        "provenance": {}
+      }
+    ],
+    "cross_references": [
+      {
+        "source_workflow": "customer-onboarding",
+        "output_field": "customer_record_id",
+        "output_type": "str",
+        "target_workflow": "account-provisioning",
+        "input_field": "customer_record_id",
+        "input_type": "str",
+        "description": "Account Provisioning consumes the customer_record_id produced by Customer Onboarding",
+        "user_confirmed": false
+      }
+    ],
+    "triggers": [
+      {
+        "source_workflow": "customer-onboarding",
+        "target_workflow": "account-provisioning",
+        "mode": "fire_and_forget",
+        "condition": "when a customer record is registered",
+        "input_map": [
+          {
+            "target_input": "customer_record_id",
+            "source": "step_output",
+            "source_ref": "customer_record_id",
+            "type": "str"
+          }
+        ],
+        "result_binding": null,
+        "user_confirmed": false
+      }
+    ],
+    "spec_approval_status": "pending",
+    "workflow_ids": {},
+    "warnings": [],
+    "validation_findings": {
+      "customer-onboarding": [
+        {
+          "severity": "warning",
+          "workflow": "customer-onboarding",
+          "section": null,
+          "field": null,
+          "message": "grounding: actors: Customer is a generic term; clarify if it refers to a specific role or system in the context of the workflow",
+          "suggestion": null
+        },
+        {
+          "severity": "warning",
+          "workflow": "customer-onboarding",
+          "section": null,
+          "field": null,
+          "message": "grounding: systems: Similar to actors, 'Customer Service' and 'Notification Service' are not explicitly defined in the source document; ensure they align with the intended workflow scope",
+          "suggestion": null
+        },
+        {
+          "severity": "warning",
+          "workflow": "customer-onboarding",
+          "section": null,
+          "field": null,
+          "message": "grounding: Open Questions: The deadline for application processing after submission is not specified in the source document; this could impact SLA definitions",
+          "suggestion": null
+        },
+        {
+          "severity": "warning",
+          "workflow": "customer-onboarding",
+          "section": "Triggers",
+          "field": null,
+          "message": "trigger to 'account-provisioning' is conditional on 'when a customer record is registered' but is not confirmed",
+          "suggestion": "review and tick its checkbox in the spec file"
+        }
+      ],
+      "account-provisioning": [
+        {
+          "severity": "warning",
+          "workflow": "account-provisioning",
+          "section": null,
+          "field": null,
+          "message": "grounding: actors: Source document lists 'Customer Platform team' but does not explicitly mention 'Provisioning Service' as an actor in the provisioning workflow context",
+          "suggestion": null
+        },
+        {
+          "severity": "warning",
+          "workflow": "account-provisioning",
+          "section": null,
+          "field": null,
+          "message": "grounding: trigger_events: Source document implies a trigger but does not explicitly define 'account.provision request received' as a formal trigger event in the listed metadata",
+          "suggestion": null
+        }
+      ]
+    },
+    "stage": "spec_validated",
+    "created_at": "2026-07-13T01:57:18.650186Z",
+    "updated_at": "2026-07-13T02:02:13.365859Z"
+  },
+  "spec_markdown": {
+    "customer-onboarding": "# Customer Onboarding Workflow\n\n<!--\n  workflow-compiler specification (v1) \u2014 slug: customer-onboarding\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nRegisters a new customer by validating the application, verifying identity, creating a customer record, and notifying the customer of the outcome.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Customer, Onboarding Service, Identity Service, Customer Service, Notification Service, Provisioning Service\n- systems: Onboarding Service, Identity Service, Customer Service, Notification Service, Provisioning Service\n- triggers: \n- start states: new application submitted\n- end states: rejected, registered\n- tags: \n\n## Inputs\n- application_id\n- email\n\n## Outputs\n- customer_record_id\n- onboarding_status\n\n## Business Rules\n- Application must be complete to proceed\n- Identity verification required\n\n## API Interfaces\n- Onboarding Service.validateApplication\n- Identity Service.verifyIdentity\n- Customer Service.createCustomerRecord\n- Notification Service.notifyCustomer\n\n## Systems Involved\n- Onboarding Service\n- Identity Service\n- Customer Service\n- Notification Service\n\n## Timers and SLAs\n<!-- none -->\n\n## Retries\n- Verify customer identity: up to 3 times with exponential backoff (starting at 2 seconds)\n- Notify customer: up to 5 times (non-fatal on failure)\n\n## Activities\n- [a1] Validate Application\n- [a2] Verify Identity\n- [a3] Create Customer Record\n- [a4] Notify Customer\n\n## Decisions\n- [d1] Is Application Complete? \u2014 after: a1; yes: a2; no: e1\n\n## Exceptions\n- [e1] ApplicationIncomplete \u2014 raised by: a1\n- [e2] IdentityCheckFailed \u2014 raised by: a2\n\n## Compensations\n<!-- none -->\n\n## Events\n- [ev1] application.received \u2014 kind: trigger; emitted by: start\n- [ev2] onboarding_status \u2014 kind: output_emit; emitted by: a4\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n<!-- none -->\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n- [ ] (R6-bounded-waits) What deadline bounds each wait (e.g. 24 hours)?\n  Answer: \n- [ ] What is the deadline for the application to be processed after submission?\n  Answer: \n\n## Cross-Workflow Dependencies\n- [ ] provides output `customer_record_id` to `account-provisioning` input `customer_record_id` \u2014 Account Provisioning consumes the customer_record_id produced by Customer Onboarding\n\n## Triggers\n- [ ] triggers `account-provisioning` (fire-and-forget) when `when a customer record is registered`\n  input customer_record_id: step output `customer_record_id` (str)\n",
+    "account-provisioning": "# Account Provisioning Workflow\n\n<!--\n  workflow-compiler specification (v1) \u2014 slug: account-provisioning\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nPrepares a registered customer's account for use by reserving an account number, configuring it based on a subscription plan, and activating it.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Customer Platform team, Provisioning Service\n- systems: Provisioning Service\n- triggers: customer record registered and account.provision request received\n- start states: customer record registered\n- end states: provisioning_status: active, provisioning_status: failed\n- tags: \n\n## Inputs\n- customer_record_id\n- plan_code\n\n## Outputs\n- account_id\n- provisioning_status\n\n## Business Rules\n- If configuration is invalid, raise ConfigurationInvalid and roll back provisioning\n- Configure account with retry up to 3 times with exponential backoff starting at 1 second\n\n## API Interfaces\n- Provisioning Service (reserve account number, configure account, activate account)\n\n## Systems Involved\n- Provisioning Service\n- Customer Platform\n\n## Timers and SLAs\n<!-- none -->\n\n## Retries\n- Configure account: up to 3 times with exponential backoff starting at 1 second\n\n## Activities\n- [a1] Reserve account number\n- [a2] Configure account\n- [a3] Activate account\n\n## Decisions\n- [d1] Is configuration valid? \u2014 after: a2; yes: a3; no: e1\n- [d2] Is activation successful? \u2014 after: a3; yes: end; no: e2\n\n## Exceptions\n- [e1] ConfigurationInvalid \u2014 raised by: a2\n- [e2] ActivationFailed \u2014 raised by: a3\n\n## Compensations\n- [c1] Roll back provisioning \u2014 compensates: a1\n- [c2] Deconfigure and roll back \u2014 compensates: a2\n\n## Events\n- [ev1] account.provision request \u2014 kind: trigger; emitted by: start\n- [ev2] account_id \u2014 kind: output_emit; emitted by: a1\n- [ev3] provisioning_status \u2014 kind: output_emit; emitted by: a3\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n<!-- none -->\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n- [ ] (R6-bounded-waits) What deadline bounds each wait (e.g. 24 hours)?\n  Answer: \n\n## Cross-Workflow Dependencies\n- [ ] uses output `customer_record_id` of `customer-onboarding` as input `customer_record_id` \u2014 Account Provisioning consumes the customer_record_id produced by Customer Onboarding\n\n## Triggers\n<!-- none -->\n"
+  },
+  "diagrams": {
+    "customer-onboarding": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Validate Application\"]\n    activity_2[\"Verify Identity\"]\n    activity_3[\"Create Customer Record\"]\n    activity_4[\"Notify Customer\"]\n    decision_1{\"Is Application Complete?\"}\n    exception_1([\"ApplicationIncomplete\"])\n    exception_2([\"IdentityCheckFailed\"])\n    event_1([\"application.received\"])\n    event_2([\"onboarding_status\"])\n    trigger_1[\"Trigger account-provisioning\"]\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> activity_3\n    activity_3 --> activity_4\n    activity_4 --> end_node\n    activity_1 -.->|on error| exception_1\n    activity_2 -.->|on error| exception_2\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_4 -.->|emits| event_2\n    activity_4 -->|when a customer record is registered| trigger_1\n    exception_1 -->|terminates| end_node\n    exception_2 -->|terminates| end_node",
+    "account-provisioning": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Reserve account number\"]\n    activity_2[\"Configure account\"]\n    activity_3[\"Activate account\"]\n    decision_1{\"Is configuration valid?\"}\n    decision_2{\"Is activation successful?\"}\n    exception_1([\"ConfigurationInvalid\"])\n    exception_2([\"ActivationFailed\"])\n    compensation_1[\"Roll back provisioning\"]\n    compensation_2[\"Deconfigure and roll back\"]\n    event_1([\"account.provision request\"])\n    event_2([\"account_id\"])\n    event_3([\"provisioning_status\"])\n    start --> activity_1\n    activity_1 --> activity_2\n    activity_2 --> decision_1\n    decision_1 -->|yes| activity_3\n    decision_1 -->|no| exception_1\n    activity_3 --> decision_2\n    decision_2 -->|yes| end_node\n    decision_2 -->|no| exception_2\n    activity_2 -.->|on error| exception_1\n    activity_3 -.->|on error| exception_2\n    activity_1 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    exception_1 -.->|compensate| compensation_2\n    compensation_2 --> end_node\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_1 -.->|emits| event_2\n    activity_3 -.->|emits| event_3\n    exception_2 -->|terminates| end_node"
+  }
+}

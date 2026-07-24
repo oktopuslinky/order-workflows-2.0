@@ -1,0 +1,40 @@
+"""Shared dataclasses for the {{ workflow_class }} workflow.
+
+Temporal passes a single dataclass argument to workflows and activities so that
+inputs evolve compatibly. Refine the field types to match your real domain types.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class WorkflowInput:
+    """Input to the {{ workflow_class }} workflow."""
+
+{% if workflow_input_fields %}
+{% for f in workflow_input_fields %}
+    {{ f.name }}: {% if f.default == 'None' %}{{ f.annotation }} | None{% else %}{{ f.annotation }}{% endif %} = {{ f.default }}
+{% endfor %}
+{% else %}
+    payload: dict[str, Any] = field(default_factory=dict)  # TODO: define real fields
+{% endif %}
+
+
+{% for cls in input_classes %}
+@dataclass
+class {{ cls.name }}:
+    """Input to the matching activity / child workflow."""
+
+{% if cls.fields %}
+{% for f in cls.fields %}
+    {{ f.name }}: {% if f.default == 'None' %}{{ f.annotation }} | None{% else %}{{ f.annotation }}{% endif %} = {{ f.default }}
+{% endfor %}
+{% else %}
+    pass
+{% endif %}
+
+
+{% endfor %}

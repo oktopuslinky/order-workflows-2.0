@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# Environment / secrets
+.env
+.env.*
+.env copy
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local state store
+*.sqlite
+*.db
+.workflow_state/
+
+# One-off pipeline run artifacts — the documented example outputs live in
+# ./generated and ./specs; ad-hoc runs should use these prefixed dirs.
+generated-*/
+generated_*/
+specs-*/
+specs_*/
+.playwright-mcp/
+
+# --- demo video build artifacts (added for demo pipeline) ---
+# Node deps for the capture rig (Playwright) — regenerable via npm install
+demo/capture2/node_modules/
+# Playwright temp recordings + saved session state
+demo/capture2/_vidtmp/
+demo/capture2/_state.json
+# Redundant raw webm footage (the .mp4 transcodes are kept for re-rendering)
+demo/video/public/footage/*.webm
+# Old capture take raw videos / bundles (large, regenerable)
+demo/capture/*.mp4
+demo/capture/*.zip
+demo/capture/raw-app.start.json
+# Remotion render intermediates (final demo.mp4 is force-added)
+demo/video/out/part*.mp4
+demo/video/out/sample.mp4
+# stray junk
+/tatus

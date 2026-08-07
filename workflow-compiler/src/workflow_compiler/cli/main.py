@@ -1,6 +1,7 @@
 """Typer command-line interface for workflow-compiler.
 
-One pipeline: ``compile <doc> --spec-dir`` writes editable spec files, the user
+``init`` is the one-time setup step (writes ``.env``); everything below it is the
+pipeline. One pipeline: ``compile <doc> --spec-dir`` writes editable spec files, the user
 iterates ``validate`` until satisfied, and ``approve-spec`` compiles every
 workflow through to Temporal code. ``approve`` / ``reject`` remain as the manual
 override for workflows whose graph health fell below the auto-approve threshold,
@@ -51,6 +52,99 @@ def main(
     ),
 ) -> None:
     """workflow-compiler command-line interface."""
+
+
+@app.command()
+def init(
+    provider: str = typer.Option(
+        None, "--provider", help="LLM provider to configure. Asked for when omitted."
+    ),
+    nvidia_api_key: str = typer.Option(
+        None, "--nvidia-api-key", help="NVIDIA API key. Asked for when omitted."
+    ),
+    env_file: Path = typer.Option(
+        Path(".env"), "--env-file", help="Where to write the configuration."
+    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing file."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Ask no questions; use defaults and the flags given."
+    ),
+) -> None:
+    """Create a .env file so the compiler knows which LLM provider to use.
+
+    Run this once after installing. It is the configuration half of the install:
+    a wheel cannot run code at install time, so `pip install` cannot do it for you.
+    """
+    from workflow_compiler.cli.init_env import (
+        DEFAULT_GATEWAY_BASE,
+        GATEWAY_PROVIDERS,
+        KEY_PROVIDERS,
+        PROVIDER_CHOICES,
+        PROVIDER_HELP,
+        missing_credentials,
+        render_env,
+    )
+
+    if env_file.exists() and not force:
+        console.print(f"[yellow]{env_file} already exists.[/] Re-run with --force to replace it.")
+        raise typer.Exit(1)
+
+    chosen: str = provider
+    if chosen is None:
+        if yes:
+            chosen = "mock"
+        else:
+            console.print("[bold]Which LLM provider should workflow-compiler use?[/]")
+            for name in PROVIDER_CHOICES:
+                console.print(f"  [cyan]{name}[/] — {PROVIDER_HELP[name]}")
+            chosen = typer.prompt("Provider", default="nemotron")
+    if chosen not in PROVIDER_CHOICES:
+        console.print(
+            f"[red]Unknown provider '{chosen}'.[/] "
+            f"Choose one of: {', '.join(PROVIDER_CHOICES)}"
+        )
+        raise typer.Exit(1)
+
+    key: str | None = nvidia_api_key
+    base: str | None = None
+    email: str | None = None
+    password: str | None = None
+
+    if not yes:
+        if chosen in KEY_PROVIDERS and key is None:
+            key = typer.prompt("NVIDIA API key (get one at build.nvidia.com)", hide_input=True)
+        if chosen in GATEWAY_PROVIDERS:
+            base = typer.prompt("Gateway base URL", default=DEFAULT_GATEWAY_BASE)
+            email = typer.prompt("Gateway email")
+            password = typer.prompt("Gateway password", hide_input=True)
+
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text(
+        render_env(
+            provider=chosen,
+            nvidia_api_key=key,
+            gateway_base=base,
+            gateway_email=email,
+            gateway_password=password,
+        ),
+        encoding="utf-8",
+    )
+    console.print(f"[green]Wrote[/] {env_file} [dim](provider: {chosen})[/]")
+
+    missing = missing_credentials(
+        chosen, nvidia_api_key=key, gateway_email=email, gateway_password=password
+    )
+    if missing:
+        console.print(
+            f"[yellow]Still needed:[/] {', '.join(missing)}. "
+            f"Uncomment and fill these in {env_file} before you compile."
+        )
+
+    console.print("\n[bold]Next:[/]")
+    console.print("  workflow-compiler compile <your-document> --spec-dir ./specs")
+    console.print("  [dim]# edit the generated spec files, then:[/]")
+    console.print("  workflow-compiler validate <project-id> --spec-dir ./specs")
+    console.print("  workflow-compiler approve-spec <project-id> --spec-dir ./specs")
 
 
 @app.command()

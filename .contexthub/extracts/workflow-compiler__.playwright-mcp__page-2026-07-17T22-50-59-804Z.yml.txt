@@ -1,0 +1,13 @@
+- generic [active] [ref=f1e1]:
+  - banner [ref=f1e2]:
+    - link "workflow·compiler" [ref=f1e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=f1e4]: document → spec → validate → approve → code
+    - navigation [ref=f1e5]:
+      - link "Projects" [ref=f1e6] [cursor=pointer]:
+        - /url: /
+      - link "Guide" [ref=f1e7] [cursor=pointer]:
+        - /url: /guide
+      - button "Switch to dark theme" [ref=f1e8]: ☾ Dark
+  - main [ref=f1e9]:
+    - paragraph [ref=f1e10]: Checking session…

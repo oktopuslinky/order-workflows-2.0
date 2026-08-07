@@ -1,0 +1,15 @@
+{
+  "cookies": [
+    {
+      "name": "wc_session",
+      "value": "7d7fecf2-b9e5-4b3f-b2bd-a5c5ef5e1971.1786924287.55f9ca50c8722c616530c35b91ed28a7fc575934d557a541a0e1d8a745750da7",
+      "domain": "localhost",
+      "path": "/",
+      "expires": 1786924287.513006,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": []
+}

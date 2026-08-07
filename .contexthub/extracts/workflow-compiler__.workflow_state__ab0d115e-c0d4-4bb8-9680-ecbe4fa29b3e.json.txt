@@ -1,0 +1,503 @@
+{
+  "workflow_id": "ab0d115e-c0d4-4bb8-9680-ecbe4fa29b3e",
+  "document_text": "Order Settlement Workflow\n\n<!-- IDEAL-CONDITIONS REFERENCE DOCUMENT ---------------------------------- This document is deliberately written so that every pipeline stage (discovery → facts → structure → graph → CVPA → Temporal design → Temporal code) has exactly what it needs and nothing that confuses it. See the \"Temporal-alignment notes\" section at the bottom for where (and why) it intentionally deviates from docs/DOCUMENTFORMATGUIDE.md.\n\nDesign goals that map 1:1 onto a Temporal workflow:\nONE workflow, ONE start, ONE end  (no multi-workflow / multi-start confusion)\nActivity names are stable PascalCase phrases, reused verbatim in the\nProcess, API Interfaces, Retries, and Compensation sections.\nEvery decision states BOTH branches; the \"yes\" branch is the happy path and\nthe \"no\" branch routes to a NAMED exception (never back to the same step).\n\"In parallel\" is used ONLY for genuinely independent activities that share\nno data dependency and are not gated by a decision.\nSaga compensations use the exact \"<Comp> compensates <Activity>\" phrasing.\nThe one human/external wait is modelled as a signal AND paired with a timer\nso the Temporal design can bound it (no wait-forever signal gate).\nNO free-form \"state transitions\" (\"X transitions to Y\") are written in the\nProcess — those create a disconnected state subgraph that the design LLM mis-reads. Lifecycle states live only in the Metadata/States section. -->\n\nMetadata\n\n| Field   | Value                                   | |---------|-----------------------------------------| | Domain  | Commerce / Order Management             | | Owner   | Settlement Platform Team                | | Version | 1.0                                     | | Tags    | saga, compensation, payments, signal    |\n\nPurpose\n\nThis workflow settles a confirmed order: it validates the order, reserves inventory, charges the customer, waits for warehouse shipping confirmation, and finalises the sale. If any step after payment fails, it compensates the completed steps in reverse so the customer is never charged for an order that cannot ship.\n\nTrigger\n\nThe workflow starts when an order is confirmed and an order.settle request is received by the Settlement Service.\n\nActors\n\nCustomer\nWarehouse Operator\nSettlement Operations\n\nSystems\n\nSettlement Service\nInventory Service\nPayment Gateway\nNotification Service\nAnalytics Pipeline\n\nInputs and Outputs\n\nInputs (these become the workflow input fields)\norder_id — identifier of the confirmed order to settle\ncustomer_id — identifier of the paying customer\namount — order total to charge\ncurrency — ISO currency code for the charge\n\nOutputs\nsettlement_id — identifier of the completed settlement\npayment_id — identifier of the captured payment\nsettlementstatus — settled, rejected, or rolledback\n\nProcess\n\nThe Settlement Service validates the order using order_id and returns\nwhether the order is settleable.\nIf the order is not settleable, the workflow raises OrderNotSettleable\nand rejects the settlement; if the order is settleable, the workflow continues.\nThe Inventory Service reserves inventory for order_id and returns a\nreservation_id.\nThe Payment Gateway charges payment for customer_id for amount in\ncurrency and returns a payment_id.\nIf the charge is declined, the workflow raises PaymentDeclined; if the\ncharge succeeds, the workflow continues.\nIn parallel, the Notification Service notifies the customer of the pending\nshipment and the Analytics Pipeline records a settlement event. These two activities are independent and share no data.\nThe workflow waits for shipping confirmation — a shipping.confirmed\nsignal sent by the Warehouse Operator — for up to the shipping-confirmation deadline.\nThe Settlement Service finalises the settlement for order_id and returns\na settlement_id.\n\nBusiness Rules\n\nBR-1: An order may only be settled when it is in the confirmed state.\nBR-2: Inventory must be reserved before payment is charged.\nBR-3: Payment must be captured before shipping confirmation is awaited.\nBR-4: If shipping is not confirmed before the deadline, the settlement is\nrolled back.\n\nTimers and SLAs\n\nOrder validation must complete within 5 seconds.\nCharge payment must complete within 30 seconds.\nShipping confirmation must arrive within 24 hours; otherwise the workflow\nrolls back the settlement.\n\nAPI Interfaces\n\n| System               | Method | Endpoint / Action          | Purpose                                   | |----------------------|--------|----------------------------|-------------------------------------------| | Settlement Service   | POST   | /settlement/validate     | Validate the order (order_id)           | | Inventory Service    | POST   | /inventory/reserve       | Reserve inventory (order_id)            | | Payment Gateway      | POST   | /payments/charge         | Charge payment (customer_id, amount)  | | Notification Service | POST   | /notify/customer         | Notify the customer of pending shipment   | | Analytics Pipeline   | POST   | /analytics/event         | Record a settlement event                 | | Settlement Service   | POST   | /settlement/finalise     | Finalise the settlement (order_id)      |\n\nExceptions and Error Handling\n\nOrderNotSettleable: the order is not in a settleable state → reject the\nsettlement with reason ORDERNOTSETTLEABLE and end the workflow.\nPaymentDeclined: the Payment Gateway declines the charge → roll back the\nsettlement (release inventory) and end the workflow.\nShippingTimeout: shipping confirmation does not arrive within 24 hours →\nroll back the settlement (refund payment, release inventory).\n\nRetries\n\nReserve inventory: retry up to 3 times with exponential backoff\nstarting at 2 seconds.\nCharge payment: retry up to 2 times with a fixed 5-second delay;\ndo not retry on a PaymentDeclined error.\nNotify customer: retry up to 5 times with exponential backoff; failure\nis non-fatal.\n\nCompensation and Rollback\n\nRelease inventory compensates Reserve inventory — return the reserved\nstock if the settlement is rolled back after reservation.\nRefund payment compensates Charge payment — reverse the captured charge\nif the settlement is rolled back after payment.\n\n---\n\nTemporal-alignment notes (deviations from DOCUMENTFORMATGUIDE.md and why)\n\nThese are written for the human author, not the pipeline. They explain the choices that make this document produce clean Temporal code:\n\nNo ## States \"transition\" sentences in the Process. The format guide\nencourages \"The order transitions from received to cancelled.\" Those become STATE_TRANSITION facts and the graph builder turns each into a separate state_* node, producing a disconnected state subgraph (with its own \"Start\"-labelled node) alongside the real flow. The Temporal design LLM then sees two parallel structures and can mis-wire the plan. Deviation: lifecycle states are mentioned only as prose in BR-1; no X -> Y transition lines are written. (We also omit the ## States start/end-state list, which only feeds discovery metadata and is not needed for the code.)\n\nEvery decision's \"no\" branch points at a distinct named exception, never\nback at the same activity. A decision whose yes/no targets are identical is a degenerate decision the pipeline now repairs, but writing it correctly avoids the repair entirely.\n\n\"In parallel\" is reserved for truly independent work (NotifyCustomer +\nRecordSettlementEvent). Activities with data dependencies (Reserve → Charge → Finalise) are written as sequential numbered steps so they are never folded into a fork.\n\nThe single human/external wait is BOTH a signal and a timer. Step 7 names\na shipping.confirmed signal and the Timers section gives it a 24-hour deadline, so the design can model a bounded wait_condition(..., timeout=...) instead of a signal gate that blocks forever.\n\nActivity names are reused verbatim across Process / API Interfaces /\nRetries / Compensation. This is what lets the design bind retries, timeouts, and compensations to the right activity by name (the code generator matches by normalised name).\n\nInputs are named as snakecase fields (orderid, customer_id, …) so\nthey map directly onto WorkflowInput dataclass fields and onto activity input bindings.",
+  "project_id": null,
+  "workflow_metadata": {
+    "name": "Demo Order Workflow",
+    "description": "Validate, reserve, and ship a customer order.",
+    "purpose": "Validate, reserve, and ship a customer order.",
+    "actors": [
+      "Customer",
+      "Warehouse"
+    ],
+    "systems": [
+      "Order Service",
+      "Inventory Service"
+    ],
+    "trigger_events": [
+      "order submitted"
+    ],
+    "start_states": [
+      "received"
+    ],
+    "end_states": [
+      "shipped",
+      "rejected"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "order_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "input-2",
+        "statement": "customer_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "output-1",
+        "statement": "confirmation_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "activity-1",
+        "statement": "Validate order",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "activity-2",
+        "statement": "Reserve inventory",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "activity-3",
+        "statement": "Ship order",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "decision-1",
+        "statement": "Is the order valid?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "event-1",
+        "statement": "order shipped",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "exception-1",
+        "statement": "OrderInvalid",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "retry-1",
+        "statement": "Reserve inventory: retry up to 3 times with backoff",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Release inventory compensates Reserve inventory",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Validate order",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Reserve inventory",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Ship order",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Is the order valid?",
+          "after": "a1",
+          "yes_target": "a2",
+          "no_target": "e1"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "OrderInvalid",
+          "raised_by": "a1"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Release inventory",
+          "compensates": "a2"
+        }
+      ],
+      "events": [
+        {
+          "id": "v1",
+          "name": "order shipped",
+          "emitted_by": "a3"
+        }
+      ],
+      "transitions": []
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): order submitted.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "2 input(s): order_id, customer_id.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "1 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 decision(s) have both branches.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "needs_confirmation",
+        "evidence": "Waits exist but no timer/deadline was declared; a signal could block forever.",
+        "question": "What deadline bounds each wait (e.g. 24 hours)?",
+        "answer": null
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "1 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "1 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "No free-form state transitions.",
+        "question": null,
+        "answer": null
+      }
+    ]
+  },
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Validate order",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Reserve inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Ship order",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Is the order valid?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "OrderInvalid",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Release inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "order shipped",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "activity_3",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e7",
+        "source": "activity_1",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e8",
+        "source": "activity_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "activity_3",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.95: 0 error(s), 1 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Dead-end node 'order shipped' has no outgoing edges.",
+        "location": "event_1",
+        "suggestion": "Add a transition toward an END node."
+      }
+    ],
+    "score": 0.95,
+    "health_score": 0.95,
+    "confidence": 1.0,
+    "reviewer": "workflow-review",
+    "reviewed_at": "2026-07-02T23:24:27.932765Z"
+  },
+  "approval_status": "pending",
+  "cvpa_classification": null,
+  "temporal_design": null,
+  "temporal_code": null,
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Validate order\"]\n    activity_2[\"Reserve inventory\"]\n    activity_3[\"Ship order\"]\n    decision_1{\"Is the order valid?\"}\n    exception_1([\"OrderInvalid\"])\n    compensation_1[\"Release inventory\"]\n    event_1([\"order shipped\"])\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> activity_3\n    activity_3 --> end_node\n    activity_1 -.->|on error| exception_1\n    activity_2 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    activity_3 -.->|emits| event_1\n    exception_1 -->|terminates| end_node",
+    "title": "Demo Order Workflow"
+  },
+  "confidence_scores": {
+    "metadata": 0.95,
+    "facts": 0.7577,
+    "graph": 0.9,
+    "cvpa": null,
+    "temporal": null,
+    "overall": null,
+    "notes": {
+      "facts": "11 facts across 8 categories; 0 duplicate(s) removed; 0 dangling reference(s) dropped."
+    }
+  },
+  "stage": "reviewed",
+  "created_at": "2026-07-02T23:24:27.918777Z",
+  "updated_at": "2026-07-02T23:24:27.932765Z"
+}

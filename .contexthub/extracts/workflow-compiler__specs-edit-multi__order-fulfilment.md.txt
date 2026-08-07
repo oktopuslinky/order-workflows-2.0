@@ -1,0 +1,105 @@
+# Order Fulfilment
+
+<!--
+  workflow-compiler specification (v1) — slug: order-fulfilment
+  This file is a projection of the structured spec. Edit it freely, then run
+  `workflow-compiler validate <project-id>` to fold your edits back in.
+  Lines you add are recorded as human-provided. Keep the `[id]` markers on
+  existing entries so your edits update the right element.
+-->
+
+## Purpose
+The Order Fulfilment workflow ships a placed order and captures its payment by picking items, packing the shipment, dispatching it, and capturing the previously-authorised payment.
+
+## Metadata
+- domain: 
+- owner: Fulfilment Operations Team
+- version: 0.1.1
+- actors: Warehouse Operator, Fulfilment Operations
+- systems: Fulfilment Service, Warehouse Service, Carrier Service, Payment Gateway
+- triggers: Order placed and order.fulfil request received by Fulfilment Service
+- start states: placed
+- end states: shipped, cancelled
+- tags: 
+
+## Inputs
+- order_id
+- authorization_id
+
+## Outputs
+- shipment_id
+- payment_id
+- fulfilment_status
+
+## Business Rules
+- BR-1: Order must be in placed state for fulfilment
+- BR-2: Shipment must be packed before dispatch
+- Hazardous items must ship via ground carriers only [human]
+
+## API Interfaces
+- Warehouse Service /warehouse/pick
+- Warehouse Service /warehouse/pack
+- Carrier Service /carrier/dispatch
+- Payment Gateway /payments/capture
+
+## Systems Involved
+- Fulfilment Service
+- Warehouse Service
+- Carrier Service
+- Payment Gateway
+
+## Timers and SLAs
+- Dispatch shipment within 60 seconds
+- Carrier pickup confirmation within 24 hours [human]
+
+## Retries
+- Dispatch shipment: up to 3 retries with exponential backoff (start 2s)
+- Capture payment: up to 5 retries with exponential backoff (start 1s)
+
+## Activities
+- [a1] Pick order items
+- [a2] Pack shipment
+- [a3] Dispatch shipment
+- [a4] Capture payment
+- [a6] Record fulfilment ledger entry [human]
+
+## Decisions
+- [d1] Is dispatch successful? — after: a3; yes: a4; no: e1
+
+## Exceptions
+- [e1] CarrierRejected — raised by: a3
+- [e2] PickupTimeout
+
+## Compensations
+- [c1] Unpack shipment — compensates: a2
+- [c2] Refund captured payment — compensates: a4 [human]
+
+## Events
+- [ev1] order.fulfil request — kind: trigger; emitted by: start
+- [ev2] carrier.picked_up signal — kind: signal_wait
+- [ev3] pick_list_id — kind: output_emit; emitted by: a1
+- [ev4] package_id — kind: output_emit; emitted by: a2
+- [ev5] shipment_id — kind: output_emit; emitted by: a3
+- [ev6] payment_id — kind: output_emit; emitted by: a4
+
+## State Transitions
+<!-- none -->
+
+## Assumptions
+<!-- none -->
+
+## Ambiguities
+<!-- none -->
+
+## Suggested Edits
+<!-- none -->
+
+## Open Questions
+<!-- none -->
+
+## Cross-Workflow Dependencies
+- [x] provides output `payment_id` to `payment-reconciliation` input `payment_id` — payment_id from order-fulfilment to payment-reconciliation
+
+## Triggers
+- [x] triggers `payment-reconciliation` (fire-and-forget)
+  input payment_id: step output `a4` (str)

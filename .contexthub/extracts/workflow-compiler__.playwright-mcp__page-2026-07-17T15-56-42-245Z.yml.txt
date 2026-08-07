@@ -1,0 +1,381 @@
+- generic [ref=e1]:
+  - banner [ref=e2]:
+    - link "workflow·compiler" [ref=e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e4]: document → spec → validate → approve → code
+    - navigation [ref=e5]:
+      - link "Projects" [ref=e6] [cursor=pointer]:
+        - /url: /
+      - link "Guide" [ref=e7] [cursor=pointer]:
+        - /url: /guide
+      - button "Switch to dark theme" [ref=e8]: ☾ Dark
+  - main [ref=e9]:
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - link "Back to projects" [ref=e14] [cursor=pointer]:
+          - /url: /
+          - text: ←
+        - generic [ref=e15]: Needs attention
+        - generic [ref=e16]: 1 blocking
+        - generic [ref=e17]:
+          - button "Spec" [ref=e18] [cursor=pointer]
+          - button "Results" [ref=e19] [cursor=pointer]
+        - generic [ref=e20]:
+          - button "Edit request" [active] [ref=e21] [cursor=pointer]
+          - button "Save" [ref=e22] [cursor=pointer]
+          - button "Validate" [ref=e23] [cursor=pointer]
+          - button "Approve" [disabled] [ref=e24]
+      - paragraph [ref=e25]: Edited since last validate — Validate must run before
+          Approve.
+      - generic [ref=e289]:
+        - generic [ref=e290]:
+          - heading "Edit request" [level=3] [ref=e291]
+          - button "Close" [ref=e292] [cursor=pointer]
+        - paragraph [ref=e293]:
+          - text: Describe changes per workflow (see
+          - code [ref=e294]: docs/EDIT_FORMAT_GUIDE.md
+          - text: '). Applying an edit re-arms the gate: Validate and Approve must
+              run again.'
+        - textbox [ref=e295]: '# Edit Request ## Workflow: <slug> ### Add - ### Modify
+            - ### Remove - ## Reason'
+        - generic [ref=e296]:
+          - button "Upload .md" [ref=e297] [cursor=pointer]
+          - textbox "Author (optional)" [ref=e298]
+          - button "Apply edit" [ref=e299] [cursor=pointer]
+        - generic [ref=e300]:
+          - paragraph [ref=e301]: Edit history
+          - generic [ref=e302]:
+            - paragraph [ref=e303]: 7/17/2026, 10:30:21 AM — devansh
+            - paragraph [ref=e304]: 'order-fulfillment-workflow: add activity; add
+                rule; modify retry; modify owner; remove rule; metadata: 1 applied,
+                0 dropped, 0 flagged; facts: 4 applied, 0 dropped, 0 flagged; version
+                bumped to 0.1.1'
+      - generic [ref=e26]:
+        - complementary [ref=e27]:
+          - paragraph [ref=e28]: Workflows
+          - button "order-fulfillment-workflow 1" [ref=e29] [cursor=pointer]:
+            - generic [ref=e30]: order-fulfillment-workflow
+            - generic [ref=e31]: '1'
+        - generic [ref=e32]:
+          - generic [ref=e33]:
+            - button "editor" [ref=e34] [cursor=pointer]
+            - button "preview" [ref=e35] [cursor=pointer]
+            - button "diagram" [ref=e36] [cursor=pointer]
+          - generic [ref=e41]:
+            - generic [ref=e305]:
+              - generic [ref=e306]: '1'
+              - generic [ref=e307]: '2'
+              - generic [ref=e308]: '3'
+              - generic [ref=e309]: '4'
+              - generic [ref=e310]: '5'
+              - generic [ref=e311]: '6'
+              - generic [ref=e312]: '7'
+              - generic [ref=e313]: '8'
+              - generic [ref=e314]: '9'
+              - generic [ref=e315]: '10'
+              - generic [ref=e316]: '11'
+              - generic [ref=e317]: '12'
+              - generic [ref=e318]: '13'
+              - generic [ref=e319]: '14'
+              - generic [ref=e320]: '15'
+              - generic [ref=e321]: '16'
+              - generic [ref=e322]: '17'
+              - generic [ref=e323]: '18'
+              - generic [ref=e324]: '19'
+              - generic [ref=e325]: '20'
+              - generic [ref=e326]: '21'
+              - generic [ref=e327]: '22'
+              - generic [ref=e328]: '23'
+              - generic [ref=e329]: '24'
+              - generic [ref=e330]: '25'
+              - generic [ref=e331]: '26'
+              - generic [ref=e332]: '27'
+              - generic [ref=e333]: '28'
+              - generic [ref=e334]: '29'
+              - generic [ref=e335]: '30'
+              - generic [ref=e336]: '31'
+              - generic [ref=e337]: '32'
+              - generic [ref=e338]: '33'
+              - generic [ref=e339]: '34'
+              - generic [ref=e340]: '35'
+              - generic [ref=e341]: '36'
+              - generic [ref=e342]: '37'
+              - generic [ref=e343]: '38'
+              - generic [ref=e344]: '39'
+              - generic [ref=e345]: '40'
+              - generic [ref=e346]: '41'
+              - generic [ref=e347]: '42'
+              - generic [ref=e348]: '43'
+              - generic [ref=e349]: '44'
+              - generic [ref=e350]: '45'
+              - generic [ref=e351]: '46'
+              - generic [ref=e352]: '47'
+              - generic [ref=e353]: '48'
+              - generic [ref=e354]: '49'
+              - generic [ref=e355]: '50'
+              - generic [ref=e356]: '51'
+              - generic [ref=e357]: '52'
+              - generic [ref=e358]: '53'
+              - generic [ref=e359]: '54'
+              - generic [ref=e360]: '55'
+              - generic [ref=e361]: '56'
+              - generic [ref=e362]: '57'
+              - generic [ref=e363]: '58'
+              - generic [ref=e364]: '59'
+              - generic [ref=e365]: '60'
+              - generic [ref=e366]: '61'
+              - generic [ref=e367]: '62'
+              - generic [ref=e368]: '63'
+              - generic [ref=e369]: '64'
+              - generic [ref=e370]: '65'
+              - generic [ref=e371]: '66'
+              - generic [ref=e372]: '67'
+              - generic [ref=e373]: '68'
+            - textbox [ref=e112]:
+              - generic [ref=e113]: '# Order Fulfillment Workflow'
+              - generic [ref=e115]: <!--
+              - generic [ref=e116]: 'workflow-compiler specification (v1) — slug:
+                  order-fulfillment-workflow'
+              - generic [ref=e117]: This file is a projection of the structured spec.
+                  Edit it freely, then run
+              - generic [ref=e118]: '`workflow-compiler validate <project-id>` to
+                  fold your edits back in.'
+              - generic [ref=e119]: Lines you add are recorded as human-provided.
+                  Keep the `[id]` markers on
+              - generic [ref=e120]: existing entries so your edits update the right
+                  element.
+              - generic [ref=e121]: -->
+              - generic [ref=e123]: '## Purpose'
+              - generic [ref=e124]: This workflow describes how the company fulfills
+                  a customer order from submission through delivery, including payment,
+                  inventory, shipping, and failure handling.
+              - generic [ref=e126]: '## Metadata'
+              - generic [ref=e127]: '- domain:'
+              - generic [ref=e128]: '- owner: Fulfillment Operations Team'
+              - generic [ref=e129]: '- version: 0.1.1'
+              - generic [ref=e130]: '- actors: Customer, Warehouse'
+              - generic [ref=e131]: '- systems: Online Store, Payment Gateway, Warehouse
+                  Management System, Carrier API, Email Service'
+              - generic [ref=e132]: '- triggers: Customer submits an order through
+                  the online store'
+              - generic [ref=e133]: '- start states: Order received'
+              - generic [ref=e134]: '- end states: Order delivered, Order cancelled,
+                  Order failed'
+              - generic [ref=e135]: '- tags:'
+              - generic [ref=e137]: '## Inputs'
+              - generic [ref=e138]: '- Order submission through online store'
+              - generic [ref=e140]: '## Outputs'
+              - generic [ref=e141]: '- Order confirmation to customer'
+              - generic [ref=e142]: '- Inventory reservation status'
+              - generic [ref=e143]: '- Shipment creation status'
+              - generic [ref=e144]: '- Order delivery status'
+              - generic [ref=e145]: '- Cancellation notification to customer'
+              - generic [ref=e146]: '- Failure notification to customer'
+              - generic [ref=e148]: '## Business Rules'
+              - generic [ref=e149]: '- Orders must be shipped within 24 hours of payment
+                  confirmation'
+              - generic [ref=e150]:
+                - text: '- Partial shipments are not allowed — an order ships only
+                    when every item is available'
+                - generic [ref=e151]: '[human]'
+              - generic [ref=e153]: '## API Interfaces'
+              - generic [ref=e154]: '- Payment Gateway (validate payment)'
+              - generic [ref=e155]: '- Warehouse Management System (reserve inventory,
+                  pick and pack)'
+              - generic [ref=e156]: '- Carrier API (create shipment)'
+              - generic [ref=e158]: '## Systems Involved'
+              - generic [ref=e159]: '- Online Store'
+              - generic [ref=e160]: '- Payment Gateway'
+              - generic [ref=e161]: '- Warehouse Management System'
+              - generic [ref=e162]: '- Carrier API'
+              - generic [ref=e163]: '- Email Service'
+              - generic [ref=e165]: '## Timers and SLAs'
+              - generic [ref=e166]: '- 24 hours for shipment after payment confirmation'
+              - generic [ref=e168]: '## Retries'
+              - generic [ref=e169]:
+                - text: '- Up to 5 retries for shipment creation failure'
+                - generic [ref=e170]: '[human]'
+              - generic [ref=e171]: '- up to 3 times'
+              - generic [ref=e173]: '## Activities'
+              - generic [ref=e174]:
+                - text: '-'
+                - generic [ref=e175]: '[a1]'
+                - text: Validate order and payment
+              - generic [ref=e176]:
+                - text: '-'
+                - generic [ref=e177]: '[a2]'
+                - text: Reserve inventory
+                - generic [ref=e178]: '— parallel: g1'
+              - generic [ref=e179]:
+                - text: '-'
+                - generic [ref=e180]: '[a3]'
+                - text: Send order confirmation
+                - generic [ref=e181]: '— parallel: g1'
+              - generic [ref=e182]:
+                - text: '-'
+                - generic [ref=e183]: '[a4]'
+                - text: Notify warehouse to begin picking
+                - generic [ref=e184]: '— parallel: g1'
+              - generic [ref=e185]:
+                - text: '-'
+                - generic [ref=e186]: '[a5]'
+                - text: Pick and pack items
+              - generic [ref=e187]:
+                - text: '-'
+                - generic [ref=e188]: '[a6]'
+                - text: Create shipment via Carrier API
+              - generic [ref=e189]:
+                - text: '-'
+                - generic [ref=e190]: '[a7]'
+                - text: Ship order
+              - generic [ref=e191]:
+                - text: '-'
+                - generic [ref=e192]: '[a8]'
+                - text: Release reserved inventory
+              - generic [ref=e193]:
+                - text: '-'
+                - generic [ref=e194]: '[a9]'
+                - text: Obtain manager approval for orders above $1,000
+        - complementary [ref=e196]:
+          - generic [ref=e197]:
+            - heading "Findings" [level=3] [ref=e198]
+            - list [ref=e199]:
+              - listitem [ref=e200]:
+                - ? button "BLOCK Graph review graph health 0.20 below threshold 0.90
+                    — left pending for manual review → review and approve the graph
+                    manually" [ref=e201] [cursor=pointer]
+                  : - generic [ref=e202]:
+                      - generic [ref=e203]: BLOCK
+                      - generic [ref=e204]: Graph review
+                    - paragraph [ref=e205]: graph health 0.20 below threshold 0.90
+                        — left pending for manual review
+                    - paragraph [ref=e206]: → review and approve the graph manually
+              - listitem [ref=e207]:
+                - ? 'button "WARN grounding: activity:a9: No explicit evidence in
+                    the source document for manager approval for orders above $1,000
+                    being an activity" [ref=e208] [cursor=pointer]'
+                  : - generic [ref=e209]: WARN
+                    - paragraph [ref=e211]: 'grounding: activity:a9: No explicit evidence
+                        in the source document for manager approval for orders above
+                        $1,000 being an activity'
+              - listitem [ref=e212]:
+                - ? 'button "WARN grounding: activity:a10: No evidence in the source
+                    document for notifying the finance team as an activity" [ref=e213]
+                    [cursor=pointer]'
+                  : - generic [ref=e214]: WARN
+                    - paragraph [ref=e216]: 'grounding: activity:a10: No evidence
+                        in the source document for notifying the finance team as an
+                        activity'
+              - listitem [ref=e217]:
+                - ? 'button "WARN grounding: human-provided element ''rule'' is not
+                    supported by the document — please confirm or remove it yourself"
+                    [ref=e218] [cursor=pointer]'
+                  : - generic [ref=e219]: WARN
+                    - paragraph [ref=e221]: 'grounding: human-provided element ''rule''
+                        is not supported by the document — please confirm or remove
+                        it yourself'
+              - listitem [ref=e222]:
+                - 'button "WARN grounding: retries: Up to 5 retries for shipment creation failure" [ref=e223] [cursor=pointer]':
+                  - generic [ref=e224]: WARN
+                  - paragraph [ref=e226]: 'grounding: retries: Up to 5 retries for
+                      shipment creation failure'
+              - listitem [ref=e227]:
+                - 'button "WARN grounding: retries: Up to 3 retries for shipment creation failure" [ref=e228] [cursor=pointer]':
+                  - generic [ref=e229]: WARN
+                  - paragraph [ref=e231]: 'grounding: retries: Up to 3 retries for
+                      shipment creation failure'
+              - listitem [ref=e232]:
+                - ? 'button "WARN grounding: exceptions:e3: SLA-breach alert is mentioned
+                    in rules but not explicitly as an exception in the source document"
+                    [ref=e233] [cursor=pointer]'
+                  : - generic [ref=e234]: WARN
+                    - paragraph [ref=e236]: 'grounding: exceptions:e3: SLA-breach
+                        alert is mentioned in rules but not explicitly as an exception
+                        in the source document'
+          - generic [ref=e237]:
+            - heading "Open questions 3" [level=3] [ref=e238]:
+              - text: Open questions
+              - generic [ref=e239]: '3'
+            - list [ref=e240]:
+              - listitem [ref=e241]:
+                - generic [ref=e242]:
+                  - checkbox [checked] [ref=e243]
+                  - generic [ref=e244]: R2b-input-namesProvide snake_case names for
+                      these inputs (e.g. customerId -> customer_id).
+                - textbox "Answer…" [ref=e245]: Order submission through online store
+                    -> order_submission
+              - listitem [ref=e246]:
+                - generic [ref=e247]:
+                  - checkbox [checked] [ref=e248]
+                  - generic [ref=e249]: 'R4-decisionsRoute the ''no'' branch of d3
+                      in this spec''s Decisions section, e.g. `- [d3] Is order value
+                      above $1,000? — after: a1; no: e1`. Declared exceptions: e1
+                      (Payment Declined), e2 (Shipment Creation Failed), e3 (SLA-breach
+                      alert). A ''no'' branch may target an exception id, an activity
+                      id, or a terminal token (end, rejected, failed, completed).
+                      You can also answer here, one pair per line, as `d3 -> e1` —
+                      prose is not applied.'
+                - textbox "Answer…" [ref=e250]: 'Routed in the Decisions section:
+                    d3 yes -> a9, no -> a2'
+              - listitem [ref=e251]:
+                - generic [ref=e252]:
+                  - checkbox [checked] [ref=e253]
+                  - generic [ref=e254]: R9-state-transitionsConfirm these state transitions
+                      are descriptive only (they will be ignored by code generation).
+                - textbox "Answer…" [ref=e255]: Confirmed — descriptive only
+          - generic [ref=e256]:
+            - heading "Events 6" [level=3] [ref=e257]:
+              - text: Events
+              - generic [ref=e258]: '6'
+            - list [ref=e259]:
+              - listitem [ref=e260]:
+                - generic [ref=e261]: ev1 Order Submitted
+                - combobox [ref=e262] [cursor=pointer]:
+                  - option "trigger (starts workflow)" [selected]
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)"
+              - listitem [ref=e263]:
+                - generic [ref=e264]: ev2 Order Confirmed
+                - combobox [ref=e265] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e266]:
+                - generic [ref=e267]: ev3 Shipment Created
+                - combobox [ref=e268] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e269]:
+                - generic [ref=e270]: ev4 Order Delivered
+                - combobox [ref=e271] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e272]:
+                - generic [ref=e273]: ev5 Order Cancelled
+                - combobox [ref=e274] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e275]:
+                - generic [ref=e276]: ev6 Order Failed
+                - combobox [ref=e277] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+            - paragraph [ref=e278]:
+              - code [ref=e279]: signal_wait
+              - text: makes a wait a bounded condition instead of a hang.
+          - generic [ref=e280]:
+            - paragraph [ref=e281]: Approve overrides
+            - generic [ref=e282]:
+              - checkbox "Accept unanswered required questions" [ref=e283]
+              - text: Accept unanswered required questions
+            - generic [ref=e284]:
+              - checkbox "Allow unconfirmed dependencies" [ref=e285]
+              - text: Allow unconfirmed dependencies
+          - paragraph [ref=e286]: The Diagramview shows this workflow's graph as of
+              the last validate; run Classify phases (CVPA) there to color it. Generated
+              code appears in Results after approval.
+  - alert [ref=e287]

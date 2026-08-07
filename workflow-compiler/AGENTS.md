@@ -16,7 +16,9 @@ behavior changes (the working tree shows they are updated alongside code).
 ## Commands
 
 ```bash
-pip install -e ".[dev]"        # install package + dev tooling, exposes `workflow-compiler` script
+pip install -e ".[dev]"        # contributor install: editable + test/lint tooling
+pip install .                  # user install (README §Install) — no -e, no extras
+workflow-compiler init --provider mock --yes   # write .env without prompting
 
 pytest                          # full suite (unit + integration), no network needed
 pytest tests/test_compiler.py   # single file

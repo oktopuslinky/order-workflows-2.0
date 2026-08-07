@@ -1,0 +1,2473 @@
+{
+  "workflow_id": "c333479b-238b-4c80-b04c-f61c9139aaf5",
+  "document_text": "# Order Fulfillment Workflow\n\n<!--\n  workflow-compiler specification (v1) — slug: order-fulfillment-workflow\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nThis workflow describes how the company fulfills a customer order from submission through delivery, including payment, inventory, shipping, and failure handling.\n\n## Metadata\n- domain: \n- owner: Fulfillment Operations Team\n- version: 0.1.1\n- actors: Customer, Warehouse\n- systems: Online Store, Payment Gateway, Warehouse Management System, Carrier API, Email Service\n- triggers: Customer submits an order through the online store\n- start states: Order received\n- end states: Order delivered, Order cancelled, Order failed\n- tags: \n\n## Inputs\n- Order submission through online store\n\n## Outputs\n- Order confirmation to customer\n- Inventory reservation status\n- Shipment creation status\n- Order delivery status\n- Cancellation notification to customer\n- Failure notification to customer\n\n## Business Rules\n- Orders must be shipped within 24 hours of payment confirmation\n- Partial shipments are not allowed — an order ships only when every item is available [human]\n\n## API Interfaces\n- Payment Gateway (validate payment)\n- Warehouse Management System (reserve inventory, pick and pack)\n- Carrier API (create shipment)\n\n## Systems Involved\n- Online Store\n- Payment Gateway\n- Warehouse Management System\n- Carrier API\n- Email Service\n\n## Timers and SLAs\n- 24 hours for shipment after payment confirmation\n\n## Retries\n- Up to 5 retries for shipment creation failure [human]\n- up to 3 times\n\n## Activities\n- [a1] Validate order and payment\n- [a2] Reserve inventory — parallel: g1\n- [a3] Send order confirmation — parallel: g1\n- [a4] Notify warehouse to begin picking — parallel: g1\n- [a5] Pick and pack items\n- [a6] Create shipment via Carrier API\n- [a7] Ship order\n- [a8] Release reserved inventory\n- [a9] Obtain manager approval for orders above $1,000\n- [a10] Notify finance team for orders above $1,000 [human]\n\n## Decisions\n- [d1] Is payment valid? — after: a1; yes: a2; no: e1\n- [d2] Did shipment creation fail after retries? — after: a6; yes: a8; no: a7\n- [d3] Is order value above $1,000? — after: a1; yes: a9; no: a2\n\n## Exceptions\n- [e1] Payment Declined — raised by: a1\n- [e2] Shipment Creation Failed — raised by: a6\n- [e3] SLA-breach alert — raised by: a6\n\n## Compensations\n- [c1] Release Inventory — compensates: a2\n\n## Events\n- [ev1] Order Submitted — kind: trigger; emitted by: start\n- [ev2] Order Confirmed — kind: output_emit; emitted by: a3\n- [ev3] Shipment Created — kind: output_emit; emitted by: a6\n- [ev4] Order Delivered — kind: output_emit; emitted by: a7\n- [ev5] Order Cancelled — kind: output_emit; emitted by: e1\n- [ev6] Order Failed — kind: output_emit; emitted by: e2\n\n## State Transitions\n- Order received -> Payment Validation (trigger: Order submitted)\n- Payment Validation -> Inventory Reservation (trigger: Payment valid)\n- Payment Validation -> Order Cancelled (trigger: Payment declined)\n- Inventory Reservation -> Picking and Packing (trigger: Inventory reserved)\n- Picking and Packing -> Shipment Creation (trigger: Items packed)\n- Shipment Creation -> Order Shipped (trigger: Shipment created)\n- Shipment Creation -> Order Failed (trigger: Shipment creation failed)\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n- The specification mentions 'up to 5 retries' for shipment creation, but the source document states 'up to 3 times'. This contradiction needs resolution [inferred]\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n- [x] (R2b-input-names) Provide snake_case names for these inputs (e.g. customerId -> customer_id).\n  Answer: Order submission through online store -> order_submission\n- [x] (R4-decisions) Route the 'no' branch of d3 in this spec's Decisions section, e.g. `- [d3] Is order value above $1,000? — after: a1; no: e1`. Declared exceptions: e1 (Payment Declined), e2 (Shipment Creation Failed), e3 (SLA-breach alert). A 'no' branch may target an exception id, an activity id, or a terminal token (end, rejected, failed, completed). You can also answer here, one pair per line, as `d3 -> e1` — prose is not applied.\n  Answer: Routed in the Decisions section: d3 yes -> a9, no -> a2\n- [x] (R9-state-transitions) Confirm these state transitions are descriptive only (they will be ignored by code generation).\n  Answer: Confirmed — descriptive only\n\n## Cross-Workflow Dependencies\n<!-- none -->\n\n## Triggers\n<!-- none -->",
+  "project_id": "3f6be187-d4d7-4f0d-9f90-3eb84a43d70f",
+  "workflow_metadata": {
+    "name": "Order Fulfillment Workflow",
+    "description": "This workflow describes how the company fulfills a customer order from submission through delivery, including payment, inventory, shipping, and failure handling.",
+    "purpose": "This workflow describes how the company fulfills a customer order from submission through delivery, including payment, inventory, shipping, and failure handling.",
+    "actors": [
+      "Customer",
+      "Warehouse"
+    ],
+    "systems": [
+      "Online Store",
+      "Payment Gateway",
+      "Warehouse Management System",
+      "Carrier API",
+      "Email Service"
+    ],
+    "trigger_events": [
+      "Customer submits an order through the online store"
+    ],
+    "start_states": [
+      "Order received"
+    ],
+    "end_states": [
+      "Order delivered",
+      "Order cancelled",
+      "Order failed"
+    ],
+    "version": "0.1.1",
+    "domain": null,
+    "owner": "Fulfillment Operations Team",
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "Order submission through online store",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "Order confirmation to customer",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "Inventory reservation status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-3",
+        "statement": "Shipment creation status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-4",
+        "statement": "Order delivery status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-5",
+        "statement": "Cancellation notification to customer",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-6",
+        "statement": "Failure notification to customer",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Validate order and payment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Reserve inventory",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Send order confirmation",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-4",
+        "statement": "Notify warehouse to begin picking",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-5",
+        "statement": "Pick and pack items",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-6",
+        "statement": "Create shipment via Carrier API",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-7",
+        "statement": "Ship order",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-8",
+        "statement": "Release reserved inventory",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-9",
+        "statement": "Obtain manager approval for orders above $1,000",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-10",
+        "statement": "Notify finance team for orders above $1,000",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Is payment valid?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-2",
+        "statement": "Did shipment creation fail after retries?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-3",
+        "statement": "Is order value above $1,000?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-1",
+        "statement": "Orders must be shipped within 24 hours of payment confirmation",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-2",
+        "statement": "Partial shipments are not allowed — an order ships only when every item is available",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "Order Submitted",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-2",
+        "statement": "Order Confirmed",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-3",
+        "statement": "Shipment Created",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-4",
+        "statement": "Order Delivered",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-5",
+        "statement": "Order Cancelled",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-6",
+        "statement": "Order Failed",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "Payment Gateway (validate payment)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "Warehouse Management System (reserve inventory, pick and pack)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-3",
+        "statement": "Carrier API (create shipment)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Online Store",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Payment Gateway",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Warehouse Management System",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-4",
+        "statement": "Carrier API",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-5",
+        "statement": "Email Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "Payment Declined",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-2",
+        "statement": "Shipment Creation Failed",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-3",
+        "statement": "SLA-breach alert",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-1",
+        "statement": "Order received -> Payment Validation",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-2",
+        "statement": "Payment Validation -> Inventory Reservation",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-3",
+        "statement": "Payment Validation -> Order Cancelled",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-4",
+        "statement": "Inventory Reservation -> Picking and Packing",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-5",
+        "statement": "Picking and Packing -> Shipment Creation",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-6",
+        "statement": "Shipment Creation -> Order Shipped",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-7",
+        "statement": "Shipment Creation -> Order Failed",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-1",
+        "statement": "24 hours for shipment after payment confirmation",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Up to 5 retries for shipment creation failure",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "up to 3 times",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Release Inventory compensates Reserve inventory",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Validate order and payment",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Reserve inventory",
+          "parallel_group": "g1"
+        },
+        {
+          "id": "a3",
+          "name": "Send order confirmation",
+          "parallel_group": "g1"
+        },
+        {
+          "id": "a4",
+          "name": "Notify warehouse to begin picking",
+          "parallel_group": "g1"
+        },
+        {
+          "id": "a5",
+          "name": "Pick and pack items",
+          "parallel_group": null
+        },
+        {
+          "id": "a6",
+          "name": "Create shipment via Carrier API",
+          "parallel_group": null
+        },
+        {
+          "id": "a7",
+          "name": "Ship order",
+          "parallel_group": null
+        },
+        {
+          "id": "a8",
+          "name": "Release reserved inventory",
+          "parallel_group": null
+        },
+        {
+          "id": "a9",
+          "name": "Obtain manager approval for orders above $1,000",
+          "parallel_group": null
+        },
+        {
+          "id": "a10",
+          "name": "Notify finance team for orders above $1,000",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Is payment valid?",
+          "after": "a1",
+          "yes_target": "a2",
+          "no_target": "e1"
+        },
+        {
+          "id": "d2",
+          "question": "Did shipment creation fail after retries?",
+          "after": "a6",
+          "yes_target": "a8",
+          "no_target": "a7"
+        },
+        {
+          "id": "d3",
+          "question": "Is order value above $1,000?",
+          "after": "a1",
+          "yes_target": "a9",
+          "no_target": "a2"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "Payment Declined",
+          "raised_by": "a1"
+        },
+        {
+          "id": "e2",
+          "reason": "Shipment Creation Failed",
+          "raised_by": "a6"
+        },
+        {
+          "id": "e3",
+          "reason": "SLA-breach alert",
+          "raised_by": "a6"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Release Inventory",
+          "compensates": "a2"
+        }
+      ],
+      "events": [
+        {
+          "id": "ev1",
+          "name": "Order Submitted",
+          "emitted_by": "start",
+          "kind": "trigger"
+        },
+        {
+          "id": "ev2",
+          "name": "Order Confirmed",
+          "emitted_by": "a3",
+          "kind": "output_emit"
+        },
+        {
+          "id": "ev3",
+          "name": "Shipment Created",
+          "emitted_by": "a6",
+          "kind": "output_emit"
+        },
+        {
+          "id": "ev4",
+          "name": "Order Delivered",
+          "emitted_by": "a7",
+          "kind": "output_emit"
+        },
+        {
+          "id": "ev5",
+          "name": "Order Cancelled",
+          "emitted_by": "e1",
+          "kind": "output_emit"
+        },
+        {
+          "id": "ev6",
+          "name": "Order Failed",
+          "emitted_by": "e2",
+          "kind": "output_emit"
+        }
+      ],
+      "triggers": [],
+      "transitions": [
+        {
+          "source": "Order received",
+          "target": "Payment Validation",
+          "trigger": "Order submitted"
+        },
+        {
+          "source": "Payment Validation",
+          "target": "Inventory Reservation",
+          "trigger": "Payment valid"
+        },
+        {
+          "source": "Payment Validation",
+          "target": "Order Cancelled",
+          "trigger": "Payment declined"
+        },
+        {
+          "source": "Inventory Reservation",
+          "target": "Picking and Packing",
+          "trigger": "Inventory reserved"
+        },
+        {
+          "source": "Picking and Packing",
+          "target": "Shipment Creation",
+          "trigger": "Items packed"
+        },
+        {
+          "source": "Shipment Creation",
+          "target": "Order Shipped",
+          "trigger": "Shipment created"
+        },
+        {
+          "source": "Shipment Creation",
+          "target": "Order Failed",
+          "trigger": "Shipment creation failed"
+        }
+      ]
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): Customer submits an order through the online store.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "1 input(s): Order submission through online store.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "accepted",
+        "evidence": "Non snake_case input name(s): Order.",
+        "question": "Provide snake_case names for these inputs (e.g. customerId -> customer_id).",
+        "answer": "Order submission through online store -> order_submission"
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "6 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 3 decision(s) have both branches.",
+        "question": null,
+        "answer": "Routed in the Decisions section: d3 yes -> a9, no -> a2"
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "Waits are present and at least one timer/deadline was declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "3 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "accepted",
+        "evidence": "7 state-transition fact(s) present; these are not modeled as Temporal steps.",
+        "question": "Confirm these state transitions are descriptive only (they will be ignored by code generation).",
+        "answer": "Confirmed — descriptive only"
+      }
+    ]
+  },
+  "outgoing_triggers": [],
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Validate order and payment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Reserve inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Send order confirmation",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Notify warehouse to begin picking",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_5",
+        "label": "Pick and pack items",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_6",
+        "label": "Create shipment via Carrier API",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_7",
+        "label": "Ship order",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_8",
+        "label": "Release reserved inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_9",
+        "label": "Obtain manager approval for orders above $1,000",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_10",
+        "label": "Notify finance team for orders above $1,000",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Is payment valid?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_2",
+        "label": "Did shipment creation fail after retries?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_3",
+        "label": "Is order value above $1,000?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "Payment Declined",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "Shipment Creation Failed",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_3",
+        "label": "SLA-breach alert",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Release Inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "Order Submitted",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "Order Confirmed",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "Shipment Created",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_4",
+        "label": "Order Delivered",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_5",
+        "label": "Order Cancelled",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_6",
+        "label": "Order Failed",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "gateway_fork_1",
+        "label": "Parallel split",
+        "node_type": "gateway",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "gateway_join_1",
+        "label": "Parallel join",
+        "node_type": "gateway",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "state_1",
+        "label": "Order received",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_2",
+        "label": "Payment Validation",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_3",
+        "label": "Inventory Reservation",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_4",
+        "label": "Order Cancelled",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_5",
+        "label": "Picking and Packing",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_6",
+        "label": "Shipment Creation",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_7",
+        "label": "Order Shipped",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_8",
+        "label": "Order Failed",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_3",
+        "target": "activity_9",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_3",
+        "target": "gateway_fork_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "decision_1",
+        "target": "gateway_fork_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e6",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e7",
+        "source": "gateway_fork_1",
+        "target": "activity_2",
+        "edge_type": "sequence",
+        "label": "parallel",
+        "condition": null
+      },
+      {
+        "id": "e8",
+        "source": "activity_2",
+        "target": "gateway_join_1",
+        "edge_type": "sequence",
+        "label": "parallel",
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "gateway_fork_1",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": "parallel",
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "activity_3",
+        "target": "gateway_join_1",
+        "edge_type": "sequence",
+        "label": "parallel",
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "gateway_fork_1",
+        "target": "activity_4",
+        "edge_type": "sequence",
+        "label": "parallel",
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "activity_4",
+        "target": "gateway_join_1",
+        "edge_type": "sequence",
+        "label": "parallel",
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "gateway_join_1",
+        "target": "activity_5",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e14",
+        "source": "activity_5",
+        "target": "activity_6",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "activity_6",
+        "target": "decision_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "decision_2",
+        "target": "activity_8",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e17",
+        "source": "decision_2",
+        "target": "activity_7",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e18",
+        "source": "activity_7",
+        "target": "activity_8",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e19",
+        "source": "activity_8",
+        "target": "activity_9",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e20",
+        "source": "activity_9",
+        "target": "activity_10",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e21",
+        "source": "activity_10",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e22",
+        "source": "activity_1",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e23",
+        "source": "activity_6",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e24",
+        "source": "activity_6",
+        "target": "exception_3",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e25",
+        "source": "activity_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e26",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e27",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e28",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e29",
+        "source": "activity_3",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e30",
+        "source": "activity_6",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e31",
+        "source": "activity_7",
+        "target": "event_4",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e32",
+        "source": "state_1",
+        "target": "state_2",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e33",
+        "source": "state_2",
+        "target": "state_3",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e34",
+        "source": "state_2",
+        "target": "state_4",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e35",
+        "source": "state_3",
+        "target": "state_5",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e36",
+        "source": "state_5",
+        "target": "state_6",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e37",
+        "source": "state_6",
+        "target": "state_7",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e38",
+        "source": "state_6",
+        "target": "state_8",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e39",
+        "source": "exception_3",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e40",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e41",
+        "source": "exception_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.2: 0 error(s), 16 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Node 'Order Cancelled' is disconnected (no edges).",
+        "location": "event_5",
+        "suggestion": "Connect the node into the flow or remove it."
+      },
+      {
+        "id": "issue-2",
+        "severity": "warning",
+        "message": "Node 'Order Failed' is disconnected (no edges).",
+        "location": "event_6",
+        "suggestion": "Connect the node into the flow or remove it."
+      },
+      {
+        "id": "issue-3",
+        "severity": "warning",
+        "message": "Orphan node 'Is payment valid?' has no incoming edges.",
+        "location": "decision_1",
+        "suggestion": "Add a transition from a predecessor node."
+      },
+      {
+        "id": "issue-4",
+        "severity": "warning",
+        "message": "Orphan node 'Order received' has no incoming edges.",
+        "location": "state_1",
+        "suggestion": "Add a transition from a predecessor node."
+      },
+      {
+        "id": "issue-5",
+        "severity": "warning",
+        "message": "Dead-end node 'Order Cancelled' has no outgoing edges.",
+        "location": "state_4",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-6",
+        "severity": "warning",
+        "message": "Dead-end node 'Order Shipped' has no outgoing edges.",
+        "location": "state_7",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-7",
+        "severity": "warning",
+        "message": "Dead-end node 'Order Failed' has no outgoing edges.",
+        "location": "state_8",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-8",
+        "severity": "warning",
+        "message": "State 'Payment Validation' is unreachable from the start node.",
+        "location": "state_2",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-9",
+        "severity": "warning",
+        "message": "State 'Inventory Reservation' is unreachable from the start node.",
+        "location": "state_3",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-10",
+        "severity": "warning",
+        "message": "State 'Order Cancelled' is unreachable from the start node.",
+        "location": "state_4",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-11",
+        "severity": "warning",
+        "message": "State 'Picking and Packing' is unreachable from the start node.",
+        "location": "state_5",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-12",
+        "severity": "warning",
+        "message": "State 'Shipment Creation' is unreachable from the start node.",
+        "location": "state_6",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-13",
+        "severity": "warning",
+        "message": "State 'Order Shipped' is unreachable from the start node.",
+        "location": "state_7",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-14",
+        "severity": "warning",
+        "message": "State 'Order Failed' is unreachable from the start node.",
+        "location": "state_8",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-15",
+        "severity": "warning",
+        "message": "Duplicate nodes share the label 'order cancelled'.",
+        "location": "event_5, state_4",
+        "suggestion": "Merge the duplicate nodes into one."
+      },
+      {
+        "id": "issue-16",
+        "severity": "warning",
+        "message": "Duplicate nodes share the label 'order failed'.",
+        "location": "event_6, state_8",
+        "suggestion": "Merge the duplicate nodes into one."
+      }
+    ],
+    "score": 0.2,
+    "health_score": 0.2,
+    "confidence": 0.8429,
+    "reviewer": "workflow-review",
+    "reviewed_at": "2026-07-17T15:39:00.304972Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Initiates the workflow, indicating intake of the process.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Represents the workflow's conclusion, triggering no further actions.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "validate",
+        "rationale": "Involves checking the order and payment, a clear validation step.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "process",
+        "rationale": "Reserving inventory is a core operational task.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "activate",
+        "rationale": "Sends a confirmation, a downstream notification.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "activate",
+        "rationale": "Notifies the warehouse, triggering external action.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "activity_5",
+        "phase": "process",
+        "rationale": "Physical preparation of the order for shipping.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_6",
+        "phase": "process",
+        "rationale": "Creation of shipment via API is a core task.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_7",
+        "phase": "activate",
+        "rationale": "Final step in fulfilling the order.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "activity_8",
+        "phase": "process",
+        "rationale": "Inventory adjustment following shipment or failure.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_9",
+        "phase": "validate",
+        "rationale": "Obtaining approval is a validation checkpoint.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_10",
+        "phase": "activate",
+        "rationale": "Notification to finance, an external activation.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Evaluates payment validity, a critical check.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_2",
+        "phase": "validate",
+        "rationale": "Assesses shipment creation success or failure.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_3",
+        "phase": "validate",
+        "rationale": "Checks the order value against a threshold.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "activate",
+        "rationale": "Triggers termination due to payment issue.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_2",
+        "phase": "activate",
+        "rationale": "Triggers workflow end due to shipment failure.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_3",
+        "phase": "activate",
+        "rationale": "Terminates workflow due to SLA breach.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "process",
+        "rationale": "Corrective action to release inventory.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "Marks the submission of an order.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "event_2",
+        "phase": "activate",
+        "rationale": "Confirmation emitted as a notification.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "event_3",
+        "phase": "activate",
+        "rationale": "Signals successful shipment creation.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "event_4",
+        "phase": "activate",
+        "rationale": "Indicates the final delivery stage.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "event_5",
+        "phase": "capture",
+        "rationale": "Captures an order cancellation event.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "event_6",
+        "phase": "activate",
+        "rationale": "Marks the failure of an order process.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "gateway_fork_1",
+        "phase": "process",
+        "rationale": "Manages concurrent workflow paths.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "gateway_join_1",
+        "phase": "process",
+        "rationale": "Synchronizes parallel workflow paths.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "state_1",
+        "phase": "capture",
+        "rationale": "Initial state of receiving an order.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_2",
+        "phase": "validate",
+        "rationale": "State for validating payment.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_3",
+        "phase": "process",
+        "rationale": "Inventory reservation state.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_4",
+        "phase": "activate",
+        "rationale": "Terminal state for cancelled orders.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "state_5",
+        "phase": "process",
+        "rationale": "Active state for picking and packing.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_6",
+        "phase": "process",
+        "rationale": "State for creating shipment.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_7",
+        "phase": "activate",
+        "rationale": "Final state for successfully shipped orders.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "state_8",
+        "phase": "activate",
+        "rationale": "Terminal state for failed orders.",
+        "confidence": 0.8
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "event_1",
+          "event_5",
+          "state_1"
+        ],
+        "summary": "4 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "activity_1",
+          "activity_9",
+          "decision_1",
+          "decision_2",
+          "decision_3",
+          "state_2"
+        ],
+        "summary": "6 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_2",
+          "activity_5",
+          "activity_6",
+          "activity_8",
+          "compensation_1",
+          "gateway_fork_1",
+          "gateway_join_1",
+          "state_3",
+          "state_5",
+          "state_6"
+        ],
+        "summary": "10 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "activity_3",
+          "activity_4",
+          "activity_7",
+          "activity_10",
+          "exception_1",
+          "exception_2",
+          "exception_3",
+          "event_2",
+          "event_3",
+          "event_4",
+          "event_6",
+          "state_4",
+          "state_7",
+          "state_8"
+        ],
+        "summary": "15 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "OrderFulfillmentWorkflow",
+    "task_queue": "order-fulfillment-queue",
+    "description": "Manages the order fulfillment process from validation to shipment.",
+    "workflow_inputs": [
+      {
+        "name": "order_id",
+        "type": "str"
+      },
+      {
+        "name": "customer_info",
+        "type": "str"
+      },
+      {
+        "name": "order_value",
+        "type": "float"
+      },
+      {
+        "name": "items",
+        "type": "str"
+      }
+    ],
+    "result_type": "str",
+    "activities": [
+      {
+        "name": "ValidateOrderAndPayment",
+        "source_node_id": "activity_1",
+        "description": "Checks order validity and payment status.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          },
+          {
+            "name": "customer_info",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "is_payment_valid"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": null
+      },
+      {
+        "name": "ReserveInventory",
+        "source_node_id": "activity_2",
+        "description": "Reserves inventory for the order.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          },
+          {
+            "name": "items",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "inventory_reserved"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 60.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 10.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": [
+            "InventoryUnavailableError"
+          ]
+        }
+      },
+      {
+        "name": "SendOrderConfirmation",
+        "source_node_id": "activity_3",
+        "description": "Sends confirmation to the customer.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "customer_info",
+            "type": "str"
+          },
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": null
+      },
+      {
+        "name": "NotifyWarehouse",
+        "source_node_id": "activity_4",
+        "description": "Notifies the warehouse to prepare for picking.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": null
+      },
+      {
+        "name": "PickAndPackItems",
+        "source_node_id": "activity_5",
+        "description": "Executes picking and packing of order items.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "picking_status"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 1800.0,
+        "retry_policy": null
+      },
+      {
+        "name": "CreateShipmentViaCarrierAPI",
+        "source_node_id": "activity_6",
+        "description": "Creates a shipment via the carrier's API.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          },
+          {
+            "name": "customer_info",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "shipment_id",
+          "shipment_status"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 120.0,
+        "retry_policy": {
+          "maximum_attempts": 5,
+          "initial_interval_seconds": 30.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": [
+            "CarrierAPIError"
+          ]
+        }
+      },
+      {
+        "name": "ShipOrder",
+        "source_node_id": "activity_7",
+        "description": "Finalizes the shipment process.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "shipment_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": null
+      },
+      {
+        "name": "ReleaseReservedInventory",
+        "source_node_id": "activity_8",
+        "description": "Releases inventory if shipment fails or is cancelled.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": null
+      },
+      {
+        "name": "ObtainManagerApproval",
+        "source_node_id": "activity_9",
+        "description": "Seeks approval for high-value orders.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_value",
+            "type": "float"
+          },
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "approval_status"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 3600.0,
+        "retry_policy": null
+      },
+      {
+        "name": "NotifyFinanceTeam",
+        "source_node_id": "activity_10",
+        "description": "Notifies finance for high-value orders.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          },
+          {
+            "name": "order_value",
+            "type": "float"
+          }
+        ],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": null
+      }
+    ],
+    "signals": [
+      {
+        "name": "OrderSubmittedSignal",
+        "description": "Received when an order is submitted.",
+        "payload": [
+          "order_id"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetOrderStatus",
+        "description": "Returns the current order fulfillment status.",
+        "returns": "str",
+        "state_field": "order_status"
+      }
+    ],
+    "child_workflows": [],
+    "timers": [
+      {
+        "name": "ShipmentSLATimer",
+        "duration_seconds": 86400.0,
+        "description": "Ensures shipment within 24 hours of payment confirmation."
+      }
+    ],
+    "triggers": [],
+    "compensation_activities": [
+      {
+        "name": "CompensateReserveInventory",
+        "compensates": "ReserveInventory",
+        "source_node_id": "compensation_1",
+        "description": "Releases inventory on failure or cancellation.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "order_id",
+            "source": "step_output",
+            "ref": "ReserveInventory"
+          }
+        ],
+        "retry_policy": null
+      }
+    ],
+    "default_retry_policy": {
+      "maximum_attempts": 3,
+      "initial_interval_seconds": 1.0,
+      "backoff_coefficient": 2.0,
+      "maximum_interval_seconds": null,
+      "non_retryable_error_types": []
+    },
+    "plan": [
+      {
+        "id": "S1",
+        "kind": "activity",
+        "description": null,
+        "ref": "ValidateOrderAndPayment",
+        "bindings": [
+          {
+            "param": "order_id",
+            "source": "workflow_input",
+            "ref": "order_id"
+          },
+          {
+            "param": "customer_info",
+            "source": "workflow_input",
+            "ref": "customer_info"
+          }
+        ],
+        "result_name": "paymentValidationResult",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "S2",
+        "kind": "branch",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": "paymentValidationResult.is_payment_valid",
+        "lanes": [
+          [
+            {
+              "id": "S3",
+              "kind": "activity",
+              "description": null,
+              "ref": "ReserveInventory",
+              "bindings": [
+                {
+                  "param": "order_id",
+                  "source": "workflow_input",
+                  "ref": "order_id"
+                },
+                {
+                  "param": "items",
+                  "source": "workflow_input",
+                  "ref": "items"
+                }
+              ],
+              "result_name": "inventoryReservationResult",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S4",
+              "kind": "parallel",
+              "description": null,
+              "ref": null,
+              "bindings": [],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": [
+                [
+                  {
+                    "id": "S5",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "SendOrderConfirmation",
+                    "bindings": [
+                      {
+                        "param": "customer_info",
+                        "source": "workflow_input",
+                        "ref": "customer_info"
+                      },
+                      {
+                        "param": "order_id",
+                        "source": "workflow_input",
+                        "ref": "order_id"
+                      }
+                    ],
+                    "result_name": null,
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  }
+                ],
+                [
+                  {
+                    "id": "S6",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "NotifyWarehouse",
+                    "bindings": [
+                      {
+                        "param": "order_id",
+                        "source": "workflow_input",
+                        "ref": "order_id"
+                      }
+                    ],
+                    "result_name": null,
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  }
+                ]
+              ]
+            },
+            {
+              "id": "S7",
+              "kind": "activity",
+              "description": null,
+              "ref": "PickAndPackItems",
+              "bindings": [
+                {
+                  "param": "order_id",
+                  "source": "workflow_input",
+                  "ref": "order_id"
+                }
+              ],
+              "result_name": "pickingStatus",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S8",
+              "kind": "activity",
+              "description": null,
+              "ref": "CreateShipmentViaCarrierAPI",
+              "bindings": [
+                {
+                  "param": "order_id",
+                  "source": "workflow_input",
+                  "ref": "order_id"
+                },
+                {
+                  "param": "customer_info",
+                  "source": "workflow_input",
+                  "ref": "customer_info"
+                }
+              ],
+              "result_name": "shipmentStatus",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S9",
+              "kind": "branch",
+              "description": null,
+              "ref": null,
+              "bindings": [],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": "shipmentStatus.shipment_status == 'FAILED'",
+              "lanes": [
+                [
+                  {
+                    "id": "S10",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "ReleaseReservedInventory",
+                    "bindings": [
+                      {
+                        "param": "order_id",
+                        "source": "workflow_input",
+                        "ref": "order_id"
+                      }
+                    ],
+                    "result_name": null,
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  }
+                ],
+                [
+                  {
+                    "id": "S12",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "ShipOrder",
+                    "bindings": [
+                      {
+                        "param": "shipment_id",
+                        "source": "step_output",
+                        "ref": "S8"
+                      }
+                    ],
+                    "result_name": null,
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  }
+                ]
+              ]
+            },
+            {
+              "id": "S13",
+              "kind": "branch",
+              "description": null,
+              "ref": null,
+              "bindings": [],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": "order_value > 1000",
+              "lanes": [
+                [
+                  {
+                    "id": "S14",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "ObtainManagerApproval",
+                    "bindings": [
+                      {
+                        "param": "order_value",
+                        "source": "workflow_input",
+                        "ref": "order_value"
+                      },
+                      {
+                        "param": "order_id",
+                        "source": "workflow_input",
+                        "ref": "order_id"
+                      }
+                    ],
+                    "result_name": "approvalStatus",
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S15",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "NotifyFinanceTeam",
+                    "bindings": [
+                      {
+                        "param": "order_id",
+                        "source": "workflow_input",
+                        "ref": "order_id"
+                      },
+                      {
+                        "param": "order_value",
+                        "source": "workflow_input",
+                        "ref": "order_value"
+                      }
+                    ],
+                    "result_name": null,
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  }
+                ],
+                []
+              ]
+            }
+          ],
+          [
+            {
+              "id": "S16",
+              "kind": "raise",
+              "description": null,
+              "ref": "PaymentDeclined",
+              "bindings": [],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ]
+        ]
+      },
+      {
+        "id": "S17",
+        "kind": "signal_gate",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": "OrderSubmittedSignal",
+        "condition": null,
+        "timer": "ShipmentSLATimer",
+        "predicate": null,
+        "lanes": []
+      }
+    ]
+  },
+  "temporal_code": {
+    "target": "python",
+    "package_name": "order_fulfillment_workflow",
+    "files": [
+      {
+        "path": "shared.py",
+        "language": "python",
+        "content": "\"\"\"Shared dataclasses for the OrderFulfillmentWorkflow workflow.\n\nTemporal passes a single dataclass argument to workflows and activities so that\ninputs evolve compatibly. Refine the field types to match your real domain types.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom typing import Any\n\n\n@dataclass\nclass WorkflowInput:\n    \"\"\"Input to the OrderFulfillmentWorkflow workflow.\"\"\"\n\n    order_id: str = \"\"\n    customer_info: str = \"\"\n    order_value: float = 0.0\n    items: str = \"\"\n\n\n@dataclass\nclass ValidateOrderAndPaymentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n    customer_info: str = \"\"\n\n\n@dataclass\nclass ReserveInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n    items: str = \"\"\n\n\n@dataclass\nclass SendOrderConfirmationInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    customer_info: str = \"\"\n    order_id: str = \"\"\n\n\n@dataclass\nclass NotifyWarehouseInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n\n\n@dataclass\nclass PickAndPackItemsInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n\n\n@dataclass\nclass CreateShipmentViaCarrierAPIInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n    customer_info: str = \"\"\n\n\n@dataclass\nclass ShipOrderInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    shipment_id: str = \"\"\n\n\n@dataclass\nclass ReleaseReservedInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n\n\n@dataclass\nclass ObtainManagerApprovalInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_value: float = 0.0\n    order_id: str = \"\"\n\n\n@dataclass\nclass NotifyFinanceTeamInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n    order_value: float = 0.0\n\n\n@dataclass\nclass CompensateReserveInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\""
+      },
+      {
+        "path": "activities.py",
+        "language": "python",
+        "content": "\"\"\"Activities for the OrderFulfillmentWorkflow workflow.\n\nEach activity is a thin, retryable unit of work. Replace the ``NotImplementedError``\nwith real logic; activities may use I/O, SDKs, and blocking calls freely.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom temporalio import activity\n\nfrom shared import (\n    ValidateOrderAndPaymentInput,\n    ReserveInventoryInput,\n    SendOrderConfirmationInput,\n    NotifyWarehouseInput,\n    PickAndPackItemsInput,\n    CreateShipmentViaCarrierAPIInput,\n    ShipOrderInput,\n    ReleaseReservedInventoryInput,\n    ObtainManagerApprovalInput,\n    NotifyFinanceTeamInput,\n    CompensateReserveInventoryInput,\n)\n\n\n@activity.defn(name=\"ValidateOrderAndPayment\")\nasync def validate_order_and_payment(arg: ValidateOrderAndPaymentInput) -> str:\n    \"\"\"Checks order validity and payment status.\"\"\"\n    activity.logger.info(\"Running validate_order_and_payment\", extra={\"input\": arg})\n    # TODO: implement validate_order_and_payment. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"ReserveInventory\")\nasync def reserve_inventory(arg: ReserveInventoryInput) -> str:\n    \"\"\"Reserves inventory for the order.\"\"\"\n    activity.logger.info(\"Running reserve_inventory\", extra={\"input\": arg})\n    # TODO: implement reserve_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"SendOrderConfirmation\")\nasync def send_order_confirmation(arg: SendOrderConfirmationInput) -> str:\n    \"\"\"Sends confirmation to the customer.\"\"\"\n    activity.logger.info(\"Running send_order_confirmation\", extra={\"input\": arg})\n    # TODO: implement send_order_confirmation. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"NotifyWarehouse\")\nasync def notify_warehouse(arg: NotifyWarehouseInput) -> str:\n    \"\"\"Notifies the warehouse to prepare for picking.\"\"\"\n    activity.logger.info(\"Running notify_warehouse\", extra={\"input\": arg})\n    # TODO: implement notify_warehouse. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"PickAndPackItems\")\nasync def pick_and_pack_items(arg: PickAndPackItemsInput) -> str:\n    \"\"\"Executes picking and packing of order items.\"\"\"\n    activity.logger.info(\"Running pick_and_pack_items\", extra={\"input\": arg})\n    # TODO: implement pick_and_pack_items. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"CreateShipmentViaCarrierAPI\")\nasync def create_shipment_via_carrier_api(arg: CreateShipmentViaCarrierAPIInput) -> str:\n    \"\"\"Creates a shipment via the carrier's API.\"\"\"\n    activity.logger.info(\"Running create_shipment_via_carrier_api\", extra={\"input\": arg})\n    # TODO: implement create_shipment_via_carrier_api. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"ShipOrder\")\nasync def ship_order(arg: ShipOrderInput) -> str:\n    \"\"\"Finalizes the shipment process.\"\"\"\n    activity.logger.info(\"Running ship_order\", extra={\"input\": arg})\n    # TODO: implement ship_order. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"ReleaseReservedInventory\")\nasync def release_reserved_inventory(arg: ReleaseReservedInventoryInput) -> str:\n    \"\"\"Releases inventory if shipment fails or is cancelled.\"\"\"\n    activity.logger.info(\"Running release_reserved_inventory\", extra={\"input\": arg})\n    # TODO: implement release_reserved_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"ObtainManagerApproval\")\nasync def obtain_manager_approval(arg: ObtainManagerApprovalInput) -> str:\n    \"\"\"Seeks approval for high-value orders.\"\"\"\n    activity.logger.info(\"Running obtain_manager_approval\", extra={\"input\": arg})\n    # TODO: implement obtain_manager_approval. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"NotifyFinanceTeam\")\nasync def notify_finance_team(arg: NotifyFinanceTeamInput) -> str:\n    \"\"\"Notifies finance for high-value orders.\"\"\"\n    activity.logger.info(\"Running notify_finance_team\", extra={\"input\": arg})\n    # TODO: implement notify_finance_team. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"CompensateReserveInventory\")\nasync def compensate_reserve_inventory(arg: CompensateReserveInventoryInput) -> str:\n    \"\"\"Releases inventory on failure or cancellation.\"\"\"\n    activity.logger.info(\"Running compensate_reserve_inventory\", extra={\"input\": arg})\n    # TODO: implement compensate_reserve_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\""
+      },
+      {
+        "path": "workflow.py",
+        "language": "python",
+        "content": "\"\"\"The OrderFulfillmentWorkflow Temporal workflow.\n\nWorkflow code must be deterministic: do all I/O inside activities, and use\n``workflow.*`` helpers (``execute_activity``, ``execute_child_workflow``,\n``sleep``, signals, queries) rather than calling the outside world directly.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nfrom collections.abc import Callable\nfrom datetime import timedelta\nfrom typing import Any\n\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\nfrom temporalio.exceptions import ApplicationError\n\nwith workflow.unsafe.imports_passed_through():\n    from activities import (\n        validate_order_and_payment,\n        reserve_inventory,\n        send_order_confirmation,\n        notify_warehouse,\n        pick_and_pack_items,\n        create_shipment_via_carrier_api,\n        ship_order,\n        release_reserved_inventory,\n        obtain_manager_approval,\n        notify_finance_team,\n        compensate_reserve_inventory,\n    )\n    from shared import (\n        WorkflowInput,\n        ValidateOrderAndPaymentInput,\n        ReserveInventoryInput,\n        SendOrderConfirmationInput,\n        NotifyWarehouseInput,\n        PickAndPackItemsInput,\n        CreateShipmentViaCarrierAPIInput,\n        ShipOrderInput,\n        ReleaseReservedInventoryInput,\n        ObtainManagerApprovalInput,\n        NotifyFinanceTeamInput,\n        CompensateReserveInventoryInput,\n    )\n\nSHIPMENT_SLATIMER = timedelta(seconds=86400)  # Ensures shipment within 24 hours of payment confirmation.\n\n\n@workflow.defn\nclass OrderFulfillmentWorkflow:\n    \"\"\"Manages the order fulfillment process from validation to shipment.\"\"\"\n\n    def __init__(self) -> None:\n        self._status: str = \"pending\"\n        # Read-only debug surface (safe in production: no I/O, no wall-clock).\n        self._current_step: str = \"\"\n        self._decisions_taken: list[dict[str, object]] = []\n        self._triggers_fired: list[str] = []\n        self._order_submitted_signal_received: bool = False\n\n    @workflow.run\n    async def run(self, arg: WorkflowInput) -> str:\n        self._status = \"running\"\n        compensations: list[tuple[Callable[..., Any], Any]] = []\n        try:\n            self._current_step = 'S1'\n            workflow.logger.info(\"Running step: ValidateOrderAndPayment\")\n            payment_validation_result = await workflow.execute_activity(\n                validate_order_and_payment,\n                ValidateOrderAndPaymentInput(order_id=arg.order_id, customer_info=arg.customer_info),\n                start_to_close_timeout=timedelta(seconds=30),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n            self._current_step = 'S2'\n            should_payment_validation_result_is_payment_valid = True  # TODO: set from a real condition: paymentValidationResult.is_payment_valid\n            if should_payment_validation_result_is_payment_valid:\n                self._decisions_taken.append({'branch': 'S2', 'predicate': 'paymentValidationResult.is_payment_valid', 'taken': True})\n                self._current_step = 'S3'\n                workflow.logger.info(\"Running step: ReserveInventory\")\n                inventory_reservation_result = await workflow.execute_activity(\n                    reserve_inventory,\n                    ReserveInventoryInput(order_id=arg.order_id, items=arg.items),\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=10), backoff_coefficient=2, maximum_attempts=3, non_retryable_error_types=['InventoryUnavailableError']),\n                )\n                compensations.append((compensate_reserve_inventory, CompensateReserveInventoryInput(order_id=inventory_reservation_result)))\n                self._current_step = 'S4'\n                workflow.logger.info(\"Running 2 steps in parallel\")\n                s5_result, s6_result = await asyncio.gather(\n                    workflow.execute_activity(\n                        send_order_confirmation,\n                        SendOrderConfirmationInput(customer_info=arg.customer_info, order_id=arg.order_id),\n                        start_to_close_timeout=timedelta(seconds=30),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                    ),\n                    workflow.execute_activity(\n                        notify_warehouse,\n                        NotifyWarehouseInput(order_id=arg.order_id),\n                        start_to_close_timeout=timedelta(seconds=30),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                    ),\n                )\n                self._current_step = 'S7'\n                workflow.logger.info(\"Running step: PickAndPackItems\")\n                picking_status = await workflow.execute_activity(\n                    pick_and_pack_items,\n                    PickAndPackItemsInput(order_id=arg.order_id),\n                    start_to_close_timeout=timedelta(seconds=1800),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                )\n                self._current_step = 'S8'\n                workflow.logger.info(\"Running step: CreateShipmentViaCarrierAPI\")\n                shipment_status = await workflow.execute_activity(\n                    create_shipment_via_carrier_api,\n                    CreateShipmentViaCarrierAPIInput(order_id=arg.order_id, customer_info=arg.customer_info),\n                    start_to_close_timeout=timedelta(seconds=120),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=30), backoff_coefficient=2, maximum_attempts=5, non_retryable_error_types=['CarrierAPIError']),\n                )\n                self._current_step = 'S9'\n                should_shipment_status_shipment_status_failed = True  # TODO: set from a real condition: shipmentStatus.shipment_status == 'FAILED'\n                if should_shipment_status_shipment_status_failed:\n                    self._decisions_taken.append({'branch': 'S9', 'predicate': \"shipmentStatus.shipment_status == 'FAILED'\", 'taken': True})\n                    self._current_step = 'S10'\n                    workflow.logger.info(\"Running step: ReleaseReservedInventory\")\n                    s10_result = await workflow.execute_activity(\n                        release_reserved_inventory,\n                        ReleaseReservedInventoryInput(order_id=arg.order_id),\n                        start_to_close_timeout=timedelta(seconds=30),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                    )\n                else:\n                    self._decisions_taken.append({'branch': 'S9', 'predicate': \"shipmentStatus.shipment_status == 'FAILED'\", 'taken': False})\n                    self._current_step = 'S12'\n                    workflow.logger.info(\"Running step: ShipOrder\")\n                    s12_result = await workflow.execute_activity(\n                        ship_order,\n                        ShipOrderInput(shipment_id=shipment_status),\n                        start_to_close_timeout=timedelta(seconds=30),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                    )\n                self._current_step = 'S13'\n                should_order_value_1000 = True  # TODO: set from a real condition: order_value > 1000\n                if should_order_value_1000:\n                    self._decisions_taken.append({'branch': 'S13', 'predicate': 'order_value > 1000', 'taken': True})\n                    self._current_step = 'S14'\n                    workflow.logger.info(\"Running step: ObtainManagerApproval\")\n                    approval_status = await workflow.execute_activity(\n                        obtain_manager_approval,\n                        ObtainManagerApprovalInput(order_value=arg.order_value, order_id=arg.order_id),\n                        start_to_close_timeout=timedelta(seconds=3600),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                    )\n                    self._current_step = 'S15'\n                    workflow.logger.info(\"Running step: NotifyFinanceTeam\")\n                    s15_result = await workflow.execute_activity(\n                        notify_finance_team,\n                        NotifyFinanceTeamInput(order_id=arg.order_id, order_value=arg.order_value),\n                        start_to_close_timeout=timedelta(seconds=30),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                    )\n                else:\n                    self._decisions_taken.append({'branch': 'S13', 'predicate': 'order_value > 1000', 'taken': False})\n            else:\n                self._decisions_taken.append({'branch': 'S2', 'predicate': 'paymentValidationResult.is_payment_valid', 'taken': False})\n                self._current_step = 'S16'\n                workflow.logger.info(\"Raising: PaymentDeclined\")\n                raise ApplicationError('Workflow rejected: PaymentDeclined', type='PaymentDeclined', non_retryable=True)\n            self._current_step = 'S17'\n            workflow.logger.info(\"Waiting for signal: OrderSubmittedSignal\")\n            # Bounded wait: raises TimeoutError after ShipmentSLATimer, which\n            # fires the saga compensations below instead of blocking forever.\n            await workflow.wait_condition(lambda: self._order_submitted_signal_received, timeout=SHIPMENT_SLATIMER)\n        except Exception:\n            for _comp_fn, _comp_arg in reversed(compensations):\n                await workflow.execute_activity(\n                    _comp_fn,\n                    _comp_arg,\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                )\n            self._status = \"compensated\"\n            raise\n        self._status = \"completed\"\n        return self._status\n\n    @workflow.signal\n    def order_submitted_signal(self, order_id: str) -> None:\n        \"\"\"Handle the 'OrderSubmittedSignal' signal.\"\"\"\n        self._order_submitted_signal_received = True\n\n    @workflow.query\n    def get_order_status(self) -> str:\n        \"\"\"Returns the current order fulfillment status.\"\"\"\n        return self._status\n\n    @workflow.query\n    def current_step(self) -> str:\n        \"\"\"The plan step currently executing (read-only debug surface).\"\"\"\n        return self._current_step\n\n    @workflow.query\n    def decisions_taken(self) -> list[dict[str, object]]:\n        \"\"\"Every branch decision so far: branch id, predicate, and path taken.\"\"\"\n        return self._decisions_taken\n\n    @workflow.query\n    def triggers_fired(self) -> list[str]:\n        \"\"\"Cross-workflow triggers fired so far.\"\"\"\n        return self._triggers_fired"
+      },
+      {
+        "path": "worker.py",
+        "language": "python",
+        "content": "\"\"\"Worker process for the OrderFulfillmentWorkflow workflow.\n\nStart a local Temporal dev server in one terminal::\n\n    temporal server start-dev\n\nThen, from inside this package directory, run the worker::\n\n    python worker.py\n\nKeep it running, then start a workflow with ``python starter.py``.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\n\nfrom temporalio import workflow\nfrom temporalio.client import Client\nfrom temporalio.worker import Worker\n\nwith workflow.unsafe.imports_passed_through():\n    from workflow import OrderFulfillmentWorkflow\n    from activities import (\n        validate_order_and_payment,\n        reserve_inventory,\n        send_order_confirmation,\n        notify_warehouse,\n        pick_and_pack_items,\n        create_shipment_via_carrier_api,\n        ship_order,\n        release_reserved_inventory,\n        obtain_manager_approval,\n        notify_finance_team,\n        compensate_reserve_inventory,\n    )\n\nTASK_QUEUE = \"order-fulfillment-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and run the worker until cancelled.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n    worker = Worker(\n        client,\n        task_queue=TASK_QUEUE,\n        workflows=[OrderFulfillmentWorkflow],\n        activities=[validate_order_and_payment, reserve_inventory, send_order_confirmation, notify_warehouse, pick_and_pack_items, create_shipment_via_carrier_api, ship_order, release_reserved_inventory, obtain_manager_approval, notify_finance_team, compensate_reserve_inventory],\n    )\n    print(f\"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.\")\n    await worker.run()\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "starter.py",
+        "language": "python",
+        "content": "\"\"\"Start a OrderFulfillmentWorkflow workflow execution.\n\nStart the Temporal dev server and the worker first::\n\n    temporal server start-dev      # terminal 1\n    python worker.py               # terminal 2\n\nThen, from inside this package directory::\n\n    python starter.py              # terminal 3\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport uuid\n\nfrom temporalio.client import Client\n\nfrom workflow import OrderFulfillmentWorkflow\nfrom shared import WorkflowInput\n\nTASK_QUEUE = \"order-fulfillment-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and start a single workflow execution.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n\n    handle = await client.start_workflow(\n        OrderFulfillmentWorkflow.run,\n        WorkflowInput(),  # TODO: populate the workflow input fields.\n        id=f\"order_fulfillment_workflow-{uuid.uuid4()}\",\n        task_queue=TASK_QUEUE,\n    )\n    print(f\"Started workflow {handle.id}\")\n\n    # NOTE: workflows that pause on a signal gate block here until signalled\n    # (e.g. via `temporal workflow signal` or a client `handle.signal(...)`).\n    result = await handle.result()\n    print(\"Workflow result:\", result)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "test_stepthrough.py",
+        "language": "python",
+        "content": "\"\"\"Local step-through harness for the OrderFulfillmentWorkflow workflow.\n\nRuns this bundle under a time-skipping Temporal test environment with the\ngenerated stub activities (they return placeholders, no I/O) and **mocked\ntrigger activities** (the real ones call the Temporal client), then inspects\nthe read-only debug queries — proving which steps ran, which branch each\ndecision took, and which cross-workflow triggers fired.\n\nRun from inside this bundle directory::\n\n    pytest test_stepthrough.py -s\n\nRequires: temporalio, pytest, pytest-asyncio (asyncio_mode=auto or the marker).\n\"\"\"\n\nfrom __future__ import annotations\n\nimport uuid\n\nimport pytest\nfrom temporalio import activity\nfrom temporalio.testing import WorkflowEnvironment\nfrom temporalio.worker import UnsandboxedWorkflowRunner, Worker\n\nfrom activities import (\n    validate_order_and_payment,\n    reserve_inventory,\n    send_order_confirmation,\n    notify_warehouse,\n    pick_and_pack_items,\n    create_shipment_via_carrier_api,\n    ship_order,\n    release_reserved_inventory,\n    obtain_manager_approval,\n    notify_finance_team,\n    compensate_reserve_inventory,\n)\nfrom shared import WorkflowInput\nfrom workflow import OrderFulfillmentWorkflow\nTRIGGERS_CALLED: list[str] = []\n\n\n@pytest.mark.asyncio\nasync def test_stepthrough() -> None:\n    \"\"\"Run the workflow end to end and inspect the debug queries.\"\"\"\n    env = await WorkflowEnvironment.start_time_skipping()\n    try:\n        async with Worker(\n            env.client,\n            task_queue=\"order-fulfillment-queue\",\n            workflows=[OrderFulfillmentWorkflow],\n            activities=[validate_order_and_payment, reserve_inventory, send_order_confirmation, notify_warehouse, pick_and_pack_items, create_shipment_via_carrier_api, ship_order, release_reserved_inventory, obtain_manager_approval, notify_finance_team, compensate_reserve_inventory, ],\n            workflow_runner=UnsandboxedWorkflowRunner(),\n        ):\n            handle = await env.client.start_workflow(\n                OrderFulfillmentWorkflow.run,\n                WorkflowInput(),\n                id=f\"stepthrough-{uuid.uuid4()}\",\n                task_queue=\"order-fulfillment-queue\",\n            )\n            # Release the 'OrderSubmittedSignal' wait gate with a stub payload —\n            # signalling before the workflow reaches its wait is safe (the\n            # received flag stays set).\n            await handle.signal(\"order_submitted_signal\", args=[\"stub-order_id\", ])\n            result = await handle.result()\n            assert result == \"completed\"\n            print(\"last step:\", await handle.query(\"current_step\"))\n            print(\"decisions:\", await handle.query(\"decisions_taken\"))\n            print(\"triggers fired:\", await handle.query(\"triggers_fired\"))\n    finally:\n        await env.shutdown()"
+      },
+      {
+        "path": "README.md",
+        "language": "markdown",
+        "content": "# OrderFulfillmentWorkflow (generated Temporal workflow)\n\nManages the order fulfillment process from validation to shipment.\n\nThis package was generated **deterministically** from a reviewed\n`TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,\nqueries, timers, child workflows, retry policies, and saga compensation are\nwired up, but each activity body raises `NotImplementedError` for you to fill in.\n\nThe files use **flat, absolute imports** (`from activities import ...`), matching\nthe layout in the Temporal Python docs, so each script is run directly from\ninside this directory — no package installation or `PYTHONPATH` needed.\n\n## Files\n\n| File | Purpose |\n|------|---------|\n| `shared.py` | Dataclasses for workflow / activity inputs |\n| `activities.py` | `@activity.defn` units of work (implement these) |\n| `workflow.py` | `@workflow.defn` orchestration: `OrderFulfillmentWorkflow` |\n| `worker.py` | Worker registering the workflow + activities on `order-fulfillment-queue` |\n| `starter.py` | Client that starts one workflow execution |\n\n## Run it\n\nInstall the SDK and start a local Temporal server:\n\n```bash\npip install temporalio\ntemporal server start-dev          # terminal 1, leave running\n```\n\nFrom **inside this directory**, run the worker and then the starter:\n\n```bash\npython worker.py                   # terminal 2, leave running\npython starter.py                  # terminal 3\n```\n\nThe worker polls the `order-fulfillment-queue` task queue; the starter submits a single\n`OrderFulfillmentWorkflow` execution and prints its result. Open the Web UI at\nhttp://localhost:8233 to watch the execution.\n\n## Next steps\n\n- Implement each activity in `activities.py`.\n- Populate the `WorkflowInput()` fields in `starter.py`.\n- Replace the default `str` input fields in `shared.py` with real types.\n- Review the generated retry policies and timeouts against your SLAs.\n- Send the workflow's signal(s) (OrderSubmittedSignal) to release any wait gates."
+      }
+    ]
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Validate order and payment\"]\n    activity_2[\"Reserve inventory\"]\n    activity_3[\"Send order confirmation\"]\n    activity_4[\"Notify warehouse to begin picking\"]\n    activity_5[\"Pick and pack items\"]\n    activity_6[\"Create shipment via Carrier API\"]\n    activity_7[\"Ship order\"]\n    activity_8[\"Release reserved inventory\"]\n    activity_9[\"Obtain manager approval for orders above $1,000\"]\n    activity_10[\"Notify finance team for orders above $1,000\"]\n    decision_1{\"Is payment valid?\"}\n    decision_2{\"Did shipment creation fail after retries?\"}\n    decision_3{\"Is order value above $1,000?\"}\n    exception_1([\"Payment Declined\"])\n    exception_2([\"Shipment Creation Failed\"])\n    exception_3([\"SLA-breach alert\"])\n    compensation_1[\"Release Inventory\"]\n    event_1([\"Order Submitted\"])\n    event_2([\"Order Confirmed\"])\n    event_3([\"Shipment Created\"])\n    event_4([\"Order Delivered\"])\n    event_5([\"Order Cancelled\"])\n    event_6([\"Order Failed\"])\n    gateway_fork_1{{\"Parallel split\"}}\n    gateway_join_1{{\"Parallel join\"}}\n    state_1[\"Order received\"]\n    state_2[\"Payment Validation\"]\n    state_3[\"Inventory Reservation\"]\n    state_4[\"Order Cancelled\"]\n    state_5[\"Picking and Packing\"]\n    state_6[\"Shipment Creation\"]\n    state_7[\"Order Shipped\"]\n    state_8[\"Order Failed\"]\n    start --> activity_1\n    activity_1 --> decision_3\n    decision_3 -->|yes| activity_9\n    decision_3 -->|no| gateway_fork_1\n    decision_1 -->|yes| gateway_fork_1\n    decision_1 -->|no| exception_1\n    gateway_fork_1 -->|parallel| activity_2\n    activity_2 -->|parallel| gateway_join_1\n    gateway_fork_1 -->|parallel| activity_3\n    activity_3 -->|parallel| gateway_join_1\n    gateway_fork_1 -->|parallel| activity_4\n    activity_4 -->|parallel| gateway_join_1\n    gateway_join_1 --> activity_5\n    activity_5 --> activity_6\n    activity_6 --> decision_2\n    decision_2 -->|yes| activity_8\n    decision_2 -->|no| activity_7\n    activity_7 --> activity_8\n    activity_8 --> activity_9\n    activity_9 --> activity_10\n    activity_10 --> end_node\n    activity_1 -.->|on error| exception_1\n    activity_6 -.->|on error| exception_2\n    activity_6 -.->|on error| exception_3\n    activity_2 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_3 -.->|emits| event_2\n    activity_6 -.->|emits| event_3\n    activity_7 -.->|emits| event_4\n    state_1 -->|transition| state_2\n    state_2 -->|transition| state_3\n    state_2 -->|transition| state_4\n    state_3 -->|transition| state_5\n    state_5 -->|transition| state_6\n    state_6 -->|transition| state_7\n    state_6 -->|transition| state_8\n    exception_3 -->|terminates| end_node\n    exception_1 -->|terminates| end_node\n    exception_2 -->|terminates| end_node\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,event_1,event_5,state_1 capture;\n    class activity_1,activity_9,decision_1,decision_2,decision_3,state_2 validate;\n    class activity_2,activity_5,activity_6,activity_8,compensation_1,gateway_fork_1,gateway_join_1,state_3,state_5,state_6 process;\n    class end_node,activity_3,activity_4,activity_7,activity_10,exception_1,exception_2,exception_3,event_2,event_3,event_4,event_6,state_4,state_7,state_8 activate;",
+    "title": "Order Fulfillment Workflow"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 1.0,
+    "cvpa": 0.9379,
+    "temporal": 0.95,
+    "overall": null,
+    "notes": {
+      "cvpa": "35 nodes classified; 35 from model, 0 by fallback.",
+      "temporal": "10 activities, 1 signals, 0 child workflows, 1 compensations.",
+      "temporal_code": "7 files for package 'order_fulfillment_workflow'."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-07-17T15:37:55.592956Z",
+  "updated_at": "2026-07-17T15:45:59.790680Z"
+}

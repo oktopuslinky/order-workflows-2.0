@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(pip *)",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\devag\\\\Documents\\\\Code \\(local\\)\\\\order-workflows-iterative-2.0\\\\workflow-compiler\"; .\\\\.venv\\\\Scripts\\\\python.exe -m ruff check src tests --output-format concise 2>&1; Write-Output \"EXIT:$LASTEXITCODE\")",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\devag\\\\Documents\\\\Code \\(local\\)\\\\order-workflows-iterative-2.0\\\\workflow-compiler\"; .\\\\.venv\\\\Scripts\\\\python.exe -m ruff check src tests --fix --output-format concise 2>&1; Write-Output \"EXIT:$LASTEXITCODE\")",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\devag\\\\Documents\\\\Code \\(local\\)\\\\order-workflows-iterative-2.0\\\\workflow-compiler\"; .\\\\.venv\\\\Scripts\\\\python.exe -m ruff check src tests --output-format concise 2>&1; Write-Output \"RUFF:$LASTEXITCODE\"; .\\\\.venv\\\\Scripts\\\\python.exe -m pytest -q 2>&1 | Select-Object -Last 25)",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\devag\\\\Documents\\\\Code \\(local\\)\\\\order-workflows-iterative-2.0\\\\workflow-compiler\"; .\\\\.venv\\\\Scripts\\\\python.exe -m ruff check src tests --output-format concise 2>&1; Write-Output \"RUFF:$LASTEXITCODE\"; .\\\\.venv\\\\Scripts\\\\python.exe -m pytest -q tests/test_discovery_agent.py 2>&1 | Select-Object -Last 20)",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\devag\\\\Documents\\\\Code \\(local\\)\\\\order-workflows-iterative-2.0\\\\workflow-compiler\"; .\\\\.venv\\\\Scripts\\\\python.exe -m ruff check src tests --output-format concise 2>&1; Write-Output \"RUFF:$LASTEXITCODE\"; .\\\\.venv\\\\Scripts\\\\python.exe -m pytest -q tests/test_fact_extraction_agent.py 2>&1 | Select-Object -Last 20)",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\devag\\\\Documents\\\\Code \\(local\\)\\\\order-workflows-iterative-2.0\\\\workflow-compiler\"; .\\\\.venv\\\\Scripts\\\\python.exe -m ruff check src tests --output-format concise 2>&1; Write-Output \"RUFF:$LASTEXITCODE\"; .\\\\.venv\\\\Scripts\\\\python.exe -m pytest -q tests/test_graph_builder.py 2>&1 | Select-Object -Last 30)",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\devag\\\\Documents\\\\Code \\(local\\)\\\\order-workflows-iterative-2.0\\\\workflow-compiler\"; .\\\\.venv\\\\Scripts\\\\python.exe -m ruff check src tests --output-format concise 2>&1; Write-Output \"RUFF:$LASTEXITCODE\"; .\\\\.venv\\\\Scripts\\\\python.exe -m pytest -q 2>&1 | Select-Object -Last 6)",
+      "Bash(./.venv/Scripts/workflow-compiler.exe inspect *)",
+      "Bash(./.venv/Scripts/python.exe \"C:/Users/devag/AppData/Local/Temp/claude/C--Users-devag-Documents-Code--local--order-workflows-iterative-2-0/fdbc02a0-5523-47e3-b24b-eaceb3bbce8f/scratchpad/list_models.py\")",
+      "Bash(./.venv/Scripts/python.exe \"C:/Users/devag/AppData/Local/Temp/claude/C--Users-devag-Documents-Code--local--order-workflows-iterative-2-0/fdbc02a0-5523-47e3-b24b-eaceb3bbce8f/scratchpad/probe_models.py\")",
+      "Bash(./.venv/Scripts/python.exe -m ruff check src tests --output-format concise)",
+      "Bash(echo \"RUFF:$?\")",
+      "Bash(./.venv/Scripts/python.exe -m pytest -q)",
+      "Bash(./.venv/Scripts/python.exe -m pytest)",
+      "Bash(./.venv/Scripts/python.exe -c \"import socket; print\\('resolves:', socket.gethostbyname\\('integrate.api.nvidia.com'\\)\\)\")",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_graph_builder.py -q)",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_review_agent.py -q)",
+      "Bash(./.venv/Scripts/python.exe -m ruff check src tests)",
+      "Bash(./.venv/Scripts/python.exe -c \"import workflow_compiler as w; print\\('exports ok:', 'GraphEditor' in w.__all__, 'FileStateStore' in w.__all__\\)\")",
+      "Bash(./.venv/Scripts/python.exe -m ruff check --fix src tests)",
+      "Bash(ls -1 examples/)",
+      "Bash(ls -1 docs/)",
+      "Bash(wc -l README.md)",
+      "Bash(ls -1 *.md *.mmd)",
+      "Bash(grep -c '^```' docs/HOW_IT_WORKS.md)",
+      "Bash(sed -E 's/\\(KEY[=:]\\).*/\\\\1<redacted>/I')",
+      "Bash(.venv/Scripts/python.exe --version)",
+      "Bash(workflow-compiler validate *)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
+}

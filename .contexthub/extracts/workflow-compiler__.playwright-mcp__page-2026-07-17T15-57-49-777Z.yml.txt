@@ -1,0 +1,535 @@
+- generic [ref=e1]:
+  - banner [ref=e2]:
+    - link "workflow·compiler" [ref=e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e4]: document → spec → validate → approve → code
+    - navigation [ref=e5]:
+      - link "Projects" [ref=e6] [cursor=pointer]:
+        - /url: /
+      - link "Guide" [ref=e7] [cursor=pointer]:
+        - /url: /guide
+      - button "Switch to dark theme" [ref=e8]: ☾ Dark
+  - main [ref=e9]:
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - link "Back to projects" [ref=e14] [cursor=pointer]:
+          - /url: /
+          - text: ←
+        - generic [ref=e15]: Spec drafted
+        - generic [ref=e17]:
+          - button "Spec" [ref=e18] [cursor=pointer]
+          - button "Results" [ref=e19] [cursor=pointer]
+        - generic [ref=e20]:
+          - button "Edit request" [active] [ref=e21] [cursor=pointer]
+          - button "Save" [ref=e22] [cursor=pointer]
+          - button "Validate" [ref=e23] [cursor=pointer]
+          - button "Approve" [disabled] [ref=e24]
+      - paragraph [ref=e25]: Edited since last validate — Validate must run before
+          Approve.
+      - generic [ref=e961]:
+        - generic [ref=e962]:
+          - heading "Edit request" [level=3] [ref=e963]
+          - button "Close" [ref=e964] [cursor=pointer]
+        - paragraph [ref=e965]:
+          - text: Describe changes per workflow (see
+          - code [ref=e966]: docs/EDIT_FORMAT_GUIDE.md
+          - text: '). Applying an edit re-arms the gate: Validate and Approve must
+              run again.'
+        - textbox [ref=e967]: '# Edit Request ## Workflow: <slug> ### Add - ### Modify
+            - ### Remove - ## Reason'
+        - generic [ref=e968]:
+          - button "Upload .md" [ref=e969] [cursor=pointer]
+          - textbox "Author (optional)" [ref=e970]
+          - button "Apply edit" [ref=e971] [cursor=pointer]
+        - generic [ref=e972]:
+          - paragraph [ref=e973]: Edit history
+          - generic [ref=e974]:
+            - paragraph [ref=e975]: 7/17/2026, 10:56:55 AM — devansh
+            - paragraph [ref=e976]: 'order-fulfillment-workflow: add rule; facts:
+                1 applied, 0 dropped, 0 flagged; version bumped to 0.1.2'
+          - generic [ref=e977]:
+            - paragraph [ref=e978]: 7/17/2026, 10:30:21 AM — devansh
+            - paragraph [ref=e979]: 'order-fulfillment-workflow: add activity; add
+                rule; modify retry; modify owner; remove rule; metadata: 1 applied,
+                0 dropped, 0 flagged; facts: 4 applied, 0 dropped, 0 flagged; version
+                bumped to 0.1.1'
+      - generic [ref=e26]:
+        - complementary [ref=e27]:
+          - paragraph [ref=e28]: Workflows
+          - button "order-fulfillment-workflow" [ref=e638] [cursor=pointer]
+        - generic [ref=e32]:
+          - generic [ref=e33]:
+            - button "editor" [ref=e34] [cursor=pointer]
+            - button "preview" [ref=e35] [cursor=pointer]
+            - button "diagram" [ref=e36] [cursor=pointer]
+          - generic [ref=e41]:
+            - generic [ref=e980]:
+              - generic [ref=e981]: '1'
+              - generic [ref=e982]: '2'
+              - generic [ref=e983]: '3'
+              - generic [ref=e984]: '4'
+              - generic [ref=e985]: '5'
+              - generic [ref=e986]: '6'
+              - generic [ref=e987]: '7'
+              - generic [ref=e988]: '8'
+              - generic [ref=e989]: '9'
+              - generic [ref=e990]: '10'
+              - generic [ref=e991]: '11'
+              - generic [ref=e992]: '12'
+              - generic [ref=e993]: '13'
+              - generic [ref=e994]: '14'
+              - generic [ref=e995]: '15'
+              - generic [ref=e996]: '16'
+              - generic [ref=e997]: '17'
+              - generic [ref=e998]: '18'
+              - generic [ref=e999]: '19'
+              - generic [ref=e1000]: '20'
+              - generic [ref=e1001]: '21'
+              - generic [ref=e1002]: '22'
+              - generic [ref=e1003]: '23'
+              - generic [ref=e1004]: '24'
+              - generic [ref=e1005]: '25'
+              - generic [ref=e1006]: '26'
+              - generic [ref=e1007]: '27'
+              - generic [ref=e1008]: '28'
+              - generic [ref=e1009]: '29'
+              - generic [ref=e1010]: '30'
+              - generic [ref=e1011]: '31'
+              - generic [ref=e1012]: '32'
+              - generic [ref=e1013]: '33'
+              - generic [ref=e1014]: '34'
+              - generic [ref=e1015]: '35'
+              - generic [ref=e1016]: '36'
+              - generic [ref=e1017]: '37'
+              - generic [ref=e1018]: '38'
+              - generic [ref=e1019]: '39'
+              - generic [ref=e1020]: '40'
+              - generic [ref=e1021]: '41'
+              - generic [ref=e1022]: '42'
+              - generic [ref=e1023]: '43'
+              - generic [ref=e1024]: '44'
+              - generic [ref=e1025]: '45'
+              - generic [ref=e1026]: '46'
+              - generic [ref=e1027]: '47'
+              - generic [ref=e1028]: '48'
+              - generic [ref=e1029]: '49'
+              - generic [ref=e1030]: '50'
+              - generic [ref=e1031]: '51'
+              - generic [ref=e1032]: '52'
+              - generic [ref=e1033]: '53'
+              - generic [ref=e1034]: '54'
+              - generic [ref=e1035]: '55'
+              - generic [ref=e1036]: '56'
+              - generic [ref=e1037]: '57'
+              - generic [ref=e1038]: '58'
+              - generic [ref=e1039]: '59'
+              - generic [ref=e1040]: '60'
+              - generic [ref=e1041]: '61'
+              - generic [ref=e1042]: '62'
+              - generic [ref=e1043]: '63'
+              - generic [ref=e1044]: '64'
+              - generic [ref=e1045]: '65'
+              - generic [ref=e1046]: '66'
+              - generic [ref=e1047]: '67'
+              - generic [ref=e1048]: '68'
+              - generic [ref=e1049]: '69'
+              - generic [ref=e1050]: '70'
+              - generic [ref=e1051]: '71'
+              - generic [ref=e1052]: '72'
+              - generic [ref=e1053]: '73'
+              - generic [ref=e1054]: '74'
+              - generic [ref=e1055]: '75'
+              - generic [ref=e1056]: '76'
+              - generic [ref=e1057]: '77'
+              - generic [ref=e1058]: '78'
+              - generic [ref=e1059]: '79'
+              - generic [ref=e1060]: '80'
+              - generic [ref=e1061]: '81'
+              - generic [ref=e1062]: '82'
+              - generic [ref=e1063]: '83'
+              - generic [ref=e1064]: '84'
+              - generic [ref=e1065]: '85'
+              - generic [ref=e1066]: '86'
+              - generic [ref=e1067]: '87'
+              - generic [ref=e1068]: '88'
+              - generic [ref=e1069]: '89'
+              - generic [ref=e1070]: '90'
+              - generic [ref=e1071]: '91'
+              - generic [ref=e1072]: '92'
+              - generic [ref=e1073]: '93'
+              - generic [ref=e1074]: '94'
+              - generic [ref=e1075]: '95'
+              - generic [ref=e1076]: '96'
+              - generic [ref=e1077]: '97'
+              - generic [ref=e1078]: '98'
+              - generic [ref=e1079]: '99'
+              - generic [ref=e1080]: '100'
+              - generic [ref=e1081]: '101'
+              - generic [ref=e1082]: '102'
+              - generic [ref=e1083]: '103'
+              - generic [ref=e1084]: '104'
+              - generic [ref=e1085]: '105'
+              - generic [ref=e1086]: '106'
+              - generic [ref=e1087]: '107'
+              - generic [ref=e1088]: '108'
+              - generic [ref=e1089]: '109'
+              - generic [ref=e1090]: '110'
+              - generic [ref=e1091]: '111'
+              - generic [ref=e1092]: '112'
+              - generic [ref=e1093]: '113'
+              - generic [ref=e1094]: '114'
+              - generic [ref=e1095]: '115'
+              - generic [ref=e1096]: '116'
+              - generic [ref=e1097]: '117'
+              - generic [ref=e1098]: '118'
+              - generic [ref=e1099]: '119'
+              - generic [ref=e1100]: '120'
+              - generic [ref=e1101]: '121'
+              - generic [ref=e1102]: '122'
+              - generic [ref=e1103]: '123'
+              - generic [ref=e1104]: '124'
+            - textbox [ref=e112]:
+              - generic [ref=e113]: '# Order Fulfillment Workflow'
+              - generic [ref=e765]: <!--
+              - generic [ref=e766]: 'workflow-compiler specification (v1) — slug:
+                  order-fulfillment-workflow'
+              - generic [ref=e767]: This file is a projection of the structured spec.
+                  Edit it freely, then run
+              - generic [ref=e768]: '`workflow-compiler validate <project-id>` to
+                  fold your edits back in.'
+              - generic [ref=e769]: Lines you add are recorded as human-provided.
+                  Keep the `[id]` markers on
+              - generic [ref=e770]: existing entries so your edits update the right
+                  element.
+              - generic [ref=e771]: -->
+              - generic [ref=e773]: '## Purpose'
+              - generic [ref=e774]: This workflow describes how the company fulfills
+                  a customer order from submission through delivery, including payment,
+                  inventory, shipping, and failure handling.
+              - generic [ref=e776]: '## Metadata'
+              - generic [ref=e777]: '- domain:'
+              - generic [ref=e778]: '- owner: Fulfillment Operations Team'
+              - generic [ref=e779]: '- version: 0.1.2'
+              - generic [ref=e780]: '- actors: Customer, Warehouse'
+              - generic [ref=e781]: '- systems: Online Store, Payment Gateway, Warehouse
+                  Management System, Carrier API, Email Service'
+              - generic [ref=e782]: '- triggers: Customer submits an order through
+                  the online store'
+              - generic [ref=e783]: '- start states: Order received'
+              - generic [ref=e784]: '- end states: Order delivered, Order cancelled,
+                  Order failed'
+              - generic [ref=e785]: '- tags:'
+              - generic [ref=e787]: '## Inputs'
+              - generic [ref=e788]: '- Order submission through online store'
+              - generic [ref=e790]: '## Outputs'
+              - generic [ref=e791]: '- Order confirmation to customer'
+              - generic [ref=e792]: '- Inventory reservation status'
+              - generic [ref=e793]: '- Shipment creation status'
+              - generic [ref=e794]: '- Order delivery status'
+              - generic [ref=e795]: '- Cancellation notification to customer'
+              - generic [ref=e796]: '- Failure notification to customer'
+              - generic [ref=e798]: '## Business Rules'
+              - generic [ref=e799]: '- Orders must be shipped within 24 hours of payment
+                  confirmation'
+              - generic [ref=e800]:
+                - text: '- Partial shipments are not allowed — an order ships only
+                    when every item is available'
+                - generic [ref=e801]: '[human]'
+              - generic [ref=e802]:
+                - text: '- Gift wrapping is available on request for orders under
+                    10 kg'
+                - generic [ref=e803]: '[human]'
+              - generic [ref=e805]: '## API Interfaces'
+              - generic [ref=e806]: '- Payment Gateway (validate payment)'
+              - generic [ref=e807]: '- Warehouse Management System (reserve inventory,
+                  pick and pack)'
+              - generic [ref=e808]: '- Carrier API (create shipment)'
+              - generic [ref=e810]: '## Systems Involved'
+              - generic [ref=e811]: '- Online Store'
+              - generic [ref=e812]: '- Payment Gateway'
+              - generic [ref=e813]: '- Warehouse Management System'
+              - generic [ref=e814]: '- Carrier API'
+              - generic [ref=e815]: '- Email Service'
+              - generic [ref=e817]: '## Timers and SLAs'
+              - generic [ref=e818]: '- 24 hours for shipment after payment confirmation'
+              - generic [ref=e820]: '## Retries'
+              - generic [ref=e821]:
+                - text: '- Up to 5 retries for shipment creation failure'
+                - generic [ref=e822]: '[human]'
+              - generic [ref=e823]: '- up to 3 times'
+              - generic [ref=e825]: '## Activities'
+              - generic [ref=e826]:
+                - text: '-'
+                - generic [ref=e827]: '[a1]'
+                - text: Validate order and payment
+              - generic [ref=e828]:
+                - text: '-'
+                - generic [ref=e829]: '[a2]'
+                - text: Reserve inventory
+                - generic [ref=e830]: '— parallel: g1'
+              - generic [ref=e831]:
+                - text: '-'
+                - generic [ref=e832]: '[a3]'
+                - text: Send order confirmation
+                - generic [ref=e833]: '— parallel: g1'
+              - generic [ref=e834]:
+                - text: '-'
+                - generic [ref=e835]: '[a4]'
+                - text: Notify warehouse to begin picking
+                - generic [ref=e836]: '— parallel: g1'
+              - generic [ref=e837]:
+                - text: '-'
+                - generic [ref=e838]: '[a5]'
+                - text: Pick and pack items
+              - generic [ref=e839]:
+                - text: '-'
+                - generic [ref=e840]: '[a6]'
+                - text: Create shipment via Carrier API
+              - generic [ref=e841]:
+                - text: '-'
+                - generic [ref=e842]: '[a7]'
+                - text: Ship order
+              - generic [ref=e843]:
+                - text: '-'
+                - generic [ref=e844]: '[a8]'
+                - text: Release reserved inventory
+              - generic [ref=e845]:
+                - text: '-'
+                - generic [ref=e846]: '[a9]'
+                - text: Obtain manager approval for orders above $1,000
+              - generic [ref=e847]:
+                - text: '-'
+                - generic [ref=e848]: '[a10]'
+                - text: Notify finance team for orders above $1,000
+                - generic [ref=e849]: '[human]'
+              - generic [ref=e851]: '## Decisions'
+              - generic [ref=e852]:
+                - text: '-'
+                - generic [ref=e853]: '[d1]'
+                - text: Is payment valid?
+                - generic [ref=e854]: '— after: a1; yes: a2; no: e1'
+              - generic [ref=e855]:
+                - text: '-'
+                - generic [ref=e856]: '[d2]'
+                - text: Did shipment creation fail after retries?
+                - generic [ref=e857]: '— after: a6; yes: a8; no: a7'
+              - generic [ref=e858]:
+                - text: '-'
+                - generic [ref=e859]: '[d3]'
+                - text: Is order value above $1,000?
+                - generic [ref=e860]: '— after: a1; yes: a9; no: a2'
+              - generic [ref=e862]: '## Exceptions'
+              - generic [ref=e863]:
+                - text: '-'
+                - generic [ref=e864]: '[e1]'
+                - text: Payment Declined
+                - generic [ref=e865]: '— raised by: a1'
+              - generic [ref=e866]:
+                - text: '-'
+                - generic [ref=e867]: '[e2]'
+                - text: Shipment Creation Failed
+                - generic [ref=e868]: '— raised by: a6'
+              - generic [ref=e869]:
+                - text: '-'
+                - generic [ref=e870]: '[e3]'
+                - text: SLA-breach alert
+                - generic [ref=e871]: '— raised by: a6'
+              - generic [ref=e873]: '## Compensations'
+              - generic [ref=e874]:
+                - text: '-'
+                - generic [ref=e875]: '[c1]'
+                - text: Release Inventory
+                - generic [ref=e876]: '— compensates: a2'
+              - generic [ref=e878]: '## Events'
+              - generic [ref=e879]:
+                - text: '-'
+                - generic [ref=e880]: '[ev1]'
+                - text: Order Submitted
+                - generic [ref=e881]: '— kind: trigger; emitted by: start'
+              - generic [ref=e882]:
+                - text: '-'
+                - generic [ref=e883]: '[ev2]'
+                - text: Order Confirmed
+                - generic [ref=e884]: '— kind: output_emit; emitted by: a3'
+              - generic [ref=e885]:
+                - text: '-'
+                - generic [ref=e886]: '[ev3]'
+                - text: Shipment Created
+                - generic [ref=e887]: '— kind: output_emit; emitted by: a6'
+              - generic [ref=e888]:
+                - text: '-'
+                - generic [ref=e889]: '[ev4]'
+                - text: Order Delivered
+                - generic [ref=e890]: '— kind: output_emit; emitted by: a7'
+              - generic [ref=e891]:
+                - text: '-'
+                - generic [ref=e892]: '[ev5]'
+                - text: Order Cancelled
+                - generic [ref=e893]: '— kind: output_emit; emitted by: e1'
+              - generic [ref=e894]:
+                - text: '-'
+                - generic [ref=e895]: '[ev6]'
+                - text: Order Failed
+                - generic [ref=e896]: '— kind: output_emit; emitted by: e2'
+              - generic [ref=e898]: '## State Transitions'
+              - generic [ref=e899]: '- Order received -> Payment Validation (trigger:
+                  Order submitted)'
+              - generic [ref=e900]: '- Payment Validation -> Inventory Reservation
+                  (trigger: Payment valid)'
+              - generic [ref=e901]: '- Payment Validation -> Order Cancelled (trigger:
+                  Payment declined)'
+              - generic [ref=e902]: '- Inventory Reservation -> Picking and Packing
+                  (trigger: Inventory reserved)'
+              - generic [ref=e903]: '- Picking and Packing -> Shipment Creation (trigger:
+                  Items packed)'
+              - generic [ref=e904]: '- Shipment Creation -> Order Shipped (trigger:
+                  Shipment created)'
+              - generic [ref=e905]: '- Shipment Creation -> Order Failed (trigger:
+                  Shipment creation failed)'
+              - generic [ref=e907]: '## Assumptions'
+              - generic [ref=e908]: <!-- none -->
+              - generic [ref=e910]: '## Ambiguities'
+              - generic [ref=e911]:
+                - text: '- The specification mentions ''up to 5 retries'' for shipment
+                    creation, but the source document states ''up to 3 times''. This
+                    contradiction needs resolution'
+                - generic [ref=e912]: '[inferred]'
+              - generic [ref=e914]: '## Suggested Edits'
+              - generic [ref=e915]: <!-- none -->
+              - generic [ref=e917]: '## Open Questions'
+              - generic [ref=e918]:
+                - text: '-'
+                - generic [ref=e919]: '[x]'
+                - text: (R2b-input-names) Provide snake_case names for these inputs
+                    (e.g. customerId -> customer_id).
+              - generic [ref=e920]: 'Answer: Order submission through online store
+                  -> order_submission'
+              - generic [ref=e921]:
+                - text: '-'
+                - generic [ref=e922]: '[x]'
+                - text: (R4-decisions) Route the 'no' branch of d3 in this spec's
+                    Decisions section, e.g. `- [d3] Is order value above $1,000?
+                - generic [ref=e923]:
+                  - text: —
+                  - generic [ref=e924]: 'after:'
+                  - text: a1;
+                  - generic [ref=e925]: 'no:'
+                  - text: 'e1`. Declared exceptions: e1 (Payment Declined), e2 (Shipment
+                      Creation Failed), e3 (SLA-breach alert). A ''no'' branch may
+                      target an exception id, an activity id, or a terminal token
+                      (end, rejected, failed, completed). You can also answer here,
+                      one pair per line, as `d3 -> e1` — prose is not applied.'
+              - generic [ref=e926]: 'Answer: Routed in the Decisions section: d3 yes
+                  -> a9, no -> a2'
+              - generic [ref=e927]:
+                - text: '-'
+                - generic [ref=e928]: '[x]'
+                - text: (R9-state-transitions) Confirm these state transitions are
+                    descriptive only (they will be ignored by code generation).
+              - generic [ref=e929]: 'Answer: Confirmed — descriptive only'
+              - generic [ref=e931]: '## Cross-Workflow Dependencies'
+              - generic [ref=e932]: <!-- none -->
+              - generic [ref=e934]: '## Triggers'
+              - generic [ref=e935]: <!-- none -->
+        - complementary [ref=e196]:
+          - generic [ref=e197]:
+            - heading "Findings" [level=3] [ref=e198]
+            - paragraph [ref=e937]: No findings — spec looks clean.
+          - generic [ref=e237]:
+            - heading "Open questions 3" [level=3] [ref=e238]:
+              - text: Open questions
+              - generic [ref=e239]: '3'
+            - list [ref=e240]:
+              - listitem [ref=e938]:
+                - generic [ref=e939]:
+                  - checkbox [checked] [ref=e940]
+                  - generic [ref=e941]: R2b-input-namesProvide snake_case names for
+                      these inputs (e.g. customerId -> customer_id).
+                - textbox "Answer…" [ref=e942]: Order submission through online store
+                    -> order_submission
+              - listitem [ref=e943]:
+                - generic [ref=e944]:
+                  - checkbox [checked] [ref=e945]
+                  - generic [ref=e946]: 'R4-decisionsRoute the ''no'' branch of d3
+                      in this spec''s Decisions section, e.g. `- [d3] Is order value
+                      above $1,000? — after: a1; no: e1`. Declared exceptions: e1
+                      (Payment Declined), e2 (Shipment Creation Failed), e3 (SLA-breach
+                      alert). A ''no'' branch may target an exception id, an activity
+                      id, or a terminal token (end, rejected, failed, completed).
+                      You can also answer here, one pair per line, as `d3 -> e1` —
+                      prose is not applied.'
+                - textbox "Answer…" [ref=e947]: 'Routed in the Decisions section:
+                    d3 yes -> a9, no -> a2'
+              - listitem [ref=e948]:
+                - generic [ref=e949]:
+                  - checkbox [checked] [ref=e950]
+                  - generic [ref=e951]: R9-state-transitionsConfirm these state transitions
+                      are descriptive only (they will be ignored by code generation).
+                - textbox "Answer…" [ref=e952]: Confirmed — descriptive only
+          - generic [ref=e256]:
+            - heading "Events 6" [level=3] [ref=e257]:
+              - text: Events
+              - generic [ref=e258]: '6'
+            - list [ref=e259]:
+              - listitem [ref=e263]:
+                - generic [ref=e264]: ev1 Order Submitted
+                - combobox [ref=e265] [cursor=pointer]:
+                  - option "trigger (starts workflow)" [selected]
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)"
+              - listitem [ref=e266]:
+                - generic [ref=e267]: ev2 Order Confirmed
+                - combobox [ref=e268] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e269]:
+                - generic [ref=e270]: ev3 Shipment Created
+                - combobox [ref=e271] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e272]:
+                - generic [ref=e273]: ev4 Order Delivered
+                - combobox [ref=e274] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e275]:
+                - generic [ref=e276]: ev5 Order Cancelled
+                - combobox [ref=e277] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e953]:
+                - generic [ref=e954]: ev6 Order Failed
+                - combobox [ref=e955] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+            - paragraph [ref=e278]:
+              - code [ref=e279]: signal_wait
+              - text: makes a wait a bounded condition instead of a hang.
+          - generic [ref=e444]:
+            - heading "Removed by validate 1" [level=3] [ref=e956]:
+              - text: Removed by validate
+              - generic [ref=e446]: '1'
+            - paragraph [ref=e447]: The validate pass removed these lines. If one
+                was correct, re-add it — a re-added line is recorded as human-provided
+                and sticks.
+            - list [ref=e448]:
+              - listitem [ref=e957]:
+                - code [ref=e958]: '- version: 0.1.1'
+                - button "Re-add" [ref=e959] [cursor=pointer]
+          - generic [ref=e280]:
+            - paragraph [ref=e281]: Approve overrides
+            - generic [ref=e282]:
+              - checkbox "Accept unanswered required questions" [ref=e283]
+              - text: Accept unanswered required questions
+            - generic [ref=e284]:
+              - checkbox "Allow unconfirmed dependencies" [ref=e285]
+              - text: Allow unconfirmed dependencies
+          - paragraph [ref=e286]: The Diagramview shows this workflow's graph as of
+              the last validate; run Classify phases (CVPA) there to color it. Generated
+              code appears in Results after approval.
+  - alert [ref=e287]

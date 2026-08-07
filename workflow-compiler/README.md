@@ -58,12 +58,15 @@ older default Python will fail to install the package.
 
 ## Install
 
+Installing and configuring are two separate steps. `pip` cannot do the second one for you — a
+wheel never runs code at install time — so configuration is a command you type.
+
+**1. Get the code, in a Python 3.12+ virtual environment.**
+
 ```bash
 git clone https://github.com/oktopuslinky/order-workflows-2.0.git
 cd order-workflows-2.0
 ```
-
-Create and activate a virtual environment with Python 3.12+:
 
 ```bash
 # macOS / Linux
@@ -77,41 +80,45 @@ py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
 ```
 
-Then install the package with dev tooling:
+**2. Install the package.**
 
 ```bash
-pip install -e ".[dev]"
+pip install .
 ```
 
-This installs the package, its dependencies, and the `workflow-compiler` console script.
-Verify with:
+This installs the dependencies and the `workflow-compiler` console script. Verify with:
 
 ```bash
 workflow-compiler --version
 ```
 
-## Configure
+**3. Configure it.**
 
-Copy `.env.example` to `.env` (`cp .env.example .env`; PowerShell: `copy .env.example .env`) and
-configure the LLM — only needed for the LLM-backed stages; `--provider mock` runs fully offline
-with no key:
-
-```dotenv
-# NVIDIA-hosted Nemotron (the default provider). Get a key at build.nvidia.com.
-NVIDIA_API_KEY=nvapi-xxxxxxxx
-WORKFLOW_COMPILER_LLM_PROVIDER=nemotron
-WORKFLOW_COMPILER_LLM_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
-
-# Optional: local eGPU gateway (session auth — register at the gateway's /ui/).
-# Set WORKFLOW_COMPILER_LLM_PROVIDER=local (or local-fallback for eGPU-primary
-# with automatic Nemotron fallback).
-LLM_API_BASE=http://192.168.1.184:8080/v1
-LLM_GATEWAY_EMAIL=you@example.com
-LLM_GATEWAY_PASSWORD=your-password
+```bash
+workflow-compiler init
 ```
 
-State is persisted as JSON under `WORKFLOW_COMPILER_STATE_STORE_PATH` (default `.workflow_state/`).
-See `.env.example` for every setting.
+`init` asks which LLM provider to use, asks for the credentials that provider needs, and writes
+a `.env` file. Pick `mock` to run fully offline with no API key.
+
+| Provider | Needs | Use it for |
+|---|---|---|
+| `nemotron` | an NVIDIA API key ([build.nvidia.com](https://build.nvidia.com)) | the default — NVIDIA-hosted models |
+| `local` | a reachable eGPU gateway + login | your own gateway only |
+| `local-fallback` | both of the above | gateway first, Nemotron when it is unreachable |
+| `mock` | nothing | offline smoke tests and demos |
+
+For scripts and containers, `init` also runs without questions:
+
+```bash
+workflow-compiler init --provider mock --yes
+workflow-compiler init --provider nemotron --nvidia-api-key "$NVIDIA_API_KEY" --yes
+```
+
+`--force` replaces an existing `.env`; `--env-file` writes somewhere other than `./.env`.
+Everything `init` writes is plain text you can edit afterwards, and `.env.example` documents the
+full setting list — including `WORKFLOW_COMPILER_STATE_STORE_PATH` (default `.workflow_state/`),
+where compiled state is persisted as JSON.
 
 ## Use — CLI
 
@@ -126,9 +133,9 @@ workflow-compiler validate <project-id> --spec-dir ./specs   # fold edits back i
 workflow-compiler approve-spec <project-id> --spec-dir ./specs   # compile through to Temporal code
 ```
 
-Generated bundles land under `./generated/<project-id>/<slug>/`. Other commands: `edit` (apply an
-edit-request document to a compiled project), `approve` / `reject` (manual override for a
-below-threshold graph), `show`, `models`. `workflow-compiler <command> --help` is the
+Generated bundles land under `./generated/<project-id>/<slug>/`. Other commands: `init` (write the
+`.env` configuration — see Install), `edit` (apply an edit-request document to a compiled project),
+`approve` / `reject` (manual override for a below-threshold graph), `show`, `models`. `workflow-compiler <command> --help` is the
 authoritative flag reference; the full command guide is in
 [`docs/HOW_IT_WORKS.md` §9.2](docs/HOW_IT_WORKS.md).
 
@@ -192,7 +199,18 @@ For the spec-centric project flow, use `ProjectCompiler` (`workflow_compiler.pro
 For tests / offline work, inject a `MockProvider` and an `InMemoryStateStore` — see
 [`docs/HOW_IT_WORKS.md` §9.1](docs/HOW_IT_WORKS.md).
 
-## Test
+## Develop
+
+Working on the compiler itself needs two things the install above deliberately leaves out:
+
+- `-e` (editable) points the install at your working tree, so a source edit takes effect without
+  reinstalling.
+- `[dev]` adds the tooling that is not part of the package — `pytest`, `ruff`, `mypy`, and the
+  fixtures used by the test suite.
+
+```bash
+pip install -e ".[dev]"   # the quotes are required on zsh
+```
 
 ```bash
 pytest                 # full suite (unit + integration), no network access required

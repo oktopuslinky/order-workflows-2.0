@@ -1,0 +1,1486 @@
+{
+  "workflow_id": "7ca08ef9-6053-4521-8e04-f2171a5fac7e",
+  "document_text": "Order Settlement Workflow\n\n<!-- IDEAL-CONDITIONS REFERENCE DOCUMENT ---------------------------------- This document is deliberately written so that every pipeline stage (discovery → facts → structure → graph → CVPA → Temporal design → Temporal code) has exactly what it needs and nothing that confuses it. See the \"Temporal-alignment notes\" section at the bottom for where (and why) it intentionally deviates from docs/DOCUMENTFORMATGUIDE.md.\n\nDesign goals that map 1:1 onto a Temporal workflow:\nONE workflow, ONE start, ONE end  (no multi-workflow / multi-start confusion)\nActivity names are stable PascalCase phrases, reused verbatim in the\nProcess, API Interfaces, Retries, and Compensation sections.\nEvery decision states BOTH branches; the \"yes\" branch is the happy path and\nthe \"no\" branch routes to a NAMED exception (never back to the same step).\n\"In parallel\" is used ONLY for genuinely independent activities that share\nno data dependency and are not gated by a decision.\nSaga compensations use the exact \"<Comp> compensates <Activity>\" phrasing.\nThe one human/external wait is modelled as a signal AND paired with a timer\nso the Temporal design can bound it (no wait-forever signal gate).\nNO free-form \"state transitions\" (\"X transitions to Y\") are written in the\nProcess — those create a disconnected state subgraph that the design LLM mis-reads. Lifecycle states live only in the Metadata/States section. -->\n\nMetadata\n\n| Field   | Value                                   | |---------|-----------------------------------------| | Domain  | Commerce / Order Management             | | Owner   | Settlement Platform Team                | | Version | 1.0                                     | | Tags    | saga, compensation, payments, signal    |\n\nPurpose\n\nThis workflow settles a confirmed order: it validates the order, reserves inventory, charges the customer, waits for warehouse shipping confirmation, and finalises the sale. If any step after payment fails, it compensates the completed steps in reverse so the customer is never charged for an order that cannot ship.\n\nTrigger\n\nThe workflow starts when an order is confirmed and an order.settle request is received by the Settlement Service.\n\nActors\n\nCustomer\nWarehouse Operator\nSettlement Operations\n\nSystems\n\nSettlement Service\nInventory Service\nPayment Gateway\nNotification Service\nAnalytics Pipeline\n\nInputs and Outputs\n\nInputs (these become the workflow input fields)\norder_id — identifier of the confirmed order to settle\ncustomer_id — identifier of the paying customer\namount — order total to charge\ncurrency — ISO currency code for the charge\n\nOutputs\nsettlement_id — identifier of the completed settlement\npayment_id — identifier of the captured payment\nsettlementstatus — settled, rejected, or rolledback\n\nProcess\n\nThe Settlement Service validates the order using order_id and returns\nwhether the order is settleable.\nIf the order is not settleable, the workflow raises OrderNotSettleable\nand rejects the settlement; if the order is settleable, the workflow continues.\nThe Inventory Service reserves inventory for order_id and returns a\nreservation_id.\nThe Payment Gateway charges payment for customer_id for amount in\ncurrency and returns a payment_id.\nIf the charge is declined, the workflow raises PaymentDeclined; if the\ncharge succeeds, the workflow continues.\nIn parallel, the Notification Service notifies the customer of the pending\nshipment and the Analytics Pipeline records a settlement event. These two activities are independent and share no data.\nThe workflow waits for shipping confirmation — a shipping.confirmed\nsignal sent by the Warehouse Operator — for up to the shipping-confirmation deadline.\nThe Settlement Service finalises the settlement for order_id and returns\na settlement_id.\n\nBusiness Rules\n\nBR-1: An order may only be settled when it is in the confirmed state.\nBR-2: Inventory must be reserved before payment is charged.\nBR-3: Payment must be captured before shipping confirmation is awaited.\nBR-4: If shipping is not confirmed before the deadline, the settlement is\nrolled back.\n\nTimers and SLAs\n\nOrder validation must complete within 5 seconds.\nCharge payment must complete within 30 seconds.\nShipping confirmation must arrive within 24 hours; otherwise the workflow\nrolls back the settlement.\n\nAPI Interfaces\n\n| System               | Method | Endpoint / Action          | Purpose                                   | |----------------------|--------|----------------------------|-------------------------------------------| | Settlement Service   | POST   | /settlement/validate     | Validate the order (order_id)           | | Inventory Service    | POST   | /inventory/reserve       | Reserve inventory (order_id)            | | Payment Gateway      | POST   | /payments/charge         | Charge payment (customer_id, amount)  | | Notification Service | POST   | /notify/customer         | Notify the customer of pending shipment   | | Analytics Pipeline   | POST   | /analytics/event         | Record a settlement event                 | | Settlement Service   | POST   | /settlement/finalise     | Finalise the settlement (order_id)      |\n\nExceptions and Error Handling\n\nOrderNotSettleable: the order is not in a settleable state → reject the\nsettlement with reason ORDERNOTSETTLEABLE and end the workflow.\nPaymentDeclined: the Payment Gateway declines the charge → roll back the\nsettlement (release inventory) and end the workflow.\nShippingTimeout: shipping confirmation does not arrive within 24 hours →\nroll back the settlement (refund payment, release inventory).\n\nRetries\n\nReserve inventory: retry up to 3 times with exponential backoff\nstarting at 2 seconds.\nCharge payment: retry up to 2 times with a fixed 5-second delay;\ndo not retry on a PaymentDeclined error.\nNotify customer: retry up to 5 times with exponential backoff; failure\nis non-fatal.\n\nCompensation and Rollback\n\nRelease inventory compensates Reserve inventory — return the reserved\nstock if the settlement is rolled back after reservation.\nRefund payment compensates Charge payment — reverse the captured charge\nif the settlement is rolled back after payment.\n\n---\n\nTemporal-alignment notes (deviations from DOCUMENTFORMATGUIDE.md and why)\n\nThese are written for the human author, not the pipeline. They explain the choices that make this document produce clean Temporal code:\n\nNo ## States \"transition\" sentences in the Process. The format guide\nencourages \"The order transitions from received to cancelled.\" Those become STATE_TRANSITION facts and the graph builder turns each into a separate state_* node, producing a disconnected state subgraph (with its own \"Start\"-labelled node) alongside the real flow. The Temporal design LLM then sees two parallel structures and can mis-wire the plan. Deviation: lifecycle states are mentioned only as prose in BR-1; no X -> Y transition lines are written. (We also omit the ## States start/end-state list, which only feeds discovery metadata and is not needed for the code.)\n\nEvery decision's \"no\" branch points at a distinct named exception, never\nback at the same activity. A decision whose yes/no targets are identical is a degenerate decision the pipeline now repairs, but writing it correctly avoids the repair entirely.\n\n\"In parallel\" is reserved for truly independent work (NotifyCustomer +\nRecordSettlementEvent). Activities with data dependencies (Reserve → Charge → Finalise) are written as sequential numbered steps so they are never folded into a fork.\n\nThe single human/external wait is BOTH a signal and a timer. Step 7 names\na shipping.confirmed signal and the Timers section gives it a 24-hour deadline, so the design can model a bounded wait_condition(..., timeout=...) instead of a signal gate that blocks forever.\n\nActivity names are reused verbatim across Process / API Interfaces /\nRetries / Compensation. This is what lets the design bind retries, timeouts, and compensations to the right activity by name (the code generator matches by normalised name).\n\nInputs are named as snakecase fields (orderid, customer_id, …) so\nthey map directly onto WorkflowInput dataclass fields and onto activity input bindings.",
+  "workflow_metadata": {
+    "name": "Order Settlement Workflow",
+    "description": "This workflow settles a confirmed order by validating it, reserving inventory, charging the customer, awaiting shipping confirmation, and finalising the sale, with rollback capabilities for failed steps.",
+    "purpose": "This workflow settles a confirmed order by validating it, reserving inventory, charging the customer, awaiting shipping confirmation, and finalising the sale, with rollback capabilities for failed steps.",
+    "actors": [
+      "Customer",
+      "Warehouse Operator",
+      "Settlement Operations"
+    ],
+    "systems": [
+      "Settlement Service",
+      "Inventory Service",
+      "Payment Gateway",
+      "Notification Service",
+      "Analytics Pipeline"
+    ],
+    "trigger_events": [
+      "Order confirmed and order.settle request received by Settlement Service"
+    ],
+    "start_states": [
+      "confirmed"
+    ],
+    "end_states": [
+      "settled",
+      "rejected",
+      "rolledback"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "order_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "customer_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-3",
+        "statement": "amount",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-4",
+        "statement": "currency",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "settlement_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "payment_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-3",
+        "statement": "settlementstatus",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Validate Order",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Reserve Inventory",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Charge Payment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-4",
+        "statement": "Notify Customer",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-5",
+        "statement": "Record Settlement Event",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-6",
+        "statement": "Wait for Shipping Confirmation",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-7",
+        "statement": "Finalise Settlement",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Is Order Settleable?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-2",
+        "statement": "Is Payment Successful?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-1: An order may only be settled when it is in the confirmed state",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-2: Inventory must be reserved before payment is charged",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-3: Payment must be captured before shipping confirmation is awaited",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-4",
+        "statement": "BR-4: If shipping is not confirmed before the deadline, the settlement is rolled back",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "shipping.confirmed",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "Settlement Service /settlement/validate",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "Inventory Service /inventory/reserve",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-3",
+        "statement": "Payment Gateway /payments/charge",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-4",
+        "statement": "Notification Service /notify/customer",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-5",
+        "statement": "Analytics Pipeline /analytics/event",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-6",
+        "statement": "Settlement Service /settlement/finalise",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Settlement Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Inventory Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Payment Gateway",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-4",
+        "statement": "Notification Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-5",
+        "statement": "Analytics Pipeline",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-6",
+        "statement": "Warehouse Operator",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "ORDERNOTSETTLEABLE",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-2",
+        "statement": "PaymentDeclined",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-3",
+        "statement": "ShippingTimeout",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-1",
+        "statement": "Order validation: 5 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-2",
+        "statement": "Charge payment: 30 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-3",
+        "statement": "Shipping confirmation: 24 hours",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Reserve inventory: up to 3 times with exponential backoff starting at 2 seconds",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "Charge payment: up to 2 times with a fixed 5-second delay (excluding PaymentDeclined)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-3",
+        "statement": "Notify customer: up to 5 times with exponential backoff (non-fatal)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Release Inventory compensates Reserve Inventory",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-2",
+        "statement": "Refund Payment compensates Charge Payment",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Validate Order",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Reserve Inventory",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Charge Payment",
+          "parallel_group": null
+        },
+        {
+          "id": "a4",
+          "name": "Notify Customer",
+          "parallel_group": null
+        },
+        {
+          "id": "a5",
+          "name": "Record Settlement Event",
+          "parallel_group": "g1"
+        },
+        {
+          "id": "a6",
+          "name": "Wait for Shipping Confirmation",
+          "parallel_group": null
+        },
+        {
+          "id": "a7",
+          "name": "Finalise Settlement",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Is Order Settleable?",
+          "after": "a1",
+          "yes_target": "a2",
+          "no_target": "e1"
+        },
+        {
+          "id": "d2",
+          "question": "Is Payment Successful?",
+          "after": "a3",
+          "yes_target": "a4",
+          "no_target": "e2"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "ORDERNOTSETTLEABLE",
+          "raised_by": null
+        },
+        {
+          "id": "e2",
+          "reason": "PaymentDeclined",
+          "raised_by": "a3"
+        },
+        {
+          "id": "e3",
+          "reason": "ShippingTimeout",
+          "raised_by": "a6"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Release Inventory",
+          "compensates": "a2"
+        },
+        {
+          "id": "c2",
+          "name": "Refund Payment",
+          "compensates": "a3"
+        }
+      ],
+      "events": [
+        {
+          "id": "ev1",
+          "name": "shipping.confirmed",
+          "emitted_by": "a6"
+        }
+      ],
+      "transitions": []
+    }
+  },
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Validate Order",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Reserve Inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Charge Payment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Notify Customer",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_5",
+        "label": "Record Settlement Event",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_6",
+        "label": "Wait for Shipping Confirmation",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_7",
+        "label": "Finalise Settlement",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Is Order Settleable?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_2",
+        "label": "Is Payment Successful?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "ORDERNOTSETTLEABLE",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "PaymentDeclined",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_3",
+        "label": "ShippingTimeout",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Release Inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_2",
+        "label": "Refund Payment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "shipping.confirmed",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "activity_3",
+        "target": "decision_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e7",
+        "source": "decision_2",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e8",
+        "source": "decision_2",
+        "target": "exception_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e9",
+        "source": "activity_4",
+        "target": "activity_5",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "activity_5",
+        "target": "activity_6",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "activity_6",
+        "target": "activity_7",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "activity_7",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "activity_3",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e14",
+        "source": "activity_6",
+        "target": "exception_3",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "activity_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "exception_2",
+        "target": "compensation_2",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e18",
+        "source": "compensation_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e19",
+        "source": "activity_6",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e20",
+        "source": "exception_3",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e21",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.95: 0 error(s), 1 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Dead-end node 'shipping.confirmed' has no outgoing edges.",
+        "location": "event_1",
+        "suggestion": "Add a transition toward an END node."
+      }
+    ],
+    "score": 0.95,
+    "health_score": 0.95,
+    "confidence": 1.0,
+    "reviewer": "auto",
+    "reviewed_at": "2026-06-30T21:32:42.047317Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Initiates the workflow, indicating intake of the process.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Represents the workflow's conclusion, triggering no further actions.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "validate",
+        "rationale": "Involves validating the order, a clear check/decision point.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "process",
+        "rationale": "Executes a core business task of reserving inventory.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "process",
+        "rationale": "Performs a transaction (charging payment), a core operation.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "activate",
+        "rationale": "Triggers a downstream notification to the customer.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_5",
+        "phase": "process",
+        "rationale": "Involves internal record-keeping of a settlement event.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "activity_6",
+        "phase": "process",
+        "rationale": "Waiting is an operational pause within the workflow's core flow.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "activity_7",
+        "phase": "process",
+        "rationale": "Finalising settlement is a core, transformative task.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Evaluates the settleability of the order, a decision gate.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_2",
+        "phase": "validate",
+        "rationale": "Assesses payment success, another critical decision point.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "capture",
+        "rationale": "Captures an exceptional event (ORDERNOTSETTLEABLE) triggering a response.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "exception_2",
+        "phase": "capture",
+        "rationale": "Triggers on a specific error (PaymentDeclined), an intake of an event.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "exception_3",
+        "phase": "capture",
+        "rationale": "Captures a timeout event (ShippingTimeout), initiating a response.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "activate",
+        "rationale": "Undoes a previous action (releasing inventory) as a corrective measure.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "compensation_2",
+        "phase": "activate",
+        "rationale": "Provides a refund, a corrective action with external impact.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "Receives an external event (shipping.confirmed), an intake point.",
+        "confidence": 0.8
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "exception_1",
+          "exception_2",
+          "exception_3",
+          "event_1"
+        ],
+        "summary": "5 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "activity_1",
+          "decision_1",
+          "decision_2"
+        ],
+        "summary": "3 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_2",
+          "activity_3",
+          "activity_5",
+          "activity_6",
+          "activity_7"
+        ],
+        "summary": "5 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "activity_4",
+          "compensation_1",
+          "compensation_2"
+        ],
+        "summary": "4 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "OrderSettlementWorkflow",
+    "task_queue": "order-settlement-queue",
+    "description": "Manages the settlement of orders from validation to finalisation.",
+    "workflow_inputs": [
+      {
+        "name": "order_id",
+        "type": "str"
+      },
+      {
+        "name": "customer_id",
+        "type": "str"
+      },
+      {
+        "name": "amount",
+        "type": "float"
+      },
+      {
+        "name": "currency",
+        "type": "str"
+      }
+    ],
+    "result_type": "str",
+    "activities": [
+      {
+        "name": "ValidateOrder",
+        "source_node_id": "activity_1",
+        "description": "Validate the order for settlement.",
+        "inputs": [],
+        "params": [],
+        "outputs": [
+          "is_settleable"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 5.0,
+        "retry_policy": null
+      },
+      {
+        "name": "ReserveInventory",
+        "source_node_id": "activity_2",
+        "description": "Reserve inventory for the order.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "inventory_reservation_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "ChargePayment",
+        "source_node_id": "activity_3",
+        "description": "Charge the customer for the order.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          },
+          {
+            "name": "amount",
+            "type": "float"
+          },
+          {
+            "name": "currency",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "payment_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 2,
+          "initial_interval_seconds": 5.0,
+          "backoff_coefficient": 1.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": [
+            "PaymentDeclined"
+          ]
+        }
+      },
+      {
+        "name": "NotifyCustomer",
+        "source_node_id": "activity_4",
+        "description": "Notify the customer of the order status.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "customer_id",
+            "type": "str"
+          },
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 5,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "RecordSettlementEvent",
+        "source_node_id": "activity_5",
+        "description": "Record the settlement event in analytics.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          },
+          {
+            "name": "payment_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      },
+      {
+        "name": "WaitForShippingConfirmation",
+        "source_node_id": "activity_6",
+        "description": "Wait for shipping confirmation.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "shipping_confirmed"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 86400.0,
+        "retry_policy": null
+      },
+      {
+        "name": "FinaliseSettlement",
+        "source_node_id": "activity_7",
+        "description": "Finalise the settlement process.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "settlement_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      }
+    ],
+    "signals": [
+      {
+        "name": "shipping.confirmed",
+        "description": "Received shipping confirmation.",
+        "payload": [
+          "order_id"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetSettlementStatus",
+        "description": "Query the current settlement status of an order.",
+        "returns": "str",
+        "state_field": "settlementstatus"
+      }
+    ],
+    "child_workflows": [],
+    "timers": [
+      {
+        "name": "ShippingConfirmationTimeout",
+        "duration_seconds": 86400.0,
+        "description": "Timeout for waiting on shipping confirmation."
+      }
+    ],
+    "compensation_activities": [
+      {
+        "name": "ReleaseInventory",
+        "compensates": "ReserveInventory",
+        "source_node_id": "compensation_1",
+        "description": "Release reserved inventory for an order.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "inventory_reservation_id",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "inventory_reservation_id",
+            "source": "step_output",
+            "ref": "ReserveInventory"
+          }
+        ],
+        "retry_policy": null
+      },
+      {
+        "name": "RefundPayment",
+        "compensates": "ChargePayment",
+        "source_node_id": "compensation_2",
+        "description": "Refund a payment for an order.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "payment_id",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "payment_id",
+            "source": "step_output",
+            "ref": "ChargePayment"
+          }
+        ],
+        "retry_policy": null
+      }
+    ],
+    "default_retry_policy": null,
+    "plan": [
+      {
+        "id": "S1",
+        "kind": "activity",
+        "description": null,
+        "ref": "ValidateOrder",
+        "bindings": [],
+        "result_name": "is_settleable",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "S2",
+        "kind": "branch",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": "is_settleable == True",
+        "lanes": [
+          [
+            {
+              "id": "S3",
+              "kind": "activity",
+              "description": null,
+              "ref": "ReserveInventory",
+              "bindings": [
+                {
+                  "param": "order_id",
+                  "source": "workflow_input",
+                  "ref": "order_id"
+                }
+              ],
+              "result_name": "inventory_reservation_id",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S4",
+              "kind": "activity",
+              "description": null,
+              "ref": "ChargePayment",
+              "bindings": [
+                {
+                  "param": "order_id",
+                  "source": "workflow_input",
+                  "ref": "order_id"
+                },
+                {
+                  "param": "amount",
+                  "source": "workflow_input",
+                  "ref": "amount"
+                },
+                {
+                  "param": "currency",
+                  "source": "workflow_input",
+                  "ref": "currency"
+                }
+              ],
+              "result_name": "payment_id",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S5",
+              "kind": "branch",
+              "description": null,
+              "ref": null,
+              "bindings": [],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": "payment_id is not None",
+              "lanes": [
+                [
+                  {
+                    "id": "S6",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "NotifyCustomer",
+                    "bindings": [
+                      {
+                        "param": "customer_id",
+                        "source": "workflow_input",
+                        "ref": "customer_id"
+                      },
+                      {
+                        "param": "order_id",
+                        "source": "workflow_input",
+                        "ref": "order_id"
+                      }
+                    ],
+                    "result_name": null,
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S7",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "RecordSettlementEvent",
+                    "bindings": [
+                      {
+                        "param": "order_id",
+                        "source": "workflow_input",
+                        "ref": "order_id"
+                      },
+                      {
+                        "param": "payment_id",
+                        "source": "step_output",
+                        "ref": "S4"
+                      }
+                    ],
+                    "result_name": null,
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S8",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "WaitForShippingConfirmation",
+                    "bindings": [
+                      {
+                        "param": "order_id",
+                        "source": "workflow_input",
+                        "ref": "order_id"
+                      }
+                    ],
+                    "result_name": "shipping_confirmed",
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S9",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "FinaliseSettlement",
+                    "bindings": [
+                      {
+                        "param": "order_id",
+                        "source": "workflow_input",
+                        "ref": "order_id"
+                      }
+                    ],
+                    "result_name": "settlement_id",
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  }
+                ],
+                []
+              ]
+            }
+          ],
+          []
+        ]
+      }
+    ]
+  },
+  "temporal_code": {
+    "target": "python",
+    "package_name": "order_settlement_workflow",
+    "files": [
+      {
+        "path": "shared.py",
+        "language": "python",
+        "content": "\"\"\"Shared dataclasses for the OrderSettlementWorkflow workflow.\n\nTemporal passes a single dataclass argument to workflows and activities so that\ninputs evolve compatibly. Refine the field types to match your real domain types.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom typing import Any\n\n\n@dataclass\nclass WorkflowInput:\n    \"\"\"Input to the OrderSettlementWorkflow workflow.\"\"\"\n\n    order_id: str = \"\"\n    customer_id: str = \"\"\n    amount: float = 0.0\n    currency: str = \"\"\n\n\n@dataclass\nclass ValidateOrderInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass ReserveInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n\n\n@dataclass\nclass ChargePaymentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n    amount: float = 0.0\n    currency: str = \"\"\n\n\n@dataclass\nclass NotifyCustomerInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    customer_id: str = \"\"\n    order_id: str = \"\"\n\n\n@dataclass\nclass RecordSettlementEventInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n    payment_id: str = \"\"\n\n\n@dataclass\nclass WaitForShippingConfirmationInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n\n\n@dataclass\nclass FinaliseSettlementInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n\n\n@dataclass\nclass ReleaseInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    inventory_reservation_id: str = \"\"\n\n\n@dataclass\nclass RefundPaymentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    payment_id: str = \"\""
+      },
+      {
+        "path": "activities.py",
+        "language": "python",
+        "content": "\"\"\"Activities for the OrderSettlementWorkflow workflow.\n\nEach activity is a thin, retryable unit of work. Replace the ``NotImplementedError``\nwith real logic; activities may use I/O, SDKs, and blocking calls freely.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom temporalio import activity\n\nfrom shared import (\n    ValidateOrderInput,\n    ReserveInventoryInput,\n    ChargePaymentInput,\n    NotifyCustomerInput,\n    RecordSettlementEventInput,\n    WaitForShippingConfirmationInput,\n    FinaliseSettlementInput,\n    ReleaseInventoryInput,\n    RefundPaymentInput,\n)\n\n\n@activity.defn(name=\"ValidateOrder\")\nasync def validate_order(arg: ValidateOrderInput) -> str:\n    \"\"\"Validate the order for settlement.\"\"\"\n    activity.logger.info(\"Running validate_order\", extra={\"input\": arg})\n    # TODO: implement validate_order. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"ReserveInventory\")\nasync def reserve_inventory(arg: ReserveInventoryInput) -> str:\n    \"\"\"Reserve inventory for the order.\"\"\"\n    activity.logger.info(\"Running reserve_inventory\", extra={\"input\": arg})\n    # TODO: implement reserve_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"ChargePayment\")\nasync def charge_payment(arg: ChargePaymentInput) -> str:\n    \"\"\"Charge the customer for the order.\"\"\"\n    activity.logger.info(\"Running charge_payment\", extra={\"input\": arg})\n    # TODO: implement charge_payment. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"NotifyCustomer\")\nasync def notify_customer(arg: NotifyCustomerInput) -> str:\n    \"\"\"Notify the customer of the order status.\"\"\"\n    activity.logger.info(\"Running notify_customer\", extra={\"input\": arg})\n    # TODO: implement notify_customer. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"RecordSettlementEvent\")\nasync def record_settlement_event(arg: RecordSettlementEventInput) -> str:\n    \"\"\"Record the settlement event in analytics.\"\"\"\n    activity.logger.info(\"Running record_settlement_event\", extra={\"input\": arg})\n    # TODO: implement record_settlement_event. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"WaitForShippingConfirmation\")\nasync def wait_for_shipping_confirmation(arg: WaitForShippingConfirmationInput) -> str:\n    \"\"\"Wait for shipping confirmation.\"\"\"\n    activity.logger.info(\"Running wait_for_shipping_confirmation\", extra={\"input\": arg})\n    # TODO: implement wait_for_shipping_confirmation. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"FinaliseSettlement\")\nasync def finalise_settlement(arg: FinaliseSettlementInput) -> str:\n    \"\"\"Finalise the settlement process.\"\"\"\n    activity.logger.info(\"Running finalise_settlement\", extra={\"input\": arg})\n    # TODO: implement finalise_settlement. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"ReleaseInventory\")\nasync def release_inventory(arg: ReleaseInventoryInput) -> str:\n    \"\"\"Release reserved inventory for an order.\"\"\"\n    activity.logger.info(\"Running release_inventory\", extra={\"input\": arg})\n    # TODO: implement release_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"RefundPayment\")\nasync def refund_payment(arg: RefundPaymentInput) -> str:\n    \"\"\"Refund a payment for an order.\"\"\"\n    activity.logger.info(\"Running refund_payment\", extra={\"input\": arg})\n    # TODO: implement refund_payment. Returns a placeholder so the bundle runs as-is.\n    return \"\""
+      },
+      {
+        "path": "workflow.py",
+        "language": "python",
+        "content": "\"\"\"The OrderSettlementWorkflow Temporal workflow.\n\nWorkflow code must be deterministic: do all I/O inside activities, and use\n``workflow.*`` helpers (``execute_activity``, ``execute_child_workflow``,\n``sleep``, signals, queries) rather than calling the outside world directly.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Callable\nfrom datetime import timedelta\nfrom typing import Any\n\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\n\nwith workflow.unsafe.imports_passed_through():\n    from activities import (\n        validate_order,\n        reserve_inventory,\n        charge_payment,\n        notify_customer,\n        record_settlement_event,\n        wait_for_shipping_confirmation,\n        finalise_settlement,\n        release_inventory,\n        refund_payment,\n    )\n    from shared import (\n        WorkflowInput,\n        ValidateOrderInput,\n        ReserveInventoryInput,\n        ChargePaymentInput,\n        NotifyCustomerInput,\n        RecordSettlementEventInput,\n        WaitForShippingConfirmationInput,\n        FinaliseSettlementInput,\n        ReleaseInventoryInput,\n        RefundPaymentInput,\n    )\n\nSHIPPING_CONFIRMATION_TIMEOUT = timedelta(seconds=86400)  # Timeout for waiting on shipping confirmation.\n\n\n@workflow.defn\nclass OrderSettlementWorkflow:\n    \"\"\"Manages the settlement of orders from validation to finalisation.\"\"\"\n\n    def __init__(self) -> None:\n        self._status: str = \"pending\"\n        self._shipping_confirmed_received: bool = False\n\n    @workflow.run\n    async def run(self, arg: WorkflowInput) -> str:\n        self._status = \"running\"\n        compensations: list[tuple[Callable[..., Any], Any]] = []\n        try:\n            workflow.logger.info(\"Running step: ValidateOrder\")\n            is_settleable = await workflow.execute_activity(\n                validate_order,\n                ValidateOrderInput(),\n                start_to_close_timeout=timedelta(seconds=5),\n            )\n            should_is_settleable_true = True  # TODO: set from a real condition: is_settleable == True\n            if should_is_settleable_true:\n                workflow.logger.info(\"Running step: ReserveInventory\")\n                inventory_reservation_id = await workflow.execute_activity(\n                    reserve_inventory,\n                    ReserveInventoryInput(order_id=arg.order_id),\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2, maximum_attempts=3),\n                )\n                compensations.append((release_inventory, ReleaseInventoryInput(inventory_reservation_id=inventory_reservation_id)))\n                workflow.logger.info(\"Running step: ChargePayment\")\n                payment_id = await workflow.execute_activity(\n                    charge_payment,\n                    ChargePaymentInput(order_id=arg.order_id, amount=arg.amount, currency=arg.currency),\n                    start_to_close_timeout=timedelta(seconds=30),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), backoff_coefficient=1, maximum_attempts=2, non_retryable_error_types=['PaymentDeclined']),\n                )\n                compensations.append((refund_payment, RefundPaymentInput(payment_id=payment_id)))\n                should_payment_id_is_not_none = True  # TODO: set from a real condition: payment_id is not None\n                if should_payment_id_is_not_none:\n                    workflow.logger.info(\"Running step: NotifyCustomer\")\n                    s6_result = await workflow.execute_activity(\n                        notify_customer,\n                        NotifyCustomerInput(customer_id=arg.customer_id, order_id=arg.order_id),\n                        start_to_close_timeout=timedelta(seconds=60),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2, maximum_attempts=5),\n                    )\n                    workflow.logger.info(\"Running step: RecordSettlementEvent\")\n                    s7_result = await workflow.execute_activity(\n                        record_settlement_event,\n                        RecordSettlementEventInput(order_id=arg.order_id, payment_id=payment_id),\n                        start_to_close_timeout=timedelta(seconds=60),\n                    )\n                    workflow.logger.info(\"Running step: WaitForShippingConfirmation\")\n                    shipping_confirmed = await workflow.execute_activity(\n                        wait_for_shipping_confirmation,\n                        WaitForShippingConfirmationInput(order_id=arg.order_id),\n                        start_to_close_timeout=timedelta(seconds=86400),\n                    )\n                    workflow.logger.info(\"Running step: FinaliseSettlement\")\n                    settlement_id = await workflow.execute_activity(\n                        finalise_settlement,\n                        FinaliseSettlementInput(order_id=arg.order_id),\n                        start_to_close_timeout=timedelta(seconds=60),\n                    )\n        except Exception:\n            for _comp_fn, _comp_arg in reversed(compensations):\n                await workflow.execute_activity(\n                    _comp_fn,\n                    _comp_arg,\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n            self._status = \"compensated\"\n            raise\n        self._status = \"completed\"\n        return self._status\n\n    @workflow.signal\n    def shipping_confirmed(self, order_id: str) -> None:\n        \"\"\"Handle the 'shipping.confirmed' signal.\"\"\"\n        self._shipping_confirmed_received = True\n\n    @workflow.query\n    def get_settlement_status(self) -> str:\n        \"\"\"Query the current settlement status of an order.\"\"\"\n        return self._status"
+      },
+      {
+        "path": "worker.py",
+        "language": "python",
+        "content": "\"\"\"Worker process for the OrderSettlementWorkflow workflow.\n\nStart a local Temporal dev server in one terminal::\n\n    temporal server start-dev\n\nThen, from inside this package directory, run the worker::\n\n    python worker.py\n\nKeep it running, then start a workflow with ``python starter.py``.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\n\nfrom temporalio import workflow\nfrom temporalio.client import Client\nfrom temporalio.worker import Worker\n\nwith workflow.unsafe.imports_passed_through():\n    from workflow import OrderSettlementWorkflow\n    from activities import (\n        validate_order,\n        reserve_inventory,\n        charge_payment,\n        notify_customer,\n        record_settlement_event,\n        wait_for_shipping_confirmation,\n        finalise_settlement,\n        release_inventory,\n        refund_payment,\n    )\n\nTASK_QUEUE = \"order-settlement-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and run the worker until cancelled.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n    worker = Worker(\n        client,\n        task_queue=TASK_QUEUE,\n        workflows=[OrderSettlementWorkflow],\n        activities=[validate_order, reserve_inventory, charge_payment, notify_customer, record_settlement_event, wait_for_shipping_confirmation, finalise_settlement, release_inventory, refund_payment],\n    )\n    print(f\"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.\")\n    await worker.run()\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "starter.py",
+        "language": "python",
+        "content": "\"\"\"Start a OrderSettlementWorkflow workflow execution.\n\nStart the Temporal dev server and the worker first::\n\n    temporal server start-dev      # terminal 1\n    python worker.py               # terminal 2\n\nThen, from inside this package directory::\n\n    python starter.py              # terminal 3\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport uuid\n\nfrom temporalio.client import Client\n\nfrom workflow import OrderSettlementWorkflow\nfrom shared import WorkflowInput\n\nTASK_QUEUE = \"order-settlement-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and start a single workflow execution.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n\n    handle = await client.start_workflow(\n        OrderSettlementWorkflow.run,\n        WorkflowInput(),  # TODO: populate the workflow input fields.\n        id=f\"order_settlement_workflow-{uuid.uuid4()}\",\n        task_queue=TASK_QUEUE,\n    )\n    print(f\"Started workflow {handle.id}\")\n\n    # NOTE: workflows that pause on a signal gate block here until signalled\n    # (e.g. via `temporal workflow signal` or a client `handle.signal(...)`).\n    result = await handle.result()\n    print(\"Workflow result:\", result)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "README.md",
+        "language": "markdown",
+        "content": "# OrderSettlementWorkflow (generated Temporal workflow)\n\nManages the settlement of orders from validation to finalisation.\n\nThis package was generated **deterministically** from a reviewed\n`TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,\nqueries, timers, child workflows, retry policies, and saga compensation are\nwired up, but each activity body raises `NotImplementedError` for you to fill in.\n\nThe files use **flat, absolute imports** (`from activities import ...`), matching\nthe layout in the Temporal Python docs, so each script is run directly from\ninside this directory — no package installation or `PYTHONPATH` needed.\n\n## Files\n\n| File | Purpose |\n|------|---------|\n| `shared.py` | Dataclasses for workflow / activity inputs |\n| `activities.py` | `@activity.defn` units of work (implement these) |\n| `workflow.py` | `@workflow.defn` orchestration: `OrderSettlementWorkflow` |\n| `worker.py` | Worker registering the workflow + activities on `order-settlement-queue` |\n| `starter.py` | Client that starts one workflow execution |\n\n## Run it\n\nInstall the SDK and start a local Temporal server:\n\n```bash\npip install temporalio\ntemporal server start-dev          # terminal 1, leave running\n```\n\nFrom **inside this directory**, run the worker and then the starter:\n\n```bash\npython worker.py                   # terminal 2, leave running\npython starter.py                  # terminal 3\n```\n\nThe worker polls the `order-settlement-queue` task queue; the starter submits a single\n`OrderSettlementWorkflow` execution and prints its result. Open the Web UI at\nhttp://localhost:8233 to watch the execution.\n\n## Next steps\n\n- Implement each activity in `activities.py`.\n- Populate the `WorkflowInput()` fields in `starter.py`.\n- Replace the default `str` input fields in `shared.py` with real types.\n- Review the generated retry policies and timeouts against your SLAs.\n- Send the workflow's signal(s) (shipping.confirmed) to release any wait gates."
+      }
+    ]
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Validate Order\"]\n    activity_2[\"Reserve Inventory\"]\n    activity_3[\"Charge Payment\"]\n    activity_4[\"Notify Customer\"]\n    activity_5[\"Record Settlement Event\"]\n    activity_6[\"Wait for Shipping Confirmation\"]\n    activity_7[\"Finalise Settlement\"]\n    decision_1{\"Is Order Settleable?\"}\n    decision_2{\"Is Payment Successful?\"}\n    exception_1([\"ORDERNOTSETTLEABLE\"])\n    exception_2([\"PaymentDeclined\"])\n    exception_3([\"ShippingTimeout\"])\n    compensation_1[\"Release Inventory\"]\n    compensation_2[\"Refund Payment\"]\n    event_1([\"shipping.confirmed\"])\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> activity_3\n    activity_3 --> decision_2\n    decision_2 -->|yes| activity_4\n    decision_2 -->|no| exception_2\n    activity_4 --> activity_5\n    activity_5 --> activity_6\n    activity_6 --> activity_7\n    activity_7 --> end_node\n    activity_3 -.->|on error| exception_2\n    activity_6 -.->|on error| exception_3\n    activity_2 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    exception_2 -.->|compensate| compensation_2\n    compensation_2 --> end_node\n    activity_6 -.->|emits| event_1\n    exception_3 -->|terminates| end_node\n    exception_1 -->|terminates| end_node\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,exception_1,exception_2,exception_3,event_1 capture;\n    class activity_1,decision_1,decision_2 validate;\n    class activity_2,activity_3,activity_5,activity_6,activity_7 process;\n    class end_node,activity_4,compensation_1,compensation_2 activate;",
+    "title": "Order Settlement Workflow"
+  },
+  "confidence_scores": {
+    "metadata": 0.8786,
+    "facts": 0.9115,
+    "graph": 0.9,
+    "cvpa": 0.9368,
+    "temporal": 0.85,
+    "overall": null,
+    "notes": {
+      "metadata_review": "completeness: 4 applied, 0 dropped, 0 flagged; grounding: 2 applied, 0 dropped, 1 flagged; consistency: 1 applied, 3 dropped, 0 flagged",
+      "facts": "44 facts across 12 categories; 0 duplicate(s) removed; 2 dangling reference(s) dropped.",
+      "facts_review": "completeness: 0 applied, 0 dropped, 0 flagged; grounding: 0 applied, 0 dropped, 0 flagged; consistency: 0 applied, 0 dropped, 0 flagged",
+      "cvpa": "17 nodes classified; 17 from model, 0 by fallback.",
+      "temporal": "7 activities, 1 signals, 0 child workflows, 2 compensations.",
+      "temporal_code": "6 files for package 'order_settlement_workflow'."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-06-30T21:30:38.215316Z",
+  "updated_at": "2026-06-30T21:35:22.016421Z"
+}

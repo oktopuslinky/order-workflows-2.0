@@ -1,0 +1,1269 @@
+{
+  "workflow_id": "d26b9db8-7a5a-4447-8652-7fac321c43d5",
+  "document_text": "# Order Fulfilment\n\n<!--\n  workflow-compiler specification (v1) — slug: order-fulfilment\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nThe Order Fulfilment workflow ships a placed order and captures its payment by picking items, packing the shipment, dispatching it, and capturing the previously-authorised payment.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Warehouse Operator, Fulfilment Operations\n- systems: Fulfilment Service, Warehouse Service, Carrier Service, Payment Gateway\n- triggers: Order placed and order.fulfil request received by Fulfilment Service\n- start states: placed\n- end states: shipped, cancelled\n- tags: \n\n## Inputs\n- order_id\n- authorization_id\n\n## Outputs\n- shipment_id\n- payment_id\n- fulfilment_status\n\n## Business Rules\n- BR-1: Order must be in placed state for fulfilment\n- BR-2: Shipment must be packed before dispatch\n- BR-3: Payment capture only after carrier pickup confirmation\n\n## API Interfaces\n- Warehouse Service /warehouse/pick\n- Warehouse Service /warehouse/pack\n- Carrier Service /carrier/dispatch\n- Payment Gateway /payments/capture\n\n## Systems Involved\n- Fulfilment Service\n- Warehouse Service\n- Carrier Service\n- Payment Gateway\n\n## Timers and SLAs\n- Dispatch shipment within 60 seconds\n- Carrier pickup confirmation within 12 hours\n\n## Retries\n- Dispatch shipment: up to 3 times with exponential backoff (start 2 seconds)\n- Capture payment: up to 5 times with exponential backoff (start 1 second)\n\n## Activities\n- [a1] Pick items\n- [a2] Pack shipment\n- [a3] Dispatch shipment\n- [a4] Wait for carrier pickup confirmation\n- [a5] Capture payment\n\n## Decisions\n- [d1] Dispatch accepted? — after: a3; yes: a4; no: e1\n\n## Exceptions\n- [e1] CarrierRejected — raised by: a3\n- [e2] PickupTimeout — raised by: a4\n\n## Compensations\n- [c1] Unpack shipment — compensates: a2\n\n## Events\n- [v1] [ev1] order.fulfil request — emitted by: start\n- [v2] [ev2] carrier.picked_up signal — emitted by: a4\n- [v3] [ev3] shipment_id — emitted by: a3 [human]\n- [v4] [ev4] payment_id — emitted by: a5 [human]\n- [v5] [ev5] fulfilment_status\n\n## State Transitions\n- start -> picking (trigger: ev1)\n- picking -> packing\n- packing -> dispatching\n- dispatching -> waiting_for_pickup (trigger: a3 (success))\n- waiting_for_pickup -> payment_capture (trigger: ev2)\n- waiting_for_pickup -> cancelled (trigger: e2)\n- dispatching -> cancelled (trigger: e1)\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n<!-- none -->\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n- [ ] (R9-state-transitions) Confirm these state transitions are descriptive only (they will be ignored by code generation).\n  Answer: \n\n## Cross-Workflow Dependencies\n- [ ] uses output `order_id` of `order-placement` as input `order_id` — Order Fulfilment consumes the order_id produced by Order Placement\n- [ ] provides output `shipment_id` to `order-return` input `shipment_id` — Order Return consumes the shipment_id produced by Order Fulfilment\n\n## Triggers\n- [ ] triggers `order-return` (fire-and-forget) when `when a shipment is dispatched`\n- [ ] triggers `order-return` (fire-and-forget)\n  input shipment_id: step output `shipment_id` (str)",
+  "project_id": "8356bd4b-cea9-49b8-bf55-a87999b9675e",
+  "workflow_metadata": {
+    "name": "Order Fulfilment",
+    "description": "The Order Fulfilment workflow ships a placed order and captures its payment by picking items, packing the shipment, dispatching it, and capturing the previously-authorised payment.",
+    "purpose": "The Order Fulfilment workflow ships a placed order and captures its payment by picking items, packing the shipment, dispatching it, and capturing the previously-authorised payment.",
+    "actors": [
+      "Warehouse Operator",
+      "Fulfilment Operations"
+    ],
+    "systems": [
+      "Fulfilment Service",
+      "Warehouse Service",
+      "Carrier Service",
+      "Payment Gateway"
+    ],
+    "trigger_events": [
+      "Order placed and order.fulfil request received by Fulfilment Service"
+    ],
+    "start_states": [
+      "placed"
+    ],
+    "end_states": [
+      "shipped",
+      "cancelled"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "order_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "authorization_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "shipment_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "payment_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-3",
+        "statement": "fulfilment_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Pick items",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Pack shipment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Dispatch shipment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-4",
+        "statement": "Wait for carrier pickup confirmation",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-5",
+        "statement": "Capture payment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Dispatch accepted?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-1: Order must be in placed state for fulfilment",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-2: Shipment must be packed before dispatch",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-3: Payment capture only after carrier pickup confirmation",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "[ev1] order.fulfil request",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-2",
+        "statement": "[ev2] carrier.picked_up signal",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-3",
+        "statement": "[ev3] shipment_id",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-4",
+        "statement": "[ev4] payment_id",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-5",
+        "statement": "[ev5] fulfilment_status",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "Warehouse Service /warehouse/pick",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "Warehouse Service /warehouse/pack",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-3",
+        "statement": "Carrier Service /carrier/dispatch",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-4",
+        "statement": "Payment Gateway /payments/capture",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Fulfilment Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Warehouse Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Carrier Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-4",
+        "statement": "Payment Gateway",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "CarrierRejected",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-2",
+        "statement": "PickupTimeout",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-1",
+        "statement": "start -> picking",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-2",
+        "statement": "picking -> packing",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-3",
+        "statement": "packing -> dispatching",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-4",
+        "statement": "dispatching -> waiting_for_pickup",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-5",
+        "statement": "waiting_for_pickup -> payment_capture",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-6",
+        "statement": "waiting_for_pickup -> cancelled",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "state_transition-7",
+        "statement": "dispatching -> cancelled",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-1",
+        "statement": "Dispatch shipment within 60 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-2",
+        "statement": "Carrier pickup confirmation within 12 hours",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Dispatch shipment: up to 3 times with exponential backoff (start 2 seconds)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "Capture payment: up to 5 times with exponential backoff (start 1 second)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Unpack shipment compensates Pack shipment",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Pick items",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Pack shipment",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Dispatch shipment",
+          "parallel_group": null
+        },
+        {
+          "id": "a4",
+          "name": "Wait for carrier pickup confirmation",
+          "parallel_group": null
+        },
+        {
+          "id": "a5",
+          "name": "Capture payment",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Dispatch accepted?",
+          "after": "a3",
+          "yes_target": "a4",
+          "no_target": "e1"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "CarrierRejected",
+          "raised_by": "a3"
+        },
+        {
+          "id": "e2",
+          "reason": "PickupTimeout",
+          "raised_by": "a4"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Unpack shipment",
+          "compensates": "a2"
+        }
+      ],
+      "events": [
+        {
+          "id": "v1",
+          "name": "[ev1] order.fulfil request",
+          "emitted_by": "start",
+          "kind": "output_emit"
+        },
+        {
+          "id": "v2",
+          "name": "[ev2] carrier.picked_up signal",
+          "emitted_by": "a4",
+          "kind": "output_emit"
+        },
+        {
+          "id": "v3",
+          "name": "[ev3] shipment_id",
+          "emitted_by": "a3",
+          "kind": "output_emit"
+        },
+        {
+          "id": "v4",
+          "name": "[ev4] payment_id",
+          "emitted_by": "a5",
+          "kind": "output_emit"
+        },
+        {
+          "id": "v5",
+          "name": "[ev5] fulfilment_status",
+          "emitted_by": null,
+          "kind": "output_emit"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "t1",
+          "target_workflow": "order-return",
+          "mode": "fire_and_forget",
+          "condition": "when a shipment is dispatched",
+          "after": null
+        },
+        {
+          "id": "t2",
+          "target_workflow": "order-return",
+          "mode": "fire_and_forget",
+          "condition": null,
+          "after": null
+        }
+      ],
+      "transitions": [
+        {
+          "source": "start",
+          "target": "picking",
+          "trigger": "ev1"
+        },
+        {
+          "source": "picking",
+          "target": "packing",
+          "trigger": null
+        },
+        {
+          "source": "packing",
+          "target": "dispatching",
+          "trigger": null
+        },
+        {
+          "source": "dispatching",
+          "target": "waiting_for_pickup",
+          "trigger": "a3 (success)"
+        },
+        {
+          "source": "waiting_for_pickup",
+          "target": "payment_capture",
+          "trigger": "ev2"
+        },
+        {
+          "source": "waiting_for_pickup",
+          "target": "cancelled",
+          "trigger": "e2"
+        },
+        {
+          "source": "dispatching",
+          "target": "cancelled",
+          "trigger": "e1"
+        }
+      ]
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): Order placed and order.fulfil request received by Fulfilment Service.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "2 input(s): order_id, authorization_id.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "3 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 decision(s) have both branches.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "Waits are present and at least one timer/deadline was declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "needs_confirmation",
+        "evidence": "7 state-transition fact(s) present; these are not modeled as Temporal steps.",
+        "question": "Confirm these state transitions are descriptive only (they will be ignored by code generation).",
+        "answer": null
+      }
+    ]
+  },
+  "outgoing_triggers": [
+    {
+      "source_workflow": "order-fulfilment",
+      "target_workflow": "order-return",
+      "mode": "fire_and_forget",
+      "condition": "when a shipment is dispatched",
+      "input_map": [],
+      "result_binding": null,
+      "user_confirmed": false
+    },
+    {
+      "source_workflow": "order-fulfilment",
+      "target_workflow": "order-return",
+      "mode": "fire_and_forget",
+      "condition": null,
+      "input_map": [
+        {
+          "target_input": "shipment_id",
+          "source": "step_output",
+          "source_ref": "shipment_id",
+          "type": "str"
+        }
+      ],
+      "result_binding": null,
+      "user_confirmed": false
+    }
+  ],
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Pick items",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Pack shipment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Dispatch shipment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Wait for carrier pickup confirmation",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_5",
+        "label": "Capture payment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Dispatch accepted?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "CarrierRejected",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "PickupTimeout",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Unpack shipment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "[ev1] order.fulfil request",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "[ev2] carrier.picked_up signal",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "[ev3] shipment_id",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_4",
+        "label": "[ev4] payment_id",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_5",
+        "label": "[ev5] fulfilment_status",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "trigger_1",
+        "label": "Trigger order-return",
+        "node_type": "trigger",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "target_workflow": "order-return",
+          "mode": "fire_and_forget"
+        }
+      },
+      {
+        "id": "trigger_2",
+        "label": "Trigger order-return",
+        "node_type": "trigger",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "target_workflow": "order-return",
+          "mode": "fire_and_forget"
+        }
+      },
+      {
+        "id": "state_1",
+        "label": "start",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_2",
+        "label": "picking",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_3",
+        "label": "packing",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_4",
+        "label": "dispatching",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_5",
+        "label": "waiting_for_pickup",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_6",
+        "label": "payment_capture",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_7",
+        "label": "cancelled",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "activity_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e4",
+        "source": "activity_3",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e5",
+        "source": "decision_1",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e6",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e7",
+        "source": "activity_4",
+        "target": "activity_5",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e8",
+        "source": "activity_5",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "activity_3",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "activity_4",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "activity_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e14",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "activity_4",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "activity_3",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "activity_5",
+        "target": "event_4",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e18",
+        "source": "activity_5",
+        "target": "trigger_1",
+        "edge_type": "conditional",
+        "label": "triggers",
+        "condition": "when a shipment is dispatched"
+      },
+      {
+        "id": "e19",
+        "source": "activity_5",
+        "target": "trigger_2",
+        "edge_type": "sequence",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e20",
+        "source": "state_1",
+        "target": "state_2",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e21",
+        "source": "state_2",
+        "target": "state_3",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e22",
+        "source": "state_3",
+        "target": "state_4",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e23",
+        "source": "state_4",
+        "target": "state_5",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e24",
+        "source": "state_5",
+        "target": "state_6",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e25",
+        "source": "state_5",
+        "target": "state_7",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e26",
+        "source": "state_4",
+        "target": "state_7",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e27",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e28",
+        "source": "exception_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.2: 0 error(s), 16 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Node '[ev5] fulfilment_status' is disconnected (no edges).",
+        "location": "event_5",
+        "suggestion": "Connect the node into the flow or remove it."
+      },
+      {
+        "id": "issue-2",
+        "severity": "warning",
+        "message": "Orphan node 'start' has no incoming edges.",
+        "location": "state_1",
+        "suggestion": "Add a transition from a predecessor node."
+      },
+      {
+        "id": "issue-3",
+        "severity": "warning",
+        "message": "Dead-end node '[ev2] carrier.picked_up signal' has no outgoing edges.",
+        "location": "event_2",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-4",
+        "severity": "warning",
+        "message": "Dead-end node '[ev3] shipment_id' has no outgoing edges.",
+        "location": "event_3",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-5",
+        "severity": "warning",
+        "message": "Dead-end node '[ev4] payment_id' has no outgoing edges.",
+        "location": "event_4",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-6",
+        "severity": "warning",
+        "message": "Dead-end node 'Trigger order-return' has no outgoing edges.",
+        "location": "trigger_1",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-7",
+        "severity": "warning",
+        "message": "Dead-end node 'Trigger order-return' has no outgoing edges.",
+        "location": "trigger_2",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-8",
+        "severity": "warning",
+        "message": "Dead-end node 'payment_capture' has no outgoing edges.",
+        "location": "state_6",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-9",
+        "severity": "warning",
+        "message": "Dead-end node 'cancelled' has no outgoing edges.",
+        "location": "state_7",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-10",
+        "severity": "warning",
+        "message": "State 'picking' is unreachable from the start node.",
+        "location": "state_2",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-11",
+        "severity": "warning",
+        "message": "State 'packing' is unreachable from the start node.",
+        "location": "state_3",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-12",
+        "severity": "warning",
+        "message": "State 'dispatching' is unreachable from the start node.",
+        "location": "state_4",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-13",
+        "severity": "warning",
+        "message": "State 'waiting_for_pickup' is unreachable from the start node.",
+        "location": "state_5",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-14",
+        "severity": "warning",
+        "message": "State 'payment_capture' is unreachable from the start node.",
+        "location": "state_6",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-15",
+        "severity": "warning",
+        "message": "State 'cancelled' is unreachable from the start node.",
+        "location": "state_7",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-16",
+        "severity": "warning",
+        "message": "Duplicate nodes share the label 'trigger order-return'.",
+        "location": "trigger_1, trigger_2",
+        "suggestion": "Merge the duplicate nodes into one."
+      }
+    ],
+    "score": 0.2,
+    "health_score": 0.2,
+    "confidence": 0.84,
+    "reviewer": "workflow-review",
+    "reviewed_at": "2026-07-10T15:49:58.153191Z"
+  },
+  "approval_status": "pending",
+  "cvpa_classification": null,
+  "temporal_design": null,
+  "temporal_code": null,
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Pick items\"]\n    activity_2[\"Pack shipment\"]\n    activity_3[\"Dispatch shipment\"]\n    activity_4[\"Wait for carrier pickup confirmation\"]\n    activity_5[\"Capture payment\"]\n    decision_1{\"Dispatch accepted?\"}\n    exception_1([\"CarrierRejected\"])\n    exception_2([\"PickupTimeout\"])\n    compensation_1[\"Unpack shipment\"]\n    event_1([\"[ev1] order.fulfil request\"])\n    event_2([\"[ev2] carrier.picked_up signal\"])\n    event_3([\"[ev3] shipment_id\"])\n    event_4([\"[ev4] payment_id\"])\n    event_5([\"[ev5] fulfilment_status\"])\n    trigger_1[\"Trigger order-return\"]\n    trigger_2[\"Trigger order-return\"]\n    state_1[\"start\"]\n    state_2[\"picking\"]\n    state_3[\"packing\"]\n    state_4[\"dispatching\"]\n    state_5[\"waiting_for_pickup\"]\n    state_6[\"payment_capture\"]\n    state_7[\"cancelled\"]\n    start --> activity_1\n    activity_1 --> activity_2\n    activity_2 --> activity_3\n    activity_3 --> decision_1\n    decision_1 -->|yes| activity_4\n    decision_1 -->|no| exception_1\n    activity_4 --> activity_5\n    activity_5 --> end_node\n    activity_3 -.->|on error| exception_1\n    activity_4 -.->|on error| exception_2\n    activity_2 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_4 -.->|emits| event_2\n    activity_3 -.->|emits| event_3\n    activity_5 -.->|emits| event_4\n    activity_5 -->|when a shipment is dispatched| trigger_1\n    activity_5 -->|triggers| trigger_2\n    state_1 -->|transition| state_2\n    state_2 -->|transition| state_3\n    state_3 -->|transition| state_4\n    state_4 -->|transition| state_5\n    state_5 -->|transition| state_6\n    state_5 -->|transition| state_7\n    state_4 -->|transition| state_7\n    exception_1 -->|terminates| end_node\n    exception_2 -->|terminates| end_node",
+    "title": "Order Fulfilment"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 1.0,
+    "cvpa": null,
+    "temporal": null,
+    "overall": null,
+    "notes": {}
+  },
+  "stage": "reviewed",
+  "created_at": "2026-07-10T15:49:58.150192Z",
+  "updated_at": "2026-07-10T15:49:58.153191Z"
+}

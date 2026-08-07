@@ -1,0 +1,1435 @@
+{
+  "workflow_id": "416a1dcb-c20e-4dae-aa17-6e9b6672403d",
+  "document_text": "# Order Fulfilment\n\n<!--\n  workflow-compiler specification (v1) — slug: order-fulfilment\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nThe Order Fulfilment workflow ships a placed order and captures its payment by picking items, packing the shipment, dispatching it, and capturing the previously-authorised payment.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Warehouse Operator, Fulfilment Operations\n- systems: Fulfilment Service, Warehouse Service, Carrier Service, Payment Gateway\n- triggers: Order placed and order.fulfil request received by Fulfilment Service\n- start states: Order in 'placed' state\n- end states: fulfilment_status: shipped, fulfilment_status: cancelled\n- tags: \n\n## Inputs\n- order_id\n- authorization_id\n\n## Outputs\n- shipment_id\n- payment_id\n- fulfilment_status\n\n## Business Rules\n- BR-1: Order must be in placed state for fulfilment\n- BR-2: Shipment must be packed before dispatch\n- BR-3: Payment captured only after carrier pickup confirmation\n\n## API Interfaces\n- Warehouse Service /warehouse/pick\n- Warehouse Service /warehouse/pack\n- Carrier Service /carrier/dispatch\n- Payment Gateway /payments/capture\n\n## Systems Involved\n- Fulfilment Service\n- Warehouse Service\n- Carrier Service\n- Payment Gateway\n\n## Timers and SLAs\n- Dispatch shipment within 60 seconds\n- Carrier pickup confirmation within 12 hours\n\n## Retries\n- Dispatch shipment: up to 3 times with exponential backoff (start 2 seconds)\n- Capture payment: up to 5 times with exponential backoff (start 1 second)\n- Capture payment: retry up to 5 times with exponential backoff (start 1 second)\n\n## Activities\n- [a1] Pick items\n- [a2] Pack shipment\n- [a3] Dispatch shipment\n- [a4] Capture payment\n- [a5] Wait for carrier pickup confirmation\n\n## Decisions\n- [d1] Dispatch accepted? — after: a3; yes: a4; no: e1\n\n## Exceptions\n- [e1] CarrierRejected — raised by: a3\n- [e2] PickupTimeout — raised by: a5\n\n## Compensations\n- [c1] Unpack shipment — compensates: a2\n\n## Events\n- [ev1] order.fulfil — kind: trigger; emitted by: start\n- [ev2] carrier.picked_up — kind: signal_wait; emitted by: a5\n- [ev3] shipment_id — kind: output_emit; emitted by: a3\n- [ev4] payment_id — kind: output_emit; emitted by: a4\n- [ev5] fulfilment_status — kind: output_emit\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n<!-- none -->\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n<!-- none -->\n\n## Cross-Workflow Dependencies\n- [x] uses output `order_id` of `order-placement` as input `order_id` — Order Fulfilment consumes the order_id produced by Order Placement\n- [x] provides output `shipment_id` to `order-return` input `shipment_id` — Order Return consumes the shipment_id produced by Order Fulfilment\n\n## Triggers\n- [x] triggers `order-return` (fire-and-forget) when `when a shipment is dispatched`\n  input shipment_id: step output `shipment_id` (str)",
+  "project_id": "fe24cff8-619f-4978-a4f7-73d237e5a730",
+  "workflow_metadata": {
+    "name": "Order Fulfilment",
+    "description": "The Order Fulfilment workflow ships a placed order and captures its payment by picking items, packing the shipment, dispatching it, and capturing the previously-authorised payment.",
+    "purpose": "The Order Fulfilment workflow ships a placed order and captures its payment by picking items, packing the shipment, dispatching it, and capturing the previously-authorised payment.",
+    "actors": [
+      "Warehouse Operator",
+      "Fulfilment Operations"
+    ],
+    "systems": [
+      "Fulfilment Service",
+      "Warehouse Service",
+      "Carrier Service",
+      "Payment Gateway"
+    ],
+    "trigger_events": [
+      "Order placed and order.fulfil request received by Fulfilment Service"
+    ],
+    "start_states": [
+      "Order in 'placed' state"
+    ],
+    "end_states": [
+      "fulfilment_status: shipped",
+      "fulfilment_status: cancelled"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "order_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "authorization_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "shipment_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "payment_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-3",
+        "statement": "fulfilment_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Pick items",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Pack shipment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Dispatch shipment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-4",
+        "statement": "Capture payment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-5",
+        "statement": "Wait for carrier pickup confirmation",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Dispatch accepted?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-1: Order must be in placed state for fulfilment",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-2: Shipment must be packed before dispatch",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-3: Payment captured only after carrier pickup confirmation",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "order.fulfil",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-2",
+        "statement": "carrier.picked_up",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-3",
+        "statement": "shipment_id",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-4",
+        "statement": "payment_id",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-5",
+        "statement": "fulfilment_status",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "Warehouse Service /warehouse/pick",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "Warehouse Service /warehouse/pack",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-3",
+        "statement": "Carrier Service /carrier/dispatch",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-4",
+        "statement": "Payment Gateway /payments/capture",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Fulfilment Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Warehouse Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Carrier Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-4",
+        "statement": "Payment Gateway",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "CarrierRejected",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-2",
+        "statement": "PickupTimeout",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-1",
+        "statement": "Dispatch shipment within 60 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-2",
+        "statement": "Carrier pickup confirmation within 12 hours",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Dispatch shipment: up to 3 times with exponential backoff (start 2 seconds)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "Capture payment: up to 5 times with exponential backoff (start 1 second)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-3",
+        "statement": "Capture payment: retry up to 5 times with exponential backoff (start 1 second)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Unpack shipment compensates Pack shipment",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Pick items",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Pack shipment",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Dispatch shipment",
+          "parallel_group": null
+        },
+        {
+          "id": "a4",
+          "name": "Capture payment",
+          "parallel_group": null
+        },
+        {
+          "id": "a5",
+          "name": "Wait for carrier pickup confirmation",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Dispatch accepted?",
+          "after": "a3",
+          "yes_target": "a4",
+          "no_target": "e1"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "CarrierRejected",
+          "raised_by": "a3"
+        },
+        {
+          "id": "e2",
+          "reason": "PickupTimeout",
+          "raised_by": "a5"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Unpack shipment",
+          "compensates": "a2"
+        }
+      ],
+      "events": [
+        {
+          "id": "ev1",
+          "name": "order.fulfil",
+          "emitted_by": "start",
+          "kind": "trigger"
+        },
+        {
+          "id": "ev2",
+          "name": "carrier.picked_up",
+          "emitted_by": "a5",
+          "kind": "signal_wait"
+        },
+        {
+          "id": "ev3",
+          "name": "shipment_id",
+          "emitted_by": "a3",
+          "kind": "output_emit"
+        },
+        {
+          "id": "ev4",
+          "name": "payment_id",
+          "emitted_by": "a4",
+          "kind": "output_emit"
+        },
+        {
+          "id": "ev5",
+          "name": "fulfilment_status",
+          "emitted_by": null,
+          "kind": "output_emit"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "t1",
+          "target_workflow": "order-return",
+          "mode": "fire_and_forget",
+          "condition": "when a shipment is dispatched",
+          "after": null
+        }
+      ],
+      "transitions": []
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): Order placed and order.fulfil request received by Fulfilment Service.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "2 input(s): order_id, authorization_id.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "3 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 decision(s) have both branches.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "Waits are present and at least one timer/deadline was declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "3 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "No free-form state transitions.",
+        "question": null,
+        "answer": null
+      }
+    ]
+  },
+  "outgoing_triggers": [
+    {
+      "source_workflow": "order-fulfilment",
+      "target_workflow": "order-return",
+      "mode": "fire_and_forget",
+      "condition": "when a shipment is dispatched",
+      "input_map": [
+        {
+          "target_input": "shipment_id",
+          "source": "step_output",
+          "source_ref": "shipment_id",
+          "type": "str"
+        }
+      ],
+      "result_binding": null,
+      "user_confirmed": true
+    }
+  ],
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Pick items",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Pack shipment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Dispatch shipment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Capture payment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_5",
+        "label": "Wait for carrier pickup confirmation",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Dispatch accepted?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "CarrierRejected",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "PickupTimeout",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Unpack shipment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "order.fulfil",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "carrier.picked_up",
+        "node_type": "signal",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "shipment_id",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_4",
+        "label": "payment_id",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_5",
+        "label": "fulfilment_status",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "trigger_1",
+        "label": "Trigger order-return",
+        "node_type": "trigger",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "target_workflow": "order-return",
+          "mode": "fire_and_forget"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "activity_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e4",
+        "source": "activity_3",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e5",
+        "source": "decision_1",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e6",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e7",
+        "source": "activity_4",
+        "target": "activity_5",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e8",
+        "source": "activity_5",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "activity_3",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "activity_5",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "activity_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e14",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "activity_5",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "waits for",
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "event_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "then",
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "activity_3",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e18",
+        "source": "activity_4",
+        "target": "event_4",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e19",
+        "source": "activity_5",
+        "target": "trigger_1",
+        "edge_type": "conditional",
+        "label": "triggers",
+        "condition": "when a shipment is dispatched"
+      },
+      {
+        "id": "e20",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e21",
+        "source": "exception_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.9: 0 error(s), 2 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Node 'fulfilment_status' is disconnected (no edges).",
+        "location": "event_5",
+        "suggestion": "Connect the node into the flow or remove it."
+      },
+      {
+        "id": "issue-2",
+        "severity": "warning",
+        "message": "Dead-end node 'Trigger order-return' has no outgoing edges.",
+        "location": "trigger_1",
+        "suggestion": "Add a transition toward an END node."
+      }
+    ],
+    "score": 0.9,
+    "health_score": 0.9,
+    "confidence": 0.9706,
+    "reviewer": "auto-threshold",
+    "reviewed_at": "2026-07-13T17:42:09.683231Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Initiates the workflow, indicating intake of the process.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Represents the workflow's conclusion, triggering final outcomes.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "process",
+        "rationale": "Involves core operational work (picking items).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "process",
+        "rationale": "Core operational task (packing shipment).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "process",
+        "rationale": "Primary operational step (dispatching shipment).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "process",
+        "rationale": "Although payment capture could imply an 'activate' phase due to its downstream effect, it's more aligned with core operational work in this context.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "activity_5",
+        "phase": "activate",
+        "rationale": "Awaiting confirmation is a preparatory step for fulfillment completion.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Evaluates the outcome of a process step (dispatch acceptance).",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "validate",
+        "rationale": "Triggers in response to a validation failure (carrier rejection).",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "exception_2",
+        "phase": "validate",
+        "rationale": "Represents a timeout as a form of implicit validation failure.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "process",
+        "rationale": "Corrective action involving operational work (unpacking).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "Initiates the workflow based on an external signal (order fulfil).",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "event_2",
+        "phase": "activate",
+        "rationale": "Confirms the final step of fulfillment (carrier pickup).",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "event_3",
+        "phase": "activate",
+        "rationale": "Emits a signal related to fulfillment status (shipment ID).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_4",
+        "phase": "activate",
+        "rationale": "Indicates completion of a key step (payment ID emission).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_5",
+        "phase": "activate",
+        "rationale": "Directly related to the final status of the workflow (fulfilment status).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "trigger_1",
+        "phase": "activate",
+        "rationale": "Triggers an external process (order return), marking workflow conclusion.",
+        "confidence": 1.0
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "event_1"
+        ],
+        "summary": "2 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "decision_1",
+          "exception_1",
+          "exception_2"
+        ],
+        "summary": "3 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_1",
+          "activity_2",
+          "activity_3",
+          "activity_4",
+          "compensation_1"
+        ],
+        "summary": "5 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "activity_5",
+          "event_2",
+          "event_3",
+          "event_4",
+          "event_5",
+          "trigger_1"
+        ],
+        "summary": "7 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "OrderFulfilmentWorkflow",
+    "task_queue": "order-fulfilment-queue",
+    "description": "Manages the order fulfilment process from item picking to payment capture.",
+    "workflow_inputs": [
+      {
+        "name": "order_id",
+        "type": "str"
+      },
+      {
+        "name": "authorization_id",
+        "type": "str"
+      }
+    ],
+    "result_type": "str",
+    "activities": [
+      {
+        "name": "PickItems",
+        "source_node_id": "activity_1",
+        "description": "Pick items from the warehouse.",
+        "inputs": [],
+        "params": [],
+        "outputs": [
+          "picked_items"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      },
+      {
+        "name": "PackShipment",
+        "source_node_id": "activity_2",
+        "description": "Pack the picked items for shipment.",
+        "inputs": [],
+        "params": [],
+        "outputs": [
+          "shipment_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      },
+      {
+        "name": "DispatchShipment",
+        "source_node_id": "activity_3",
+        "description": "Dispatch the shipment to the carrier.",
+        "inputs": [],
+        "params": [],
+        "outputs": [
+          "dispatch_status"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 60.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": [
+            "CarrierRejected"
+          ]
+        }
+      },
+      {
+        "name": "CapturePayment",
+        "source_node_id": "activity_4",
+        "description": "Capture payment from the customer.",
+        "inputs": [],
+        "params": [],
+        "outputs": [
+          "payment_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 5,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "WaitForCarrierPickup",
+        "source_node_id": "activity_5",
+        "description": "Wait for carrier pickup confirmation.",
+        "inputs": [],
+        "params": [],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": 43200.0,
+        "retry_policy": null
+      }
+    ],
+    "signals": [
+      {
+        "name": "carrier_picked_up",
+        "description": "Received carrier pickup confirmation.",
+        "payload": [
+          "shipment_id"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "getFulfilmentStatus",
+        "description": "Returns the current fulfilment status of the order.",
+        "returns": "str",
+        "state_field": "fulfilment_status"
+      }
+    ],
+    "child_workflows": [],
+    "timers": [
+      {
+        "name": "dispatch_timeout",
+        "duration_seconds": 60.0,
+        "description": "Timeout for dispatch shipment activity."
+      },
+      {
+        "name": "pickup_confirmation_timeout",
+        "duration_seconds": 43200.0,
+        "description": "Timeout for carrier pickup confirmation."
+      }
+    ],
+    "triggers": [
+      {
+        "name": "StartOrderReturn",
+        "target_workflow_name": "OrderReturn",
+        "target_slug": "order-return",
+        "target_task_queue": "OrderReturn-task-queue",
+        "mode": "fire_and_forget",
+        "params": [
+          {
+            "name": "shipment_id",
+            "type": "str"
+          }
+        ],
+        "result_type": "str",
+        "description": "Fires when when a shipment is dispatched"
+      }
+    ],
+    "compensation_activities": [
+      {
+        "name": "UnpackShipment",
+        "compensates": "PackShipment",
+        "source_node_id": "compensation_1",
+        "description": "Unpack the shipment in case of failure.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "shipment_id",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "shipment_id",
+            "source": "step_output",
+            "ref": "PackShipment"
+          }
+        ],
+        "retry_policy": null
+      }
+    ],
+    "default_retry_policy": null,
+    "plan": [
+      {
+        "id": "S1",
+        "kind": "activity",
+        "description": null,
+        "ref": "PickItems",
+        "bindings": [],
+        "result_name": "picked_items",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "S2",
+        "kind": "activity",
+        "description": null,
+        "ref": "PackShipment",
+        "bindings": [],
+        "result_name": "shipment_id",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "S3",
+        "kind": "activity",
+        "description": null,
+        "ref": "DispatchShipment",
+        "bindings": [],
+        "result_name": "dispatch_status",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "S4",
+        "kind": "branch",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": "dispatch_status == 'accepted'",
+        "lanes": [
+          [
+            {
+              "id": "S5",
+              "kind": "activity",
+              "description": null,
+              "ref": "CapturePayment",
+              "bindings": [],
+              "result_name": "payment_id",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S6",
+              "kind": "signal_gate",
+              "description": null,
+              "ref": null,
+              "bindings": [],
+              "result_name": null,
+              "signal": "carrier_picked_up",
+              "condition": null,
+              "timer": "pickup_confirmation_timeout",
+              "predicate": null,
+              "lanes": []
+            }
+          ],
+          [
+            {
+              "id": "S7",
+              "kind": "raise",
+              "description": null,
+              "ref": "CarrierRejected",
+              "bindings": [],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ]
+        ]
+      },
+      {
+        "id": "S8",
+        "kind": "activity",
+        "description": null,
+        "ref": "WaitForCarrierPickup",
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "branch_trigger_1",
+        "kind": "branch",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": "when a shipment is dispatched",
+        "lanes": [
+          [
+            {
+              "id": "trigger_1",
+              "kind": "trigger",
+              "description": "Start the standalone 'order-return' workflow",
+              "ref": "StartOrderReturn",
+              "bindings": [
+                {
+                  "param": "shipment_id",
+                  "source": "step_output",
+                  "ref": "shipment_id"
+                }
+              ],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ],
+          []
+        ]
+      }
+    ]
+  },
+  "temporal_code": {
+    "target": "python",
+    "package_name": "order_fulfilment_workflow",
+    "files": [
+      {
+        "path": "shared.py",
+        "language": "python",
+        "content": "\"\"\"Shared dataclasses for the OrderFulfilmentWorkflow workflow.\n\nTemporal passes a single dataclass argument to workflows and activities so that\ninputs evolve compatibly. Refine the field types to match your real domain types.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom typing import Any\n\n\n@dataclass\nclass WorkflowInput:\n    \"\"\"Input to the OrderFulfilmentWorkflow workflow.\"\"\"\n\n    order_id: str = \"\"\n    authorization_id: str = \"\"\n\n\n@dataclass\nclass PickItemsInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass PackShipmentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass DispatchShipmentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass CapturePaymentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass WaitForCarrierPickupInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass UnpackShipmentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    shipment_id: str = \"\"\n\n\n@dataclass\nclass StartOrderReturnInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    shipment_id: str = \"\""
+      },
+      {
+        "path": "activities.py",
+        "language": "python",
+        "content": "\"\"\"Activities for the OrderFulfilmentWorkflow workflow.\n\nEach activity is a thin, retryable unit of work. Replace the ``NotImplementedError``\nwith real logic; activities may use I/O, SDKs, and blocking calls freely.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom temporalio import activity\n\nfrom shared import (\n    PickItemsInput,\n    PackShipmentInput,\n    DispatchShipmentInput,\n    CapturePaymentInput,\n    WaitForCarrierPickupInput,\n    UnpackShipmentInput,\n    StartOrderReturnInput,\n)\n\n\n@activity.defn(name=\"PickItems\")\nasync def pick_items(arg: PickItemsInput) -> str:\n    \"\"\"Pick items from the warehouse.\"\"\"\n    activity.logger.info(\"Running pick_items\", extra={\"input\": arg})\n    # TODO: implement pick_items. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"PackShipment\")\nasync def pack_shipment(arg: PackShipmentInput) -> str:\n    \"\"\"Pack the picked items for shipment.\"\"\"\n    activity.logger.info(\"Running pack_shipment\", extra={\"input\": arg})\n    # TODO: implement pack_shipment. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"DispatchShipment\")\nasync def dispatch_shipment(arg: DispatchShipmentInput) -> str:\n    \"\"\"Dispatch the shipment to the carrier.\"\"\"\n    activity.logger.info(\"Running dispatch_shipment\", extra={\"input\": arg})\n    # TODO: implement dispatch_shipment. Returns a placeholder so the bundle runs as-is.\n    return 'accepted'\n\n@activity.defn(name=\"CapturePayment\")\nasync def capture_payment(arg: CapturePaymentInput) -> str:\n    \"\"\"Capture payment from the customer.\"\"\"\n    activity.logger.info(\"Running capture_payment\", extra={\"input\": arg})\n    # TODO: implement capture_payment. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"WaitForCarrierPickup\")\nasync def wait_for_carrier_pickup(arg: WaitForCarrierPickupInput) -> str:\n    \"\"\"Wait for carrier pickup confirmation.\"\"\"\n    activity.logger.info(\"Running wait_for_carrier_pickup\", extra={\"input\": arg})\n    # TODO: implement wait_for_carrier_pickup. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"UnpackShipment\")\nasync def unpack_shipment(arg: UnpackShipmentInput) -> str:\n    \"\"\"Unpack the shipment in case of failure.\"\"\"\n    activity.logger.info(\"Running unpack_shipment\", extra={\"input\": arg})\n    # TODO: implement unpack_shipment. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\""
+      },
+      {
+        "path": "triggers.py",
+        "language": "python",
+        "content": "\"\"\"Cross-workflow trigger activities for the OrderFulfilmentWorkflow workflow.\n\nTemporal workflow code may not start another workflow directly (that would be\nnon-deterministic), so each trigger below is an **activity** that talks to the\nTemporal client. The target workflows stay fully standalone: they are started\nby workflow-type name on their own task queues, and\n``id_conflict_policy=USE_EXISTING`` makes activity retries idempotent — a retry\nattaches to the already-started run instead of double-starting it.\n\nThe client address comes from ``TEMPORAL_ADDRESS`` (default ``localhost:7233``).\n\"\"\"\n\nfrom __future__ import annotations\n\nimport os\n\nfrom temporalio import activity\nfrom temporalio.client import Client\nfrom temporalio.common import WorkflowIDConflictPolicy\n\nfrom shared import (\n    StartOrderReturnInput,\n)\n\n_client: Client | None = None\n\n\nasync def _get_client() -> Client:\n    \"\"\"Connect (once per worker process) to the Temporal server.\"\"\"\n    global _client\n    if _client is None:\n        _client = await Client.connect(\n            os.environ.get(\"TEMPORAL_ADDRESS\", \"localhost:7233\")\n        )\n    return _client\n\n\n@activity.defn(name=\"StartOrderReturn\")\nasync def start_order_return(arg: StartOrderReturnInput) -> str:\n    \"\"\"Fires when when a shipment is dispatched\"\"\"\n    client = await _get_client()\n    handle = await client.start_workflow(\n        \"OrderReturn\",\n        arg,\n        id=f\"order-return-{arg.shipment_id}\",\n        task_queue=\"OrderReturn-task-queue\",\n        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,\n    )\n    activity.logger.info(\"Started workflow %s\", handle.id)\n    return handle.id"
+      },
+      {
+        "path": "workflow.py",
+        "language": "python",
+        "content": "\"\"\"The OrderFulfilmentWorkflow Temporal workflow.\n\nWorkflow code must be deterministic: do all I/O inside activities, and use\n``workflow.*`` helpers (``execute_activity``, ``execute_child_workflow``,\n``sleep``, signals, queries) rather than calling the outside world directly.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Callable\nfrom datetime import timedelta\nfrom typing import Any\n\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\nfrom temporalio.exceptions import ApplicationError\n\nwith workflow.unsafe.imports_passed_through():\n    from activities import (\n        pick_items,\n        pack_shipment,\n        dispatch_shipment,\n        capture_payment,\n        wait_for_carrier_pickup,\n        unpack_shipment,\n    )\n    from triggers import (\n        start_order_return,\n    )\n    from shared import (\n        WorkflowInput,\n        PickItemsInput,\n        PackShipmentInput,\n        DispatchShipmentInput,\n        CapturePaymentInput,\n        WaitForCarrierPickupInput,\n        UnpackShipmentInput,\n        StartOrderReturnInput,\n    )\n\nDISPATCH_TIMEOUT = timedelta(seconds=60)  # Timeout for dispatch shipment activity.\nPICKUP_CONFIRMATION_TIMEOUT = timedelta(seconds=43200)  # Timeout for carrier pickup confirmation.\n\n\n@workflow.defn\nclass OrderFulfilmentWorkflow:\n    \"\"\"Manages the order fulfilment process from item picking to payment capture.\"\"\"\n\n    def __init__(self) -> None:\n        self._status: str = \"pending\"\n        # Read-only debug surface (safe in production: no I/O, no wall-clock).\n        self._current_step: str = \"\"\n        self._decisions_taken: list[dict[str, object]] = []\n        self._triggers_fired: list[str] = []\n        self._carrier_picked_up_received: bool = False\n\n    @workflow.run\n    async def run(self, arg: WorkflowInput) -> str:\n        self._status = \"running\"\n        compensations: list[tuple[Callable[..., Any], Any]] = []\n        try:\n            self._current_step = 'S1'\n            workflow.logger.info(\"Running step: PickItems\")\n            picked_items = await workflow.execute_activity(\n                pick_items,\n                PickItemsInput(),\n                start_to_close_timeout=timedelta(seconds=60),\n            )\n            self._current_step = 'S2'\n            workflow.logger.info(\"Running step: PackShipment\")\n            shipment_id = await workflow.execute_activity(\n                pack_shipment,\n                PackShipmentInput(),\n                start_to_close_timeout=timedelta(seconds=60),\n            )\n            compensations.append((unpack_shipment, UnpackShipmentInput(shipment_id=shipment_id)))\n            self._current_step = 'S3'\n            workflow.logger.info(\"Running step: DispatchShipment\")\n            dispatch_status = await workflow.execute_activity(\n                dispatch_shipment,\n                DispatchShipmentInput(),\n                start_to_close_timeout=timedelta(seconds=60),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2, maximum_attempts=3, non_retryable_error_types=['CarrierRejected']),\n            )\n            self._current_step = 'S4'\n            should_dispatch_status_accepted = dispatch_status == 'accepted'  # branch condition: dispatch_status == 'accepted'\n            if should_dispatch_status_accepted:\n                self._decisions_taken.append({'branch': 'S4', 'predicate': \"dispatch_status == 'accepted'\", 'taken': True})\n                self._current_step = 'S5'\n                workflow.logger.info(\"Running step: CapturePayment\")\n                payment_id = await workflow.execute_activity(\n                    capture_payment,\n                    CapturePaymentInput(),\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=5),\n                )\n                self._current_step = 'S6'\n                workflow.logger.info(\"Waiting for signal: carrier_picked_up\")\n                # Bounded wait: raises TimeoutError after pickup_confirmation_timeout, which\n                # fires the saga compensations below instead of blocking forever.\n                await workflow.wait_condition(lambda: self._carrier_picked_up_received, timeout=PICKUP_CONFIRMATION_TIMEOUT)\n            else:\n                self._decisions_taken.append({'branch': 'S4', 'predicate': \"dispatch_status == 'accepted'\", 'taken': False})\n                self._current_step = 'S7'\n                workflow.logger.info(\"Raising: CarrierRejected\")\n                raise ApplicationError('Workflow rejected: CarrierRejected', type='CarrierRejected', non_retryable=True)\n            self._current_step = 'S8'\n            workflow.logger.info(\"Running step: WaitForCarrierPickup\")\n            s8_result = await workflow.execute_activity(\n                wait_for_carrier_pickup,\n                WaitForCarrierPickupInput(),\n                start_to_close_timeout=timedelta(seconds=43200),\n            )\n            self._current_step = 'branch_trigger_1'\n            should_when_a_shipment_is_dispatched = True  # TODO: set from a real condition: when a shipment is dispatched\n            if should_when_a_shipment_is_dispatched:\n                self._decisions_taken.append({'branch': 'branch_trigger_1', 'predicate': 'when a shipment is dispatched', 'taken': True})\n                self._current_step = 'trigger_1'\n                workflow.logger.info(\"Triggering workflow: OrderReturn\")\n                trigger_1_result = await workflow.execute_activity(\n                    start_order_return,\n                    StartOrderReturnInput(),\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n                self._triggers_fired.append('StartOrderReturn')\n            else:\n                self._decisions_taken.append({'branch': 'branch_trigger_1', 'predicate': 'when a shipment is dispatched', 'taken': False})\n        except Exception:\n            for _comp_fn, _comp_arg in reversed(compensations):\n                await workflow.execute_activity(\n                    _comp_fn,\n                    _comp_arg,\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n            self._status = \"compensated\"\n            raise\n        self._status = \"completed\"\n        return self._status\n\n    @workflow.signal\n    def carrier_picked_up(self, shipment_id: str) -> None:\n        \"\"\"Handle the 'carrier_picked_up' signal.\"\"\"\n        self._carrier_picked_up_received = True\n\n    @workflow.query\n    def get_fulfilment_status(self) -> str:\n        \"\"\"Returns the current fulfilment status of the order.\"\"\"\n        return self._status\n\n    @workflow.query\n    def current_step(self) -> str:\n        \"\"\"The plan step currently executing (read-only debug surface).\"\"\"\n        return self._current_step\n\n    @workflow.query\n    def decisions_taken(self) -> list[dict[str, object]]:\n        \"\"\"Every branch decision so far: branch id, predicate, and path taken.\"\"\"\n        return self._decisions_taken\n\n    @workflow.query\n    def triggers_fired(self) -> list[str]:\n        \"\"\"Cross-workflow triggers fired so far.\"\"\"\n        return self._triggers_fired"
+      },
+      {
+        "path": "worker.py",
+        "language": "python",
+        "content": "\"\"\"Worker process for the OrderFulfilmentWorkflow workflow.\n\nStart a local Temporal dev server in one terminal::\n\n    temporal server start-dev\n\nThen, from inside this package directory, run the worker::\n\n    python worker.py\n\nKeep it running, then start a workflow with ``python starter.py``.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\n\nfrom temporalio import workflow\nfrom temporalio.client import Client\nfrom temporalio.worker import Worker\n\nwith workflow.unsafe.imports_passed_through():\n    from workflow import OrderFulfilmentWorkflow\n    from activities import (\n        pick_items,\n        pack_shipment,\n        dispatch_shipment,\n        capture_payment,\n        wait_for_carrier_pickup,\n        unpack_shipment,\n    )\n    from triggers import (\n        start_order_return,\n    )\n\nTASK_QUEUE = \"order-fulfilment-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and run the worker until cancelled.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n    worker = Worker(\n        client,\n        task_queue=TASK_QUEUE,\n        workflows=[OrderFulfilmentWorkflow],\n        activities=[pick_items, pack_shipment, dispatch_shipment, capture_payment, wait_for_carrier_pickup, unpack_shipment, start_order_return],\n    )\n    print(f\"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.\")\n    await worker.run()\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "starter.py",
+        "language": "python",
+        "content": "\"\"\"Start a OrderFulfilmentWorkflow workflow execution.\n\nStart the Temporal dev server and the worker first::\n\n    temporal server start-dev      # terminal 1\n    python worker.py               # terminal 2\n\nThen, from inside this package directory::\n\n    python starter.py              # terminal 3\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport uuid\n\nfrom temporalio.client import Client\n\nfrom workflow import OrderFulfilmentWorkflow\nfrom shared import WorkflowInput\n\nTASK_QUEUE = \"order-fulfilment-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and start a single workflow execution.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n\n    handle = await client.start_workflow(\n        OrderFulfilmentWorkflow.run,\n        WorkflowInput(),  # TODO: populate the workflow input fields.\n        id=f\"order_fulfilment_workflow-{uuid.uuid4()}\",\n        task_queue=TASK_QUEUE,\n    )\n    print(f\"Started workflow {handle.id}\")\n\n    # NOTE: workflows that pause on a signal gate block here until signalled\n    # (e.g. via `temporal workflow signal` or a client `handle.signal(...)`).\n    result = await handle.result()\n    print(\"Workflow result:\", result)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "test_stepthrough.py",
+        "language": "python",
+        "content": "\"\"\"Local step-through harness for the OrderFulfilmentWorkflow workflow.\n\nRuns this bundle under a time-skipping Temporal test environment with the\ngenerated stub activities (they return placeholders, no I/O) and **mocked\ntrigger activities** (the real ones call the Temporal client), then inspects\nthe read-only debug queries — proving which steps ran, which branch each\ndecision took, and which cross-workflow triggers fired.\n\nRun from inside this bundle directory::\n\n    pytest test_stepthrough.py -s\n\nRequires: temporalio, pytest, pytest-asyncio (asyncio_mode=auto or the marker).\n\"\"\"\n\nfrom __future__ import annotations\n\nimport uuid\n\nimport pytest\nfrom temporalio import activity\nfrom temporalio.testing import WorkflowEnvironment\nfrom temporalio.worker import UnsandboxedWorkflowRunner, Worker\n\nfrom activities import (\n    pick_items,\n    pack_shipment,\n    dispatch_shipment,\n    capture_payment,\n    wait_for_carrier_pickup,\n    unpack_shipment,\n)\nfrom shared import WorkflowInput\nfrom workflow import OrderFulfilmentWorkflow\nTRIGGERS_CALLED: list[str] = []\n\n\n@activity.defn(name=\"StartOrderReturn\")\nasync def mock_start_order_return(arg) -> str:\n    \"\"\"Mocked cross-workflow start — records the call instead of starting.\"\"\"\n    TRIGGERS_CALLED.append(\"StartOrderReturn\")\n    return \"\"\n\n\n@pytest.mark.asyncio\nasync def test_stepthrough() -> None:\n    \"\"\"Run the workflow end to end and inspect the debug queries.\"\"\"\n    env = await WorkflowEnvironment.start_time_skipping()\n    try:\n        async with Worker(\n            env.client,\n            task_queue=\"order-fulfilment-queue\",\n            workflows=[OrderFulfilmentWorkflow],\n            activities=[pick_items, pack_shipment, dispatch_shipment, capture_payment, wait_for_carrier_pickup, unpack_shipment, mock_start_order_return, ],\n            workflow_runner=UnsandboxedWorkflowRunner(),\n        ):\n            handle = await env.client.start_workflow(\n                OrderFulfilmentWorkflow.run,\n                WorkflowInput(),\n                id=f\"stepthrough-{uuid.uuid4()}\",\n                task_queue=\"order-fulfilment-queue\",\n            )\n            # Release the 'carrier_picked_up' wait gate with a stub payload —\n            # signalling before the workflow reaches its wait is safe (the\n            # received flag stays set).\n            await handle.signal(\"carrier_picked_up\", args=[\"stub-shipment_id\", ])\n            result = await handle.result()\n            assert result == \"completed\"\n            print(\"last step:\", await handle.query(\"current_step\"))\n            print(\"decisions:\", await handle.query(\"decisions_taken\"))\n            print(\"triggers fired:\", await handle.query(\"triggers_fired\"))\n    finally:\n        await env.shutdown()"
+      },
+      {
+        "path": "README.md",
+        "language": "markdown",
+        "content": "# OrderFulfilmentWorkflow (generated Temporal workflow)\n\nManages the order fulfilment process from item picking to payment capture.\n\nThis package was generated **deterministically** from a reviewed\n`TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,\nqueries, timers, child workflows, retry policies, and saga compensation are\nwired up, but each activity body raises `NotImplementedError` for you to fill in.\n\nThe files use **flat, absolute imports** (`from activities import ...`), matching\nthe layout in the Temporal Python docs, so each script is run directly from\ninside this directory — no package installation or `PYTHONPATH` needed.\n\n## Files\n\n| File | Purpose |\n|------|---------|\n| `shared.py` | Dataclasses for workflow / activity inputs |\n| `activities.py` | `@activity.defn` units of work (implement these) |\n| `workflow.py` | `@workflow.defn` orchestration: `OrderFulfilmentWorkflow` |\n| `worker.py` | Worker registering the workflow + activities on `order-fulfilment-queue` |\n| `starter.py` | Client that starts one workflow execution |\n\n## Run it\n\nInstall the SDK and start a local Temporal server:\n\n```bash\npip install temporalio\ntemporal server start-dev          # terminal 1, leave running\n```\n\nFrom **inside this directory**, run the worker and then the starter:\n\n```bash\npython worker.py                   # terminal 2, leave running\npython starter.py                  # terminal 3\n```\n\nThe worker polls the `order-fulfilment-queue` task queue; the starter submits a single\n`OrderFulfilmentWorkflow` execution and prints its result. Open the Web UI at\nhttp://localhost:8233 to watch the execution.\n\n## Next steps\n\n- Implement each activity in `activities.py`.\n- Populate the `WorkflowInput()` fields in `starter.py`.\n- Replace the default `str` input fields in `shared.py` with real types.\n- Review the generated retry policies and timeouts against your SLAs.\n- Send the workflow's signal(s) (carrier_picked_up) to release any wait gates."
+      }
+    ]
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Pick items\"]\n    activity_2[\"Pack shipment\"]\n    activity_3[\"Dispatch shipment\"]\n    activity_4[\"Capture payment\"]\n    activity_5[\"Wait for carrier pickup confirmation\"]\n    decision_1{\"Dispatch accepted?\"}\n    exception_1([\"CarrierRejected\"])\n    exception_2([\"PickupTimeout\"])\n    compensation_1[\"Unpack shipment\"]\n    event_1([\"order.fulfil\"])\n    event_2[\"carrier.picked_up\"]\n    event_3([\"shipment_id\"])\n    event_4([\"payment_id\"])\n    event_5([\"fulfilment_status\"])\n    trigger_1[\"Trigger order-return\"]\n    start --> activity_1\n    activity_1 --> activity_2\n    activity_2 --> activity_3\n    activity_3 --> decision_1\n    decision_1 -->|yes| activity_4\n    decision_1 -->|no| exception_1\n    activity_4 --> activity_5\n    activity_5 --> end_node\n    activity_3 -.->|on error| exception_1\n    activity_5 -.->|on error| exception_2\n    activity_2 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_5 -.->|waits for| event_2\n    event_2 -->|then| end_node\n    activity_3 -.->|emits| event_3\n    activity_4 -.->|emits| event_4\n    activity_5 -->|when a shipment is dispatched| trigger_1\n    exception_1 -->|terminates| end_node\n    exception_2 -->|terminates| end_node\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,event_1 capture;\n    class decision_1,exception_1,exception_2 validate;\n    class activity_1,activity_2,activity_3,activity_4,compensation_1 process;\n    class end_node,activity_5,event_2,event_3,event_4,event_5,trigger_1 activate;",
+    "title": "Order Fulfilment"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 0.9,
+    "cvpa": 0.9647,
+    "temporal": 0.85,
+    "overall": null,
+    "notes": {
+      "cvpa": "17 nodes classified; 17 from model, 0 by fallback.",
+      "temporal": "5 activities, 1 signals, 0 child workflows, 1 compensations.",
+      "temporal_code": "8 files for package 'order_fulfilment_workflow'."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-07-13T17:42:09.678345Z",
+  "updated_at": "2026-07-13T17:44:01.596339Z"
+}

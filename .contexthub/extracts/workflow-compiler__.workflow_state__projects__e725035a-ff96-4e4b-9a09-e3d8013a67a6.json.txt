@@ -1,0 +1,483 @@
+{
+  "project_id": "e725035a-ff96-4e4b-9a09-e3d8013a67a6",
+  "document_text": "Order Placement Workflow\n\nWhen a customer submits an order, validate the shopping cart and reserve\ninventory. Authorise the payment. If payment is declined, raise\nPaymentDeclined and cancel the order. Otherwise create the order record and\ntrigger Order Fulfilment. If the customer requests a return, trigger the\nOrder Return workflow.",
+  "segments": [
+    {
+      "id": "w1",
+      "slug": "order-placement",
+      "name": "Order Placement",
+      "purpose": "Validate shopping cart, reserve inventory, authorise payment, and create order record",
+      "section_titles": [
+        "Order Placement Workflow"
+      ],
+      "text": "Order Placement Workflow\n\nWhen a customer submits an order, validate the shopping cart and reserve\ninventory. Authorise the payment. If payment is declined, raise\nPaymentDeclined and cancel the order. Otherwise create the order record and\ntrigger Order Fulfilment. If the customer requests a return, trigger the",
+      "sliced": true
+    },
+    {
+      "id": "w2",
+      "slug": "order-fulfilment",
+      "name": "Order Fulfilment",
+      "purpose": "Fulfil an order after successful placement",
+      "section_titles": [
+        "Order Fulfilment Workflow"
+      ],
+      "text": "trigger Order Fulfilment. If the customer requests a return, trigger the",
+      "sliced": true
+    },
+    {
+      "id": "w3",
+      "slug": "order-return",
+      "name": "Order Return",
+      "purpose": "Handle customer return requests",
+      "section_titles": [
+        "Order Return Workflow"
+      ],
+      "text": "Order Return workflow.",
+      "sliced": true
+    }
+  ],
+  "specs": [
+    {
+      "slug": "order-placement",
+      "metadata": {
+        "name": "Order Placement Workflow",
+        "description": "Validate and process customer orders, managing inventory and payment authorisation. Facilitate returns.",
+        "purpose": "Validate and process customer orders, managing inventory and payment authorisation. Facilitate returns.",
+        "actors": [
+          "Customer"
+        ],
+        "systems": [
+          "Inventory System",
+          "Payment Authorisation System",
+          "Order Management System",
+          "Return Processing System"
+        ],
+        "trigger_events": [
+          "Customer submits an order",
+          "Customer requests a return",
+          "Payment Declined"
+        ],
+        "start_states": [
+          "Order Submission"
+        ],
+        "end_states": [
+          "Order Created",
+          "Order Cancelled",
+          "Return Initiated",
+          "Order Fulfilment Triggered"
+        ],
+        "version": "0.1.0",
+        "domain": null,
+        "owner": null,
+        "source_format": null,
+        "tags": [],
+        "extra": {
+          "self_reported_confidence": "0.800"
+        },
+        "created_at": null
+      },
+      "facts": {
+        "facts": [
+          {
+            "id": "input-1",
+            "statement": "Order Submission",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-1",
+            "statement": "Order Record",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-2",
+            "statement": "Order Fulfilment Trigger",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-1",
+            "statement": "Validate Cart & Reserve Inventory",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-2",
+            "statement": "Authorise Payment",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-3",
+            "statement": "Create Order Record",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-4",
+            "statement": "Trigger Order Fulfilment",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-5",
+            "statement": "Cancel Order",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-1",
+            "statement": "Is Payment Declined?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-1",
+            "statement": "Payment must be authorised before order creation",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-2",
+            "statement": "Declined payment cancels the order",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-1",
+            "statement": "Return Requested",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-1",
+            "statement": "Inventory System",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-2",
+            "statement": "Payment Gateway",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-1",
+            "statement": "PaymentDeclined",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          }
+        ],
+        "structure": {
+          "activities": [
+            {
+              "id": "a1",
+              "name": "Validate Cart & Reserve Inventory",
+              "parallel_group": null
+            },
+            {
+              "id": "a2",
+              "name": "Authorise Payment",
+              "parallel_group": null
+            },
+            {
+              "id": "a3",
+              "name": "Create Order Record",
+              "parallel_group": null
+            },
+            {
+              "id": "a4",
+              "name": "Trigger Order Fulfilment",
+              "parallel_group": null
+            },
+            {
+              "id": "a5",
+              "name": "Cancel Order",
+              "parallel_group": null
+            }
+          ],
+          "decisions": [
+            {
+              "id": "d1",
+              "question": "Is Payment Declined?",
+              "after": "a2",
+              "yes_target": "e1",
+              "no_target": "a3"
+            }
+          ],
+          "exceptions": [
+            {
+              "id": "e1",
+              "reason": "PaymentDeclined",
+              "raised_by": "a2"
+            }
+          ],
+          "compensations": [],
+          "events": [
+            {
+              "id": "ev1",
+              "name": "Return Requested",
+              "emitted_by": null,
+              "kind": "trigger"
+            }
+          ],
+          "triggers": [],
+          "transitions": []
+        }
+      },
+      "assumptions": [],
+      "ambiguities": [],
+      "open_questions": [
+        {
+          "text": "Provide snake_case names for these inputs (e.g. customerId -> customer_id).",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R2b-input-names"
+        },
+        {
+          "text": "What deadline bounds each wait (e.g. 24 hours)?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R6-bounded-waits"
+        },
+        {
+          "text": "Which activities should retry, how many times, and with what backoff?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R8-retries"
+        }
+      ],
+      "suggested_edits": [],
+      "provenance": {}
+    },
+    {
+      "slug": "order-fulfilment",
+      "metadata": {
+        "name": "Order Fulfilment and Return Workflow",
+        "description": "To manage the fulfilment of customer orders and handle return requests.",
+        "purpose": "To manage the fulfilment of customer orders and handle return requests.",
+        "actors": [
+          "Customer",
+          "Order Fulfilment System"
+        ],
+        "systems": [
+          "Order Fulfilment System"
+        ],
+        "trigger_events": [
+          "Order Placement",
+          "Customer Return Request"
+        ],
+        "start_states": [
+          "Order Received"
+        ],
+        "end_states": [],
+        "version": "0.1.0",
+        "domain": null,
+        "owner": null,
+        "source_format": null,
+        "tags": [],
+        "extra": {
+          "self_reported_confidence": "0.300"
+        },
+        "created_at": null
+      },
+      "facts": {
+        "facts": [
+          {
+            "id": "event-1",
+            "statement": "Order Fulfilment Trigger",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          }
+        ],
+        "structure": {
+          "activities": [],
+          "decisions": [],
+          "exceptions": [],
+          "compensations": [],
+          "events": [
+            {
+              "id": "e1",
+              "name": "Order Fulfilment Trigger",
+              "emitted_by": "start",
+              "kind": "trigger"
+            }
+          ],
+          "triggers": [],
+          "transitions": []
+        }
+      },
+      "assumptions": [],
+      "ambiguities": [],
+      "open_questions": [
+        {
+          "text": "What named inputs does the workflow receive (e.g. order_id, amount)?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R2-inputs"
+        },
+        {
+          "text": "What does the workflow produce when it completes?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R3-outputs"
+        },
+        {
+          "text": "What deadline bounds each wait (e.g. 24 hours)?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R6-bounded-waits"
+        }
+      ],
+      "suggested_edits": [],
+      "provenance": {}
+    },
+    {
+      "slug": "order-return",
+      "metadata": {
+        "name": "Order Return",
+        "description": null,
+        "purpose": null,
+        "actors": [],
+        "systems": [],
+        "trigger_events": [],
+        "start_states": [],
+        "end_states": [],
+        "version": "0.1.0",
+        "domain": null,
+        "owner": null,
+        "source_format": null,
+        "tags": [],
+        "extra": {
+          "self_reported_confidence": "0.000"
+        },
+        "created_at": null
+      },
+      "facts": {
+        "facts": [],
+        "structure": null
+      },
+      "assumptions": [],
+      "ambiguities": [],
+      "open_questions": [
+        {
+          "text": "What event starts this workflow (e.g. 'order.settle received')?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R1-trigger"
+        },
+        {
+          "text": "What named inputs does the workflow receive (e.g. order_id, amount)?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R2-inputs"
+        },
+        {
+          "text": "What does the workflow produce when it completes?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R3-outputs"
+        }
+      ],
+      "suggested_edits": [],
+      "provenance": {}
+    }
+  ],
+  "cross_references": [
+    {
+      "source_workflow": "order-placement",
+      "output_field": "Order Record",
+      "output_type": "str",
+      "target_workflow": "order-fulfilment",
+      "input_field": "Order ID",
+      "input_type": "str",
+      "description": "Order Placement's output is used by Order Fulfilment",
+      "user_confirmed": false
+    }
+  ],
+  "triggers": [
+    {
+      "source_workflow": "order-placement",
+      "target_workflow": "order-fulfilment",
+      "mode": "fire_and_forget",
+      "condition": null,
+      "input_map": [
+        {
+          "target_input": "Order ID",
+          "source": "step_output",
+          "source_ref": "Order Record",
+          "type": "str"
+        }
+      ],
+      "result_binding": null,
+      "user_confirmed": false
+    },
+    {
+      "source_workflow": "order-placement",
+      "target_workflow": "order-return",
+      "mode": "fire_and_forget",
+      "condition": "customer requests a return",
+      "input_map": [],
+      "result_binding": null,
+      "user_confirmed": false
+    }
+  ],
+  "spec_approval_status": "pending",
+  "workflow_ids": {},
+  "warnings": [],
+  "validation_findings": {},
+  "edit_log": [],
+  "owner_id": "7d7fecf2-b9e5-4b3f-b2bd-a5c5ef5e1971",
+  "nickname": "Orders pipeline",
+  "stage_timings": {
+    "workflow-segmentation": 77.27416939999966,
+    "extract:order-placement": 97.28560640000069,
+    "extract:order-fulfilment": 98.48995809999906,
+    "extract:order-return": 103.46604549999756
+  },
+  "stage": "spec_drafted",
+  "created_at": "2026-07-17T23:52:52.875760Z",
+  "updated_at": "2026-07-17T23:59:09.391456Z"
+}

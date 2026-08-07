@@ -176,13 +176,32 @@ automatic health-score threshold (with `approve`/`reject` as the manual override
 
 ## 5. Installation & configuration (so the rest makes sense)
 
+Installation and configuration are two steps. A wheel cannot run code at install time, so `pip`
+cannot write the configuration for you — `init` is a command the user types.
+
 ```bash
 # Requires Python 3.12+ (use a virtual environment — see README.md for full steps)
-pip install -e ".[dev]"          # installs the package + the `workflow-compiler` CLI
-cp .env.example .env             # then edit .env
+pip install .                    # installs the package + the `workflow-compiler` CLI
+workflow-compiler init           # asks for provider + credentials, writes .env
 ```
 
-`.env` (read by `config.py` via `python-dotenv`):
+Contributors install `pip install -e ".[dev]"` instead — `-e` keeps the install pointed at the
+working tree, `[dev]` adds `pytest`/`ruff`/`mypy` (README §Develop).
+
+`init` is non-interactive with `--yes`, which is what CI and containers use:
+
+```bash
+workflow-compiler init --provider mock --yes                       # offline, no key
+workflow-compiler init --provider nemotron --nvidia-api-key "$K" --yes
+```
+
+It accepts `--provider` (`nemotron` | `local` | `local-fallback` | `mock`), `--nvidia-api-key`,
+`--env-file` (default `./.env`), `--force` (replace an existing file), and `--yes`. Rendering
+lives in `cli/init_env.py::render_env` — a pure function of its arguments, so the generated file
+is tested without a terminal (`tests/test_cli_init.py`). `init` never validates credentials
+against a live provider; it writes the file and names anything still missing.
+
+The result — `.env`, read by `config.py` via `python-dotenv`:
 
 ```dotenv
 NVIDIA_API_KEY=nvapi-xxxx                 # only needed for the LLM stages
@@ -903,6 +922,7 @@ asyncio.run(main())
 ### 9.2 CLI (`cli/main.py`, Typer + Rich)
 
 ```bash
+workflow-compiler init                                        # → write .env (one-time setup, no LLM)
 workflow-compiler compile doc.md --spec-dir ./specs           # → segment + specs, stops at the spec gate
 workflow-compiler validate <project-id> --spec-dir ./specs    # → fold edits in, run the spec validator
 workflow-compiler approve-spec <project-id> --spec-dir ./specs --out-dir gen  # → compile all to code
@@ -929,6 +949,26 @@ version, and `workflow-compiler <command> --help` is always the authoritative re
 
 For the local gateway, `--model ID` selects the **local** model (discover ids with
 `workflow-compiler models`); `--provider nemotron` bypasses the eGPU and uses the hosted API.
+
+#### `init` — write the `.env` configuration (one-time, no LLM)
+
+The configuration half of the install (§5). Asks which provider to use and for the credentials
+that provider needs, then writes `.env`. Builds no provider and makes no network call — it never
+checks the credentials against a live endpoint, it writes the file and names anything still
+missing.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--provider NAME` | asked for | `nemotron` \| `local` \| `local-fallback` \| `mock`. |
+| `--nvidia-api-key KEY` | asked for | Only read for `nemotron` / `local-fallback`. |
+| `--env-file PATH` | `.env` | Where to write. Parent directories are created. |
+| `--force` | off | Replace an existing file. Without it, an existing file is an error (exit 1). |
+| `--yes` / `-y` | off | Ask nothing; use the flags given plus defaults (provider `mock`). |
+
+Credentials the chosen provider does not need are written as commented placeholders, so switching
+provider later is an uncomment rather than a trip back to `.env.example`. Rendering is
+`cli/init_env.py::render_env`, a pure function of its arguments — tested without a terminal in
+`tests/test_cli_init.py`.
 
 #### `compile <document>` — segment into editable specs, stop at the spec gate
 

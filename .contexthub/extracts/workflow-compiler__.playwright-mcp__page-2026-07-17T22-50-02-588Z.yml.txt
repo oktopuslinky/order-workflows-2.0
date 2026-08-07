@@ -1,0 +1,170 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - link "workflow·compiler" [ref=e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e4]: document → spec → validate → approve → code
+    - navigation [ref=e5]:
+      - link "Projects" [ref=e6] [cursor=pointer]:
+        - /url: /
+      - link "Guide" [ref=e7] [cursor=pointer]:
+        - /url: /guide
+      - button "Switch to dark theme" [ref=e8]: ☾ Dark
+      - 'button "Account: smoke-test" [ref=e36] [cursor=pointer]': S
+  - main [ref=e9]:
+    - generic [ref=e37]:
+      - generic [ref=e38]:
+        - paragraph [ref=e39]: Workflow compiler
+        - heading "Turn a workflow doc into runnable Temporal code" [level=1] [ref=e40]
+        - paragraph [ref=e41]:
+          - text: Upload a document, edit the extracted specs at the human gate, then
+              approve to generate code.
+          - link "Read the spec guide →" [ref=e42] [cursor=pointer]:
+            - /url: /guide
+      - generic [ref=e43]:
+        - generic [ref=e44]: ≈ 14 h
+        - generic [ref=e45]: saved across 1 project — the pipelines ran for 12.7 min
+            in place of an estimated 14 h of human-team work.
+        - generic "Working day = 8 hours. Baselines are configurable estimates, not measurements." [ref=e46]:
+          - text: Estimates —
+          - link "tune the baselines in Settings" [ref=e47] [cursor=pointer]:
+            - /url: /settings
+          - text: .
+      - generic [ref=e48]:
+        - generic [ref=e49]:
+          - heading "New project" [level=2] [ref=e50]
+          - paragraph [ref=e51]: .docx / .pdf / .md / .html / .txt, or paste text.
+              The compiler segments it into one editable spec per workflow.
+          - generic [ref=e52] [cursor=pointer]: Drag a file here, or click to choose
+          - generic [ref=e54]: or paste text
+          - textbox "When a customer submits an order, validate payment, then ship
+            it…" [ref=e57]
+          - generic [ref=e58]:
+            - generic [ref=e59]: Model
+            - combobox "Model" [ref=e60] [cursor=pointer]:
+              - option "Nemotron (cloud)" [selected]
+          - generic [ref=e61]:
+            - generic [ref=e62]: Nickname
+            - textbox "Nickname" [ref=e63]:
+              - /placeholder: Optional — e.g. Orders pipeline
+          - button "Compile" [disabled] [ref=e64]
+        - generic [ref=e65]:
+          - generic [ref=e66]:
+            - heading "Projects" [level=2] [ref=e67]
+            - generic [ref=e68]: '32'
+          - generic [ref=e69]:
+            - generic [ref=e70]: Search projects
+            - searchbox "Search projects" [ref=e71]
+          - list [ref=e72]:
+            - listitem [ref=e73]:
+              - link "Completed Workflow 1 Completed 3 workflows 14m ago" [ref=e74] [cursor=pointer]:
+                - /url: /projects/b9b301bf-83a7-4f67-bce0-9a646905852d
+                - generic [ref=e75]: Completed Workflow 1
+                - generic [ref=e77]:
+                  - generic [ref=e78]: Completed
+                  - generic [ref=e79]: 3 workflows
+                  - generic [ref=e80]: ·
+                  - generic [ref=e81]: 14m ago
+              - button "Rename Completed Workflow 1" [ref=e82]
+            - listitem [ref=e85]:
+              - link "6d81181e… Spec drafted 3 workflows 2h ago" [ref=e86] [cursor=pointer]:
+                - /url: /projects/6d81181e-90d6-433e-9772-8a010412b6dd
+                - generic [ref=e87]: 6d81181e…
+                - generic [ref=e89]:
+                  - generic [ref=e90]: Spec drafted
+                  - generic [ref=e91]: 3 workflows
+                  - generic [ref=e92]: ·
+                  - generic [ref=e93]: 2h ago
+              - button "Name this project" [ref=e94]
+            - listitem [ref=e97]:
+              - link "3f6be187… Spec drafted 1 workflow 7h ago" [ref=e98] [cursor=pointer]:
+                - /url: /projects/3f6be187-d4d7-4f0d-9f90-3eb84a43d70f
+                - generic [ref=e99]: 3f6be187…
+                - generic [ref=e101]:
+                  - generic [ref=e102]: Spec drafted
+                  - generic [ref=e103]: 1 workflow
+                  - generic [ref=e104]: ·
+                  - generic [ref=e105]: 7h ago
+              - button "Name this project" [ref=e106]
+            - listitem [ref=e109]:
+              - link "7aaa7805… Spec drafted 1 workflow 1d ago" [ref=e110] [cursor=pointer]:
+                - /url: /projects/7aaa7805-279b-4a56-92e0-ae0b94740702
+                - generic [ref=e111]: 7aaa7805…
+                - generic [ref=e113]:
+                  - generic [ref=e114]: Spec drafted
+                  - generic [ref=e115]: 1 workflow
+                  - generic [ref=e116]: ·
+                  - generic [ref=e117]: 1d ago
+              - button "Name this project" [ref=e118]
+            - listitem [ref=e121]:
+              - link "ed293764… Spec drafted 1 workflow 1d ago" [ref=e122] [cursor=pointer]:
+                - /url: /projects/ed293764-afc5-4601-a1d0-f406c771ecb3
+                - generic [ref=e123]: ed293764…
+                - generic [ref=e125]:
+                  - generic [ref=e126]: Spec drafted
+                  - generic [ref=e127]: 1 workflow
+                  - generic [ref=e128]: ·
+                  - generic [ref=e129]: 1d ago
+              - button "Name this project" [ref=e130]
+            - listitem [ref=e133]:
+              - link "e48159a7… Spec drafted 3 workflows 1d ago" [ref=e134] [cursor=pointer]:
+                - /url: /projects/e48159a7-b18c-4eed-a5c5-d7dd4774ad7a
+                - generic [ref=e135]: e48159a7…
+                - generic [ref=e137]:
+                  - generic [ref=e138]: Spec drafted
+                  - generic [ref=e139]: 3 workflows
+                  - generic [ref=e140]: ·
+                  - generic [ref=e141]: 1d ago
+              - button "Name this project" [ref=e142]
+            - listitem [ref=e145]:
+              - link "087be1a5… Completed 3 workflows 4d ago" [ref=e146] [cursor=pointer]:
+                - /url: /projects/087be1a5-d307-4cd0-9f2e-a6a12b8bbda4
+                - generic [ref=e147]: 087be1a5…
+                - generic [ref=e149]:
+                  - generic [ref=e150]: Completed
+                  - generic [ref=e151]: 3 workflows
+                  - generic [ref=e152]: ·
+                  - generic [ref=e153]: 4d ago
+              - button "Name this project" [ref=e154]
+            - listitem [ref=e157]:
+              - link "8e0273e9… Needs attention 3 workflows 4d ago" [ref=e158] [cursor=pointer]:
+                - /url: /projects/8e0273e9-7b9d-4b4c-9317-c09fbdcf9636
+                - generic [ref=e159]: 8e0273e9…
+                - generic [ref=e161]:
+                  - generic [ref=e162]: Needs attention
+                  - generic [ref=e163]: 3 workflows
+                  - generic [ref=e164]: ·
+                  - generic [ref=e165]: 4d ago
+              - button "Name this project" [ref=e166]
+            - listitem [ref=e169]:
+              - link "12ef7be1… Spec drafted 3 workflows 4d ago" [ref=e170] [cursor=pointer]:
+                - /url: /projects/12ef7be1-db95-43ed-a7f2-d3bf74003bbe
+                - generic [ref=e171]: 12ef7be1…
+                - generic [ref=e173]:
+                  - generic [ref=e174]: Spec drafted
+                  - generic [ref=e175]: 3 workflows
+                  - generic [ref=e176]: ·
+                  - generic [ref=e177]: 4d ago
+              - button "Name this project" [ref=e178]
+            - listitem [ref=e181]:
+              - link "fe24cff8… Completed 3 workflows 4d ago" [ref=e182] [cursor=pointer]:
+                - /url: /projects/fe24cff8-619f-4978-a4f7-73d237e5a730
+                - generic [ref=e183]: fe24cff8…
+                - generic [ref=e185]:
+                  - generic [ref=e186]: Completed
+                  - generic [ref=e187]: 3 workflows
+                  - generic [ref=e188]: ·
+                  - generic [ref=e189]: 4d ago
+              - button "Name this project" [ref=e190]
+          - generic [ref=e193]:
+            - generic [ref=e194]:
+              - button "‹ Prev" [disabled] [ref=e195]
+              - generic [ref=e196]: 1 / 4
+              - button "Next ›" [ref=e197] [cursor=pointer]
+            - generic [ref=e198]:
+              - generic [ref=e199]: Per page
+              - combobox "Per page" [ref=e200] [cursor=pointer]:
+                - option "10" [selected]
+                - option "25"
+                - option "50"
+                - option "100"
+  - alert [ref=e29]

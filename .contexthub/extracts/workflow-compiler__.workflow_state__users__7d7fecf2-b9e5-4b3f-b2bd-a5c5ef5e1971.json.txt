@@ -1,0 +1,14 @@
+{
+  "user_id": "7d7fecf2-b9e5-4b3f-b2bd-a5c5ef5e1971",
+  "email": "demo@demo.local",
+  "display_name": "Alex Rivera",
+  "password_hash": "f644e9b488a50dbd64ca679155ac507fc426339e177b1f5bb10934521985014880a2eda821bb0f0f168974e834931f08219733b69de97e98f78b76fb4c857699",
+  "password_salt": "7e921f58823c5891fb2b11f3a42ef677",
+  "created_at": "2026-07-17T23:41:59.158135Z",
+  "preferences": {
+    "baseline_hours": {
+      "compile": 20.0
+    },
+    "projects_page_size": 10
+  }
+}

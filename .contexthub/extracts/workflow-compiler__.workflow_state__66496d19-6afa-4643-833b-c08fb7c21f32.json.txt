@@ -1,0 +1,1003 @@
+{
+  "workflow_id": "66496d19-6afa-4643-833b-c08fb7c21f32",
+  "document_text": "# Order Placement Workflow\n\n<!--\n  workflow-compiler specification (v1) — slug: order-placement\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nThe Order Placement workflow turns a submitted shopping cart into a confirmed order by validating the cart, reserving inventory, authorizing payment, and creating the order record.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Shopper, Order Operations\n- systems: Order Service, Catalogue Service, Inventory Service, Payment Gateway\n- triggers: checkout.submitted request received by Order Service\n- start states: Cart submitted for checkout, Cart in open state\n- end states: Order created (placed), Checkout rejected (CartNotEligible or PaymentDeclined), Inventory reservation released (PaymentDeclined)\n- tags: \n\n## Inputs\n- cart_id\n- customer_id\n- amount\n- currency\n\n## Outputs\n- order_id\n- authorization_id\n- placement_status\n\n## Business Rules\n- BR-1: A cart may only be placed when it is in the open state\n- BR-2: Inventory must be reserved before payment is authorised\n- BR-3: Payment must be authorised before the order is created\n\n## API Interfaces\n- Order Service: POST /orders/validate-cart\n- Inventory Service: POST /inventory/reserve\n- Payment Gateway: POST /payments/authorize\n- Order Service: POST /orders/create\n\n## Systems Involved\n- Order Service\n- Catalogue Service\n- Inventory Service\n- Payment Gateway\n\n## Timers and SLAs\n- Validate cart: 5 seconds\n- Authorise payment: 30 seconds\n\n## Retries\n- Reserve inventory: up to 3 times with exponential backoff starting at 2 seconds\n- Authorise payment: up to 2 times with a fixed 5-second delay (excluding PaymentDeclined)\n\n## Activities\n- [a1] Validate cart\n- [a2] Reserve inventory\n- [a3] Authorise payment\n- [a4] Create order\n- [a5] Release inventory reservation\n\n## Decisions\n- [d1] Is the cart eligible? — after: a1; yes: a2; no: e1\n- [d2] Is payment authorised? — after: a3; yes: a4; no: e2\n\n## Exceptions\n- [e1] CartNotEligible — raised by: a1\n- [e2] PaymentDeclined — raised by: a3\n\n## Compensations\n- [c1] Release inventory reservation — compensates: a2\n\n## Events\n- [ev1] checkout.submitted — kind: trigger; emitted by: start\n- [ev2] order_id — kind: output_emit; emitted by: a4\n- [ev3] authorization_id — kind: output_emit; emitted by: a3\n- [ev4] placement_status — kind: output_emit\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n<!-- none -->\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n<!-- none -->\n\n## Cross-Workflow Dependencies\n- [x] provides output `order_id` to `order-fulfilment` input `order_id` — Order Fulfilment consumes the order_id produced by Order Placement\n- [x] provides output `order_id` to `order-return` input `order_id` — Order Return consumes the order_id produced by Order Placement\n\n## Triggers\n- [x] triggers `order-fulfilment` (fire-and-forget) when `when an order is placed`\n  input order_id: step output `order_id` (str)\n- [x] triggers `order-return` (fire-and-forget)\n  input order_id: step output `order_id` (str)",
+  "project_id": "8e0273e9-7b9d-4b4c-9317-c09fbdcf9636",
+  "workflow_metadata": {
+    "name": "Order Placement Workflow",
+    "description": "The Order Placement workflow turns a submitted shopping cart into a confirmed order by validating the cart, reserving inventory, authorizing payment, and creating the order record.",
+    "purpose": "The Order Placement workflow turns a submitted shopping cart into a confirmed order by validating the cart, reserving inventory, authorizing payment, and creating the order record.",
+    "actors": [
+      "Shopper",
+      "Order Operations"
+    ],
+    "systems": [
+      "Order Service",
+      "Catalogue Service",
+      "Inventory Service",
+      "Payment Gateway"
+    ],
+    "trigger_events": [
+      "checkout.submitted request received by Order Service"
+    ],
+    "start_states": [
+      "Cart submitted for checkout",
+      "Cart in open state"
+    ],
+    "end_states": [
+      "Order created (placed)",
+      "Checkout rejected (CartNotEligible or PaymentDeclined)",
+      "Inventory reservation released (PaymentDeclined)"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.950"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "cart_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "customer_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-3",
+        "statement": "amount",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-4",
+        "statement": "currency",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "order_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "authorization_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-3",
+        "statement": "placement_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Validate cart",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Reserve inventory",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Authorise payment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-4",
+        "statement": "Create order",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-5",
+        "statement": "Release inventory reservation",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Is the cart eligible?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-2",
+        "statement": "Is payment authorised?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-1: A cart may only be placed when it is in the open state",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-2: Inventory must be reserved before payment is authorised",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-3: Payment must be authorised before the order is created",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "checkout.submitted",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-2",
+        "statement": "order_id",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-3",
+        "statement": "authorization_id",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-4",
+        "statement": "placement_status",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "Order Service: POST /orders/validate-cart",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "Inventory Service: POST /inventory/reserve",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-3",
+        "statement": "Payment Gateway: POST /payments/authorize",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-4",
+        "statement": "Order Service: POST /orders/create",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Order Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Catalogue Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Inventory Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-4",
+        "statement": "Payment Gateway",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "CartNotEligible",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-2",
+        "statement": "PaymentDeclined",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-1",
+        "statement": "Validate cart: 5 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-2",
+        "statement": "Authorise payment: 30 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Reserve inventory: up to 3 times with exponential backoff starting at 2 seconds",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "Authorise payment: up to 2 times with a fixed 5-second delay (excluding PaymentDeclined)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Release inventory reservation compensates Reserve inventory",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Validate cart",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Reserve inventory",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Authorise payment",
+          "parallel_group": null
+        },
+        {
+          "id": "a4",
+          "name": "Create order",
+          "parallel_group": null
+        },
+        {
+          "id": "a5",
+          "name": "Release inventory reservation",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Is the cart eligible?",
+          "after": "a1",
+          "yes_target": "a2",
+          "no_target": "e1"
+        },
+        {
+          "id": "d2",
+          "question": "Is payment authorised?",
+          "after": "a3",
+          "yes_target": "a4",
+          "no_target": "e2"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "CartNotEligible",
+          "raised_by": "a1"
+        },
+        {
+          "id": "e2",
+          "reason": "PaymentDeclined",
+          "raised_by": "a3"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Release inventory reservation",
+          "compensates": "a2"
+        }
+      ],
+      "events": [
+        {
+          "id": "ev1",
+          "name": "checkout.submitted",
+          "emitted_by": "start",
+          "kind": "trigger"
+        },
+        {
+          "id": "ev2",
+          "name": "order_id",
+          "emitted_by": "a4",
+          "kind": "output_emit"
+        },
+        {
+          "id": "ev3",
+          "name": "authorization_id",
+          "emitted_by": "a3",
+          "kind": "output_emit"
+        },
+        {
+          "id": "ev4",
+          "name": "placement_status",
+          "emitted_by": null,
+          "kind": "output_emit"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "t1",
+          "target_workflow": "order-fulfilment",
+          "mode": "fire_and_forget",
+          "condition": "when an order is placed",
+          "after": null
+        },
+        {
+          "id": "t2",
+          "target_workflow": "order-return",
+          "mode": "fire_and_forget",
+          "condition": null,
+          "after": null
+        }
+      ],
+      "transitions": []
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): checkout.submitted request received by Order Service.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "4 input(s): cart_id, customer_id, amount, currency.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "3 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 2 decision(s) have both branches.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "Waits are present and at least one timer/deadline was declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "No free-form state transitions.",
+        "question": null,
+        "answer": null
+      }
+    ]
+  },
+  "outgoing_triggers": [
+    {
+      "source_workflow": "order-placement",
+      "target_workflow": "order-fulfilment",
+      "mode": "fire_and_forget",
+      "condition": "when an order is placed",
+      "input_map": [
+        {
+          "target_input": "order_id",
+          "source": "step_output",
+          "source_ref": "order_id",
+          "type": "str"
+        }
+      ],
+      "result_binding": null,
+      "user_confirmed": true
+    },
+    {
+      "source_workflow": "order-placement",
+      "target_workflow": "order-return",
+      "mode": "fire_and_forget",
+      "condition": null,
+      "input_map": [
+        {
+          "target_input": "order_id",
+          "source": "step_output",
+          "source_ref": "order_id",
+          "type": "str"
+        }
+      ],
+      "result_binding": null,
+      "user_confirmed": true
+    }
+  ],
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Validate cart",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Reserve inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Authorise payment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Create order",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_5",
+        "label": "Release inventory reservation",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Is the cart eligible?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_2",
+        "label": "Is payment authorised?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "CartNotEligible",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "PaymentDeclined",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Release inventory reservation",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "checkout.submitted",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "order_id",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "authorization_id",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_4",
+        "label": "placement_status",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "trigger_1",
+        "label": "Trigger order-fulfilment",
+        "node_type": "trigger",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "target_workflow": "order-fulfilment",
+          "mode": "fire_and_forget"
+        }
+      },
+      {
+        "id": "trigger_2",
+        "label": "Trigger order-return",
+        "node_type": "trigger",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "target_workflow": "order-return",
+          "mode": "fire_and_forget"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "activity_3",
+        "target": "decision_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e7",
+        "source": "decision_2",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e8",
+        "source": "decision_2",
+        "target": "exception_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e9",
+        "source": "activity_4",
+        "target": "activity_5",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "activity_5",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "activity_1",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "activity_3",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "activity_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e14",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "activity_4",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e18",
+        "source": "activity_3",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e19",
+        "source": "start",
+        "target": "event_4",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e20",
+        "source": "event_4",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e21",
+        "source": "activity_5",
+        "target": "trigger_1",
+        "edge_type": "conditional",
+        "label": "triggers",
+        "condition": "when an order is placed"
+      },
+      {
+        "id": "e22",
+        "source": "activity_5",
+        "target": "trigger_2",
+        "edge_type": "sequence",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e23",
+        "source": "exception_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e24",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.85: 0 error(s), 3 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Dead-end node 'Trigger order-fulfilment' has no outgoing edges.",
+        "location": "trigger_1",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-2",
+        "severity": "warning",
+        "message": "Dead-end node 'Trigger order-return' has no outgoing edges.",
+        "location": "trigger_2",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-3",
+        "severity": "warning",
+        "message": "Duplicate nodes share the label 'release inventory reservation'.",
+        "location": "activity_5, compensation_1",
+        "suggestion": "Merge the duplicate nodes into one."
+      }
+    ],
+    "score": 0.85,
+    "health_score": 0.85,
+    "confidence": 1.0,
+    "reviewer": "workflow-review",
+    "reviewed_at": "2026-07-13T20:18:17.568919Z"
+  },
+  "approval_status": "pending",
+  "cvpa_classification": null,
+  "temporal_design": null,
+  "temporal_code": null,
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Validate cart\"]\n    activity_2[\"Reserve inventory\"]\n    activity_3[\"Authorise payment\"]\n    activity_4[\"Create order\"]\n    activity_5[\"Release inventory reservation\"]\n    decision_1{\"Is the cart eligible?\"}\n    decision_2{\"Is payment authorised?\"}\n    exception_1([\"CartNotEligible\"])\n    exception_2([\"PaymentDeclined\"])\n    compensation_1[\"Release inventory reservation\"]\n    event_1([\"checkout.submitted\"])\n    event_2([\"order_id\"])\n    event_3([\"authorization_id\"])\n    event_4([\"placement_status\"])\n    trigger_1[\"Trigger order-fulfilment\"]\n    trigger_2[\"Trigger order-return\"]\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> activity_3\n    activity_3 --> decision_2\n    decision_2 -->|yes| activity_4\n    decision_2 -->|no| exception_2\n    activity_4 --> activity_5\n    activity_5 --> end_node\n    activity_1 -.->|on error| exception_1\n    activity_3 -.->|on error| exception_2\n    activity_2 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_4 -.->|emits| event_2\n    activity_3 -.->|emits| event_3\n    start -.->|event| event_4\n    event_4 -.->|triggers| activity_1\n    activity_5 -->|when an order is placed| trigger_1\n    activity_5 -->|triggers| trigger_2\n    exception_2 -->|terminates| end_node\n    exception_1 -->|terminates| end_node",
+    "title": "Order Placement Workflow"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 0.9,
+    "cvpa": null,
+    "temporal": null,
+    "overall": null,
+    "notes": {}
+  },
+  "stage": "reviewed",
+  "created_at": "2026-07-13T20:18:17.568919Z",
+  "updated_at": "2026-07-13T20:18:17.568919Z"
+}

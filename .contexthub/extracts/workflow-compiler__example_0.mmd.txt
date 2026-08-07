@@ -1,0 +1,125 @@
+flowchart TD
+    start(["Start"])
+    end_node(["End"])
+    activity_1["Validate request payload"]
+    activity_2["Resolve target plan"]
+    activity_3["Check subscription eligibility"]
+    activity_4["Calculate proration amount"]
+    activity_5["Validate and apply promotional discount"]
+    activity_6["Pre-authorise proration charge"]
+    activity_7["Update entitlements"]
+    activity_8["Re-provision service"]
+    activity_9["Update resource inventory"]
+    activity_10["Capture pre-authorised charge"]
+    activity_11["Send upgrade confirmation"]
+    activity_12["Record upgrade audit trail"]
+    decision_1{"Is subscription eligible for upgrade?"}
+    decision_2{"Is pre-authorisation successful?"}
+    decision_3{"Is provisioning successful?"}
+    decision_4{"Is charge capture successful?"}
+    decision_5{"Does target plan require Compliance Officer review?"}
+    exception_1(["Plan not found (PLANNOTFOUND)"])
+    exception_2(["Plan unavailable in region (PLANREGIONUNAVAILABLE)"])
+    exception_3(["Ineligible subscription state (SUBSCRIPTIONNOTUPGRADEABLE)"])
+    exception_4(["Concurrent change order conflict (CONCURRENTCHANGEORDER_CONFLICT)"])
+    exception_5(["Invalid promotional code"])
+    exception_6(["Pre-authorisation failure (PAYMENTPREAUTH_FAILED)"])
+    exception_7(["Provisioning timeout"])
+    exception_8(["Entitlement update failure"])
+    exception_9(["Charge capture failure"])
+    exception_10(["Compliance hold"])
+    compensation_1["Restore old entitlements"]
+    compensation_2["Re-provision with old plan"]
+    compensation_3["Restore old resource reservation"]
+    compensation_4["Release pre-authorisation"]
+    compensation_5["Reverse charge capture"]
+    compensation_6["Publish rollback event"]
+    event_1(["oms.subscription.upgrade.rejected"])
+    event_2(["oms.subscription.upgrade.started"])
+    event_3(["oms.subscription.upgrade.completed"])
+    event_4(["oms.subscription.upgrade.rolled_back"])
+    state_1["Start"]
+    state_2["Upgrade requested"]
+    state_3["Upgrade rejected (if ineligible)"]
+    state_4["Upgrade in progress (if eligible)"]
+    state_5["Upgrade in progress"]
+    state_6["Upgrade completed (on success)"]
+    state_7["Upgrade failed (on failure)"]
+    state_8["Upgrade failed"]
+    state_9["Rollback (compensation)"]
+    start --> activity_1
+    activity_1 --> decision_1
+    decision_1 -->|yes| activity_2
+    decision_1 -->|no| exception_1
+    activity_2 --> decision_2
+    decision_2 -->|yes| activity_3
+    decision_2 -->|no| exception_2
+    activity_3 --> decision_3
+    decision_3 -->|yes| activity_4
+    decision_3 -->|no| exception_3
+    activity_4 --> decision_4
+    decision_4 -->|yes| activity_5
+    decision_4 -->|no| exception_4
+    activity_5 --> decision_5
+    decision_5 -->|yes| activity_6
+    decision_5 -->|no| exception_5
+    activity_6 --> activity_7
+    activity_7 --> activity_8
+    activity_8 --> activity_9
+    activity_9 --> activity_10
+    activity_10 --> activity_11
+    activity_11 --> activity_12
+    activity_12 --> end_node
+    activity_1 -.->|on error| exception_1
+    exception_1 -.->|compensate| compensation_1
+    compensation_1 --> end_node
+    activity_2 -.->|on error| exception_2
+    exception_2 -.->|compensate| compensation_2
+    compensation_2 --> end_node
+    activity_3 -.->|on error| exception_3
+    exception_3 -.->|compensate| compensation_3
+    compensation_3 --> end_node
+    activity_4 -.->|on error| exception_4
+    exception_4 -.->|compensate| compensation_4
+    compensation_4 --> end_node
+    activity_5 -.->|on error| exception_5
+    exception_5 -.->|compensate| compensation_5
+    compensation_5 --> end_node
+    activity_6 -.->|on error| exception_6
+    exception_6 -.->|compensate| compensation_6
+    compensation_6 --> end_node
+    activity_7 -.->|on error| exception_7
+    exception_7 -.->|compensate| compensation_1
+    activity_8 -.->|on error| exception_8
+    exception_8 -.->|compensate| compensation_1
+    activity_9 -.->|on error| exception_9
+    exception_9 -.->|compensate| compensation_1
+    activity_10 -.->|on error| exception_10
+    exception_10 -.->|compensate| compensation_1
+    exception_1 -.->|retry| activity_1
+    exception_2 -.->|retry| activity_2
+    exception_3 -.->|retry| activity_3
+    exception_4 -.->|retry| activity_4
+    exception_5 -.->|retry| activity_5
+    exception_6 -.->|retry| activity_6
+    exception_7 -.->|retry| activity_7
+    exception_8 -.->|retry| activity_8
+    exception_9 -.->|retry| activity_9
+    activity_12 -.->|emits| event_1
+    activity_12 -.->|emits| event_2
+    activity_12 -.->|emits| event_3
+    activity_12 -.->|emits| event_4
+    state_1 -->|transition| state_2
+    state_2 -->|transition| state_3
+    state_2 -->|transition| state_4
+    state_5 -->|transition| state_6
+    state_5 -->|transition| state_7
+    state_8 -->|transition| state_9
+    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;
+    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
+    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;
+    class start,activity_10,event_2,state_1,state_2 capture;
+    class activity_1,activity_3,activity_5,decision_1,decision_2,decision_3,decision_4,decision_5,exception_1,exception_2,exception_3,exception_5,exception_10,state_3 validate;
+    class activity_2,activity_4,activity_6,activity_7,activity_8,activity_9,exception_4,exception_6,exception_7,exception_8,exception_9,state_4,state_5 process;
+    class end_node,activity_11,activity_12,compensation_1,compensation_2,compensation_3,compensation_4,compensation_5,compensation_6,event_1,event_3,event_4,state_6,state_7,state_8,state_9 activate;

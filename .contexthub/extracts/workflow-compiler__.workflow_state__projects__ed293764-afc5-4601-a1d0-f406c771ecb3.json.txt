@@ -1,0 +1,572 @@
+{
+  "project_id": "ed293764-afc5-4601-a1d0-f406c771ecb3",
+  "document_text": "# Order Settlement Workflow\n\n<!-- IDEAL-CONDITIONS REFERENCE DOCUMENT ---------------------------------- This document is deliberately written so that every pipeline stage (discovery → facts → structure → graph → CVPA → Temporal design → Temporal code) has exactly what it needs and nothing that confuses it. See the \"Temporal-alignment notes\" section at the bottom for where (and why) it intentionally deviates from docs/DOCUMENT_FORMAT_GUIDE.md.\n\nDesign goals that map 1:1 onto a Temporal workflow:\nONE workflow, ONE start, ONE end  (no multi-workflow / multi-start confusion)\nActivity names are stable PascalCase phrases, reused verbatim in the\nProcess, API Interfaces, Retries, and Compensation sections.\nEvery decision states BOTH branches; the \"yes\" branch is the happy path and\nthe \"no\" branch routes to a NAMED exception (never back to the same step).\n\"In parallel\" is used ONLY for genuinely independent activities that share\nno data dependency and are not gated by a decision.\nSaga compensations use the exact \"<Comp> compensates <Activity>\" phrasing.\nThe one human/external wait is modelled as a signal AND paired with a timer\nso the Temporal design can bound it (no wait-forever signal gate).\nNO free-form \"state transitions\" (\"X transitions to Y\") are written in the\nProcess — those create a disconnected state subgraph that the design LLM mis-reads. Lifecycle states live only in the Metadata/States section. -->\n\n## Metadata\n\n| Field   | Value                                   | |---------|-----------------------------------------| | Domain  | Commerce / Order Management             | | Owner   | Settlement Platform Team                | | Version | 1.0                                     | | Tags    | saga, compensation, payments, signal    |\n\n## Purpose\n\nThis workflow settles a confirmed order: it validates the order, reserves inventory, charges the customer, waits for warehouse shipping confirmation, and finalises the sale. If any step after payment fails, it compensates the completed steps in reverse so the customer is never charged for an order that cannot ship.\n\n## Trigger\n\nThe workflow starts when an order is confirmed and an order.settle request is received by the Settlement Service.\n\n## Actors\n\nCustomer\nWarehouse Operator\nSettlement Operations\n\n## Systems\n\nSettlement Service\nInventory Service\nPayment Gateway\nNotification Service\nAnalytics Pipeline\n\n## Inputs and Outputs\n\nInputs (these become the workflow input fields)\norder_id — identifier of the confirmed order to settle\ncustomer_id — identifier of the paying customer\namount — order total to charge\ncurrency — ISO currency code for the charge\n\nOutputs\nsettlement_id — identifier of the completed settlement\npayment_id — identifier of the captured payment\nsettlement_status — settled, rejected, or rolled_back\n\n## Process\n\nThe Settlement Service validates the order using order_id and returns\nwhether the order is settleable.\nIf the order is not settleable, the workflow raises OrderNotSettleable\nand rejects the settlement; if the order is settleable, the workflow continues.\nThe Inventory Service reserves inventory for order_id and returns a\nreservation_id.\nThe Payment Gateway charges payment for customer_id for amount in\ncurrency and returns a payment_id.\nIf the charge is declined, the workflow raises PaymentDeclined; if the\ncharge succeeds, the workflow continues.\nIn parallel, the Notification Service notifies the customer of the pending\nshipment and the Analytics Pipeline records a settlement event. These two activities are independent and share no data.\nThe workflow waits for shipping confirmation — a shipping.confirmed\nsignal sent by the Warehouse Operator — for up to the shipping-confirmation deadline.\nThe Settlement Service finalises the settlement for order_id and returns\na settlement_id.\n\n## Business Rules\n\nBR-1: An order may only be settled when it is in the confirmed state.\nBR-2: Inventory must be reserved before payment is charged.\nBR-3: Payment must be captured before shipping confirmation is awaited.\nBR-4: If shipping is not confirmed before the deadline, the settlement is\nrolled back.\n\n## Timers and SLAs\n\nOrder validation must complete within 5 seconds.\nCharge payment must complete within 30 seconds.\nShipping confirmation must arrive within 24 hours; otherwise the workflow\nrolls back the settlement.\n\n## API Interfaces\n\n| System               | Method | Endpoint / Action          | Purpose                                   | |----------------------|--------|----------------------------|-------------------------------------------| | Settlement Service   | POST   | /settlement/validate     | Validate the order (order_id)           | | Inventory Service    | POST   | /inventory/reserve       | Reserve inventory (order_id)            | | Payment Gateway      | POST   | /payments/charge         | Charge payment (customer_id, amount)  | | Notification Service | POST   | /notify/customer         | Notify the customer of pending shipment   | | Analytics Pipeline   | POST   | /analytics/event         | Record a settlement event                 | | Settlement Service   | POST   | /settlement/finalise     | Finalise the settlement (order_id)      |\n\n## Exceptions and Error Handling\n\nOrderNotSettleable: the order is not in a settleable state → reject the\nsettlement with reason ORDER_NOT_SETTLEABLE and end the workflow.\nPaymentDeclined: the Payment Gateway declines the charge → roll back the\nsettlement (release inventory) and end the workflow.\nShippingTimeout: shipping confirmation does not arrive within 24 hours →\nroll back the settlement (refund payment, release inventory).\n\n## Retries\n\nReserve inventory: retry up to 3 times with exponential backoff\nstarting at 2 seconds.\nCharge payment: retry up to 2 times with a fixed 5-second delay;\ndo not retry on a PaymentDeclined error.\nNotify customer: retry up to 5 times with exponential backoff; failure\nis non-fatal.\n\n## Compensation and Rollback\n\nRelease inventory compensates Reserve inventory — return the reserved\nstock if the settlement is rolled back after reservation.\nRefund payment compensates Charge payment — reverse the captured charge\nif the settlement is rolled back after payment.\n\n---\n\n## Temporal-alignment notes (deviations from DOCUMENT_FORMAT_GUIDE.md and why)\n\nThese are written for the human author, not the pipeline. They explain the choices that make this document produce clean Temporal code:\n\nNo ## States \"transition\" sentences in the Process. The format guide\nencourages \"The order transitions from received to cancelled.\" Those become STATE_TRANSITION facts and the graph builder turns each into a separate state_* node, producing a disconnected state subgraph (with its own \"Start\"-labelled node) alongside the real flow. The Temporal design LLM then sees two parallel structures and can mis-wire the plan. Deviation: lifecycle states are mentioned only as prose in BR-1; no X -> Y transition lines are written. (We also omit the ## States start/end-state list, which only feeds discovery metadata and is not needed for the code.)\n\nEvery decision's \"no\" branch points at a distinct named exception, never\nback at the same activity. A decision whose yes/no targets are identical is a degenerate decision the pipeline now repairs, but writing it correctly avoids the repair entirely.\n\n\"In parallel\" is reserved for truly independent work (NotifyCustomer +\nRecordSettlementEvent). Activities with data dependencies (Reserve → Charge → Finalise) are written as sequential numbered steps so they are never folded into a fork.\n\nThe single human/external wait is BOTH a signal and a timer. Step 7 names\na shipping.confirmed signal and the Timers section gives it a 24-hour deadline, so the design can model a bounded wait_condition(..., timeout=...) instead of a signal gate that blocks forever.\n\nActivity names are reused verbatim across Process / API Interfaces /\nRetries / Compensation. This is what lets the design bind retries, timeouts, and compensations to the right activity by name (the code generator matches by normalised name).\n\nInputs are named as snake_case fields (order_id, customer_id, …) so\nthey map directly onto WorkflowInput dataclass fields and onto activity input bindings.",
+  "segments": [
+    {
+      "id": "w1",
+      "slug": "order-settlement-workflow",
+      "name": "Order Settlement Workflow",
+      "purpose": "This workflow settles a confirmed order: it validates the order, reserves inventory, charges the customer, waits for warehouse shipping confirmation, and finalises the sale. If any step after payment fails, it compensates the completed steps in reverse so the customer is never charged for an order that cannot ship",
+      "section_titles": [
+        "Metadata",
+        "Purpose",
+        "Trigger",
+        "Actors",
+        "Systems",
+        "Inputs and Outputs",
+        "Process",
+        "Business Rules",
+        "Timers and SLAs",
+        "API Interfaces",
+        "Exceptions and Error Handling",
+        "Retries",
+        "Compensation and Rollback",
+        "Temporal-alignment notes (deviations from DOCUMENT_FORMAT_GUIDE.md and why)"
+      ],
+      "text": "# Order Settlement Workflow\n\n<!-- IDEAL-CONDITIONS REFERENCE DOCUMENT ---------------------------------- This document is deliberately written so that every pipeline stage (discovery → facts → structure → graph → CVPA → Temporal design → Temporal code) has exactly what it needs and nothing that confuses it. See the \"Temporal-alignment notes\" section at the bottom for where (and why) it intentionally deviates from docs/DOCUMENT_FORMAT_GUIDE.md.\n\nDesign goals that map 1:1 onto a Temporal workflow:\nONE workflow, ONE start, ONE end  (no multi-workflow / multi-start confusion)\nActivity names are stable PascalCase phrases, reused verbatim in the\nProcess, API Interfaces, Retries, and Compensation sections.\nEvery decision states BOTH branches; the \"yes\" branch is the happy path and\nthe \"no\" branch routes to a NAMED exception (never back to the same step).\n\"In parallel\" is used ONLY for genuinely independent activities that share\nno data dependency and are not gated by a decision.\nSaga compensations use the exact \"<Comp> compensates <Activity>\" phrasing.\nThe one human/external wait is modelled as a signal AND paired with a timer\nso the Temporal design can bound it (no wait-forever signal gate).\nNO free-form \"state transitions\" (\"X transitions to Y\") are written in the\nProcess — those create a disconnected state subgraph that the design LLM mis-reads. Lifecycle states live only in the Metadata/States section. -->\n\n## Metadata\n\n| Field   | Value                                   | |---------|-----------------------------------------| | Domain  | Commerce / Order Management             | | Owner   | Settlement Platform Team                | | Version | 1.0                                     | | Tags    | saga, compensation, payments, signal    |\n\n## Purpose\n\nThis workflow settles a confirmed order: it validates the order, reserves inventory, charges the customer, waits for warehouse shipping confirmation, and finalises the sale. If any step after payment fails, it compensates the completed steps in reverse so the customer is never charged for an order that cannot ship.\n\n## Trigger\n\nThe workflow starts when an order is confirmed and an order.settle request is received by the Settlement Service.\n\n## Actors\n\nCustomer\nWarehouse Operator\nSettlement Operations\n\n## Systems\n\nSettlement Service\nInventory Service\nPayment Gateway\nNotification Service\nAnalytics Pipeline\n\n## Inputs and Outputs\n\nInputs (these become the workflow input fields)\norder_id — identifier of the confirmed order to settle\ncustomer_id — identifier of the paying customer\namount — order total to charge\ncurrency — ISO currency code for the charge\n\nOutputs\nsettlement_id — identifier of the completed settlement\npayment_id — identifier of the captured payment\nsettlement_status — settled, rejected, or rolled_back\n\n## Process\n\nThe Settlement Service validates the order using order_id and returns\nwhether the order is settleable.\nIf the order is not settleable, the workflow raises OrderNotSettleable\nand rejects the settlement; if the order is settleable, the workflow continues.\nThe Inventory Service reserves inventory for order_id and returns a\nreservation_id.\nThe Payment Gateway charges payment for customer_id for amount in\ncurrency and returns a payment_id.\nIf the charge is declined, the workflow raises PaymentDeclined; if the\ncharge succeeds, the workflow continues.\nIn parallel, the Notification Service notifies the customer of the pending\nshipment and the Analytics Pipeline records a settlement event. These two activities are independent and share no data.\nThe workflow waits for shipping confirmation — a shipping.confirmed\nsignal sent by the Warehouse Operator — for up to the shipping-confirmation deadline.\nThe Settlement Service finalises the settlement for order_id and returns\na settlement_id.\n\n## Business Rules\n\nBR-1: An order may only be settled when it is in the confirmed state.\nBR-2: Inventory must be reserved before payment is charged.\nBR-3: Payment must be captured before shipping confirmation is awaited.\nBR-4: If shipping is not confirmed before the deadline, the settlement is\nrolled back.\n\n## Timers and SLAs\n\nOrder validation must complete within 5 seconds.\nCharge payment must complete within 30 seconds.\nShipping confirmation must arrive within 24 hours; otherwise the workflow\nrolls back the settlement.\n\n## API Interfaces\n\n| System               | Method | Endpoint / Action          | Purpose                                   | |----------------------|--------|----------------------------|-------------------------------------------| | Settlement Service   | POST   | /settlement/validate     | Validate the order (order_id)           | | Inventory Service    | POST   | /inventory/reserve       | Reserve inventory (order_id)            | | Payment Gateway      | POST   | /payments/charge         | Charge payment (customer_id, amount)  | | Notification Service | POST   | /notify/customer         | Notify the customer of pending shipment   | | Analytics Pipeline   | POST   | /analytics/event         | Record a settlement event                 | | Settlement Service   | POST   | /settlement/finalise     | Finalise the settlement (order_id)      |\n\n## Exceptions and Error Handling\n\nOrderNotSettleable: the order is not in a settleable state → reject the\nsettlement with reason ORDER_NOT_SETTLEABLE and end the workflow.\nPaymentDeclined: the Payment Gateway declines the charge → roll back the\nsettlement (release inventory) and end the workflow.\nShippingTimeout: shipping confirmation does not arrive within 24 hours →\nroll back the settlement (refund payment, release inventory).\n\n## Retries\n\nReserve inventory: retry up to 3 times with exponential backoff\nstarting at 2 seconds.\nCharge payment: retry up to 2 times with a fixed 5-second delay;\ndo not retry on a PaymentDeclined error.\nNotify customer: retry up to 5 times with exponential backoff; failure\nis non-fatal.\n\n## Compensation and Rollback\n\nRelease inventory compensates Reserve inventory — return the reserved\nstock if the settlement is rolled back after reservation.\nRefund payment compensates Charge payment — reverse the captured charge\nif the settlement is rolled back after payment.\n\n---\n\n## Temporal-alignment notes (deviations from DOCUMENT_FORMAT_GUIDE.md and why)\n\nThese are written for the human author, not the pipeline. They explain the choices that make this document produce clean Temporal code:\n\nNo ## States \"transition\" sentences in the Process. The format guide\nencourages \"The order transitions from received to cancelled.\" Those become STATE_TRANSITION facts and the graph builder turns each into a separate state_* node, producing a disconnected state subgraph (with its own \"Start\"-labelled node) alongside the real flow. The Temporal design LLM then sees two parallel structures and can mis-wire the plan. Deviation: lifecycle states are mentioned only as prose in BR-1; no X -> Y transition lines are written. (We also omit the ## States start/end-state list, which only feeds discovery metadata and is not needed for the code.)\n\nEvery decision's \"no\" branch points at a distinct named exception, never\nback at the same activity. A decision whose yes/no targets are identical is a degenerate decision the pipeline now repairs, but writing it correctly avoids the repair entirely.\n\n\"In parallel\" is reserved for truly independent work (NotifyCustomer +\nRecordSettlementEvent). Activities with data dependencies (Reserve → Charge → Finalise) are written as sequential numbered steps so they are never folded into a fork.\n\nThe single human/external wait is BOTH a signal and a timer. Step 7 names\na shipping.confirmed signal and the Timers section gives it a 24-hour deadline, so the design can model a bounded wait_condition(..., timeout=...) instead of a signal gate that blocks forever.\n\nActivity names are reused verbatim across Process / API Interfaces /\nRetries / Compensation. This is what lets the design bind retries, timeouts, and compensations to the right activity by name (the code generator matches by normalised name).\n\nInputs are named as snake_case fields (order_id, customer_id, …) so\nthey map directly onto WorkflowInput dataclass fields and onto activity input bindings.",
+      "sliced": true
+    }
+  ],
+  "specs": [
+    {
+      "slug": "order-settlement-workflow",
+      "metadata": {
+        "name": "Order Settlement Workflow",
+        "description": "This workflow settles a confirmed order: it validates the order, reserves inventory, charges the customer, waits for warehouse shipping confirmation, and finalises the sale. If any step after payment fails, it compensates the completed steps in reverse so the customer is never charged for an order that cannot ship.",
+        "purpose": "This workflow settles a confirmed order: it validates the order, reserves inventory, charges the customer, waits for warehouse shipping confirmation, and finalises the sale. If any step after payment fails, it compensates the completed steps in reverse so the customer is never charged for an order that cannot ship.",
+        "actors": [
+          "Customer",
+          "Warehouse Operator",
+          "Settlement Operations"
+        ],
+        "systems": [
+          "Settlement Service",
+          "Inventory Service",
+          "Payment Gateway",
+          "Notification Service",
+          "Analytics Pipeline"
+        ],
+        "trigger_events": [
+          "order.settle request received"
+        ],
+        "start_states": [],
+        "end_states": [],
+        "version": "0.1.0",
+        "domain": null,
+        "owner": null,
+        "source_format": null,
+        "tags": [],
+        "extra": {
+          "self_reported_confidence": "0.950"
+        },
+        "created_at": null
+      },
+      "facts": {
+        "facts": [
+          {
+            "id": "input-1",
+            "statement": "order_id",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "input-2",
+            "statement": "customer_id",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "input-3",
+            "statement": "amount",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "input-4",
+            "statement": "currency",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-1",
+            "statement": "settlement_id",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-2",
+            "statement": "payment_id",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-3",
+            "statement": "settlement_status",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-1",
+            "statement": "Validate Order",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-2",
+            "statement": "Reserve Inventory",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-3",
+            "statement": "Charge Payment",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-4",
+            "statement": "Notify Customer",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-5",
+            "statement": "Record Settlement Event",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-6",
+            "statement": "Wait for Shipping Confirmation",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-7",
+            "statement": "Finalise Settlement",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-1",
+            "statement": "Is Order Settleable?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-2",
+            "statement": "Is Payment Successful?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-1",
+            "statement": "BR-1: An order may only be settled when it is in the confirmed state",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-2",
+            "statement": "BR-2: Inventory must be reserved before payment is charged",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-3",
+            "statement": "BR-3: Payment must be captured before shipping confirmation is awaited",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-4",
+            "statement": "BR-4: If shipping is not confirmed before the deadline, the settlement is rolled back",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-1",
+            "statement": "order.settle",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-2",
+            "statement": "shipping.confirmed",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-3",
+            "statement": "settlement_id",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-4",
+            "statement": "payment_id",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-1",
+            "statement": "Settlement Service /settlement/validate",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-2",
+            "statement": "Inventory Service /inventory/reserve",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-3",
+            "statement": "Payment Gateway /payments/charge",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-4",
+            "statement": "Notification Service /notify/customer",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-5",
+            "statement": "Analytics Pipeline /analytics/event",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-6",
+            "statement": "Settlement Service /settlement/finalise",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-1",
+            "statement": "Settlement Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-2",
+            "statement": "Inventory Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-3",
+            "statement": "Payment Gateway",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-4",
+            "statement": "Notification Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-5",
+            "statement": "Analytics Pipeline",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-6",
+            "statement": "Warehouse Operator",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-1",
+            "statement": "ORDER_NOT_SETTLEABLE",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-2",
+            "statement": "Payment Declined",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-3",
+            "statement": "Shipping Timeout",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "timer-1",
+            "statement": "Order validation: 5 seconds",
+            "category": "timer",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "timer-2",
+            "statement": "Charge payment: 30 seconds",
+            "category": "timer",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "timer-3",
+            "statement": "Shipping confirmation: 24 hours",
+            "category": "timer",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "retry-1",
+            "statement": "Reserve inventory: up to 3 times with exponential backoff (starting at 2 seconds)",
+            "category": "retry",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "retry-2",
+            "statement": "Charge payment: up to 2 times with a fixed 5-second delay (excluding PaymentDeclined)",
+            "category": "retry",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "retry-3",
+            "statement": "Notify customer: up to 5 times with exponential backoff (non-fatal)",
+            "category": "retry",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "compensation-1",
+            "statement": "Release Inventory compensates Reserve Inventory",
+            "category": "compensation",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "compensation-2",
+            "statement": "Refund Payment compensates Charge Payment",
+            "category": "compensation",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          }
+        ],
+        "structure": {
+          "activities": [
+            {
+              "id": "a1",
+              "name": "Validate Order",
+              "parallel_group": null
+            },
+            {
+              "id": "a2",
+              "name": "Reserve Inventory",
+              "parallel_group": null
+            },
+            {
+              "id": "a3",
+              "name": "Charge Payment",
+              "parallel_group": null
+            },
+            {
+              "id": "a4",
+              "name": "Notify Customer",
+              "parallel_group": "g1"
+            },
+            {
+              "id": "a5",
+              "name": "Record Settlement Event",
+              "parallel_group": "g1"
+            },
+            {
+              "id": "a6",
+              "name": "Wait for Shipping Confirmation",
+              "parallel_group": null
+            },
+            {
+              "id": "a7",
+              "name": "Finalise Settlement",
+              "parallel_group": null
+            }
+          ],
+          "decisions": [
+            {
+              "id": "d1",
+              "question": "Is Order Settleable?",
+              "after": "a1",
+              "yes_target": "a2",
+              "no_target": "e1"
+            },
+            {
+              "id": "d2",
+              "question": "Is Payment Successful?",
+              "after": "a3",
+              "yes_target": "a4",
+              "no_target": "e2"
+            }
+          ],
+          "exceptions": [
+            {
+              "id": "e1",
+              "reason": "ORDER_NOT_SETTLEABLE",
+              "raised_by": "a1"
+            },
+            {
+              "id": "e2",
+              "reason": "Payment Declined",
+              "raised_by": "a3"
+            },
+            {
+              "id": "e3",
+              "reason": "Shipping Timeout",
+              "raised_by": "a6"
+            }
+          ],
+          "compensations": [
+            {
+              "id": "c1",
+              "name": "Release Inventory",
+              "compensates": "a2"
+            },
+            {
+              "id": "c2",
+              "name": "Refund Payment",
+              "compensates": "a3"
+            }
+          ],
+          "events": [
+            {
+              "id": "ev1",
+              "name": "order.settle",
+              "emitted_by": "start",
+              "kind": "trigger"
+            },
+            {
+              "id": "ev2",
+              "name": "shipping.confirmed",
+              "emitted_by": "a6",
+              "kind": "signal_wait"
+            },
+            {
+              "id": "ev3",
+              "name": "settlement_id",
+              "emitted_by": "a7",
+              "kind": "output_emit"
+            },
+            {
+              "id": "ev4",
+              "name": "payment_id",
+              "emitted_by": "a3",
+              "kind": "output_emit"
+            }
+          ],
+          "triggers": [],
+          "transitions": []
+        }
+      },
+      "assumptions": [],
+      "ambiguities": [],
+      "open_questions": [],
+      "suggested_edits": [],
+      "provenance": {}
+    }
+  ],
+  "cross_references": [],
+  "triggers": [],
+  "spec_approval_status": "pending",
+  "workflow_ids": {},
+  "warnings": [],
+  "validation_findings": {},
+  "stage": "spec_drafted",
+  "created_at": "2026-07-16T20:04:15.567030Z",
+  "updated_at": "2026-07-16T20:35:20.124540Z"
+}

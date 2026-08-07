@@ -1,0 +1,19 @@
+# Recon findings — project 4605e083-4561-4091-8fd4-694d6f40d0f0
+
+- compile: 227s
+- validate: 70s
+- stage: spec_validated
+- warnings: none
+
+## customer-onboarding — 0 blocking / 4 total
+
+- **warning** (general) grounding: actors: Customer is a generic term; clarify if it refers to a specific role or system in the context of the workflow
+- **warning** (general) grounding: systems: Similar to actors, 'Customer Service' and 'Notification Service' are not explicitly defined in the source document; ensure they align with the intended workflow scope
+- **warning** (general) grounding: Open Questions: The deadline for application processing after submission is not specified in the source document; this could impact SLA definitions
+- **warning** (Triggers) trigger to 'account-provisioning' is conditional on 'when a customer record is registered' but is not confirmed
+    - suggestion: review and tick its checkbox in the spec file
+
+## account-provisioning — 0 blocking / 2 total
+
+- **warning** (general) grounding: actors: Source document lists 'Customer Platform team' but does not explicitly mention 'Provisioning Service' as an actor in the provisioning workflow context
+- **warning** (general) grounding: trigger_events: Source document implies a trigger but does not explicitly define 'account.provision request received' as a formal trigger event in the listed metadata

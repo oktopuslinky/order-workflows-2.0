@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "name": "find_dependents",
+      "description": "Given a module or service name, find it in the graph and list all code nodes that depend on it",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Module or service name to search for"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "steps": [
+        {
+          "id": "search",
+          "tool": "kg.graph_search",
+          "args": {
+            "query": "${input.name}",
+            "k": 5
+          }
+        },
+        {
+          "id": "impact",
+          "tool": "kg.get_impact",
+          "args": {
+            "node_id": "${steps.search.data.hits[0].id}",
+            "budget": 1200
+          }
+        }
+      ],
+      "enabled": true,
+      "verified_at": "2026-07-30T23:33:12.484Z",
+      "source_prompt": "given a module or service name, find it and list everything that depends on it"
+    }
+  ]
+}

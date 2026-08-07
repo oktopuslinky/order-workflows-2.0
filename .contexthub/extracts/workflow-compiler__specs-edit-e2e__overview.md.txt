@@ -1,0 +1,29 @@
+# Workflow Specification Project
+
+- project id: `3f6be187-d4d7-4f0d-9f90-3eb84a43d70f`
+- stage: needs_attention
+- spec approval: approved
+
+## Workflows
+- `order-fulfillment-workflow.md` — Order Fulfillment Workflow
+
+## Cross-Workflow Dependencies
+- none
+
+## Latest Validation Findings
+### order-fulfillment-workflow
+- [WARN] grounding: activity:a9: No explicit evidence in the source document for manager approval for orders above $1,000 being an activity
+- [WARN] grounding: activity:a10: No evidence in the source document for notifying the finance team as an activity
+- [WARN] grounding: human-provided element 'rule' is not supported by the document — please confirm or remove it yourself
+- [WARN] grounding: retries: Up to 5 retries for shipment creation failure
+- [WARN] grounding: retries: Up to 3 retries for shipment creation failure
+- [WARN] grounding: exceptions:e3: SLA-breach alert is mentioned in rules but not explicitly as an exception in the source document
+- [BLOCK] Graph review: graph health 0.20 below threshold 0.90 — left pending for manual review (review and approve the graph manually)
+
+## How to proceed
+
+1. Review and edit each workflow's `<slug>.md` file.
+2. Answer the Open Questions (fill the `Answer:` lines, tick the boxes).
+3. Confirm the cross-workflow dependencies (tick their boxes).
+4. Run `workflow-compiler validate <project-id>` to check your edits.
+5. Run `workflow-compiler approve-spec <project-id>` to generate the graphs, Temporal designs, and code.

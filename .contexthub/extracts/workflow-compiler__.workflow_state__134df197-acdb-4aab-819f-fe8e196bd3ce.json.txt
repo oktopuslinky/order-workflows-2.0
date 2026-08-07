@@ -1,0 +1,2650 @@
+{
+  "workflow_id": "134df197-acdb-4aab-819f-fe8e196bd3ce",
+  "document_text": "Subscription Plan Upgrade Workflow\n\nMetadata\n\n| Field   | Value                                          | |---------|------------------------------------------------| | Domain  | Telecom OMS                                    | | Owner   | Order Management Team                          | | Version | 1.0                                            | | Tags    | upgrade, subscription, saga, compensation, provisioning |\n\n---\n\nPurpose\n\nThis workflow manages the end-to-end upgrade of a customer's active subscription plan, including eligibility validation, proration billing, service re-provisioning with the new entitlements, and rollback if any step fails. It ensures the customer is never left without service during the transition.\n\n---\n\nTrigger\n\nThe workflow starts when a customer submits a subscription upgrade request through the self-service portal, mobile app, or a Care Agent submits the request via the CRM.\n\n---\n\nActors\n\nCustomer\nCare Agent (CRM operator)\nBilling Team (for proration disputes)\nCompliance Officer (for regulatory plan changes)\n\n---\n\nSystems\n\nOMS Temporal Workflow (orchestration)\nCRM / Care Console\nProduct Catalog Service\nEntitlement Service\nProvisioning Platform (TMF640)\nService Inventory (TMF638)\nBilling / Mediation System\nPayment Gateway\nKafka Event Bus\nNotification Service\nAudit / Compliance Archive\n\n---\n\nStates\n\nStart states: Upgrade requested\nEnd states: Upgrade completed, Upgrade failed, Upgrade rejected\n\n---\n\nInputs and Outputs\n\nInputs\nsubscriptionId — identifier of the active subscription to upgrade\ntargetPlanId — identifier of the destination plan in the Product Catalog\neffectiveDate — immediate or an ISO-8601 future date\nrequestedBy — customer or agent\npromoCode — optional promotional discount code\n\nOutputs\nupgradeId — identifier of the completed upgrade transaction\nnewPlanId — confirmed active plan identifier post-upgrade\nproratedAmount — billing adjustment applied (positive = charge, negative = credit)\nprovisioningStatus — completed or rolled_back\neffectiveTimestamp — ISO-8601 time at which the new plan became active\n\n---\n\nProcess\n\nThe workflow receives the upgrade request and validates the request payload\n(subscriptionId, targetPlanId, and effectiveDate are all present and well-formed).\nThe Product Catalog Service resolves the target plan to confirm it exists,\nis published, and is available to the customer's market region.\nThe system checks subscription eligibility for upgrade: verifies the subscription\nis in an upgradeable state (active or suspended), checks for existing in-flight change orders, and validates contract lock-in rules.\nIf the subscription is ineligible, the workflow rejects the upgrade request,\npublishes an oms.subscription.upgrade.rejected event to the Kafka Event Bus, and transitions the subscription to upgrade_rejected. The workflow ends.\nIf the subscription is eligible, the Billing / Mediation System **calculates the\nproration amount** based on the current billing cycle, the old plan rate, and the new plan rate.\nIf a promoCode is provided, the Billing / Mediation System **validates and applies\nthe promotional discount** to the proration amount.\nThe Payment Gateway pre-authorises the proration charge (if the proration amount\nis positive). If pre-authorisation fails, the workflow rejects the upgrade request and transitions to upgrade_rejected. The workflow ends.\nThe subscription transitions from active to upgradeinprogress.\nIn parallel, the system:\npublishes an oms.subscription.upgrade.started event to the Kafka Event Bus, and\nupdates the entitlements in the Entitlement Service with the new plan's feature set.\nThe Provisioning Platform (TMF640) re-provisions the service with the new plan's\nconfiguration, replacing the old entitlements with the new ones.\nThe Service Inventory (TMF638) updates the resource reservation to reflect the\nnew plan's resource requirements.\nThe Payment Gateway captures the pre-authorised proration charge (if applicable).\nIf the charge capture fails, the workflow reverses the provisioning, restores\nthe old entitlements, and escalates to the Billing Team for manual resolution. The subscription transitions to upgrade_failed. The workflow ends.\nIn parallel, the system:\npublishes an oms.subscription.upgrade.completed event to the Kafka Event Bus, and\nsends an upgrade confirmation to the customer via the Notification Service.\nThe Audit / Compliance Archive records the upgrade transaction with a full audit trail.\nThe subscription transitions from upgradeinprogress to active with the new plan.\n\n---\n\nBusiness Rules\n\nBR-SU-01: The target plan must have a higher tier or price than the current plan;\ndowngrades are handled by a separate Downgrade Workflow.\nBR-SU-02: Upgrades can only be initiated if the subscription is in active or\nsuspended state.\nBR-SU-03: Only one in-flight change order (upgrade, downgrade, or cancel) may be\nactive on a subscription at any time.\nBR-SU-04: Proration is calculated as: (daysremaining / daysincycle) × (newrate − old_rate).\nBR-SU-05: Promotional codes must be validated against the Product Catalog before\nthey are applied to the proration amount.\nBR-SU-06: The Payment Gateway pre-authorisation must be obtained before any\nprovisioning change is applied.\nBR-SU-07: Entitlement updates and the Kafka event must be issued atomically\n(via the saga pattern); a failure in either must trigger full rollback.\nBR-SU-08: Upgrades affecting regulatory plan categories require a Compliance\nOfficer review before provisioning begins.\n\n---\n\nTimers and SLAs\n\nRequest payload validation must complete within 5 seconds; otherwise raise a\ntimeout error and reject the request.\nProduct Catalog plan resolution must complete within 10 seconds; on timeout,\nretry once then fail.\nEligibility check must complete within 15 seconds; on timeout, escalate to the\nOrder Management Team and halt the workflow.\nPayment Gateway pre-authorisation must complete within 30 seconds; on timeout,\ntreat as a pre-auth failure and reject the upgrade.\nService re-provisioning must complete within 10 minutes; on timeout, trigger\nrollback and escalate to the Provisioning Platform team.\nThe entire upgrade workflow must complete within 30 minutes of the initial\nrequest; after this deadline, an SLA-breach alert is raised to the Operations team.\nPromotional code validation must complete within 5 seconds; on timeout, skip\nthe discount and proceed without the promo code applied.\n\n---\n\nAPI Interfaces\n\n| System                      | Method | Endpoint / Action                   | Purpose                                      | |-----------------------------|--------|--------------------------------------|----------------------------------------------| | Product Catalog Service     | GET    | /catalog/plans/{planId}            | Resolve and validate target plan             | | Entitlement Service         | PUT    | /entitlements/{subscriptionId}     | Update feature entitlements to new plan      | | Billing / Mediation System  | POST   | /billing/prorate                   | Calculate proration amount                   | | Billing / Mediation System  | POST   | /billing/promo/validate            | Validate and apply promotional discount      | | Payment Gateway             | POST   | /payments/pre-auth                 | Pre-authorise proration charge               | | Payment Gateway             | POST   | /payments/capture/{preAuthId}      | Capture pre-authorised charge                | | Payment Gateway             | DELETE | /payments/pre-auth/{preAuthId}     | Release pre-authorisation on failure         | | Provisioning Platform       | PUT    | TMF640 /serviceActivation          | Re-provision service with new plan config    | | Service Inventory           | PATCH  | TMF638 /resourceInventory          | Update resource reservation for new plan     | | Notification Service        | POST   | /notify/customer                   | Send upgrade confirmation to customer        | | Audit / Compliance Archive  | POST   | /audit/transactions                | Record upgrade audit trail                   | | Kafka Event Bus             | PUBLISH| oms.subscription.upgrade.*         | Publish lifecycle events                     |\n\n---\n\nExceptions and Error Handling\n\nPlan not found: the target plan does not exist in the Product Catalog → reject\nthe upgrade with reason PLANNOTFOUND.\nPlan unavailable in region: the target plan exists but is not available for the\ncustomer's market region → reject with reason PLANREGIONUNAVAILABLE.\nIneligible subscription state: the subscription is not in active or suspended\nstate → reject with reason SUBSCRIPTIONNOTUPGRADEABLE.\nConcurrent change order conflict: another in-flight change order is already active\n→ reject with reason CONCURRENTCHANGEORDER_CONFLICT and advise the customer to retry after the current change order completes.\nInvalid promotional code: the promo code does not exist or has expired → skip\nthe discount and continue without the promo code; notify the customer via the Notification Service.\nPre-authorisation failure: the Payment Gateway declines the pre-auth → reject\nthe upgrade with reason PAYMENTPREAUTH_FAILED and notify the customer.\nProvisioning timeout: the Provisioning Platform does not respond within 10 minutes\n→ trigger rollback (see Compensation and Rollback); escalate to the Provisioning Platform team.\nEntitlement update failure: the Entitlement Service returns a non-2xx response →\nretry (see Retries); on final failure, trigger rollback.\nCharge capture failure: the Payment Gateway declines the capture after provisioning\nsucceeds → trigger rollback; escalate to the Billing Team for manual resolution.\nCompliance hold: the target plan falls under a regulated category and requires\nCompliance Officer approval → pause the workflow and send an approval request to the Compliance Officer. Resume on approval; reject on denial.\n\n---\n\nRetries\n\nResolve target plan: retry up to 2 times with a 5-second fixed delay.\nAfter 2 failures, fail the workflow with PLANRESOLUTIONFAILED.\nCalculate proration: retry up to 2 times with a 5-second fixed delay.\nAfter 2 failures, fail the workflow with PRORATION_FAILED.\nPre-authorise charge: retry up to 1 time with a 10-second fixed delay.\nAfter 1 failure, reject the upgrade with PAYMENTPREAUTH_FAILED.\nUpdate entitlements: retry up to 3 times with exponential backoff\nstarting at 5 seconds. After 3 failures, trigger full rollback.\nRe-provision service: retry up to 3 times with exponential backoff\nstarting at 10 seconds. After 3 failures, trigger full rollback and escalate.\nUpdate resource inventory: retry up to 3 times with a 10-second fixed delay.\nAfter 3 failures, trigger full rollback.\nCapture charge: retry up to 2 times with a 15-second fixed delay.\nAfter 2 failures, trigger rollback and escalate to the Billing Team.\nSend notification: retry up to 5 times with exponential backoff starting\nat 2 seconds. Failure is non-fatal — log and continue.\nRecord audit trail: retry up to 3 times with a 5-second fixed delay.\nFailure is non-fatal — log and alert the Compliance team.\n\n---\n\nCompensation and Rollback\n\nRestore old entitlements compensates Update entitlements — if the workflow\nrolls back after entitlement update, reinstate the previous plan's feature set in the Entitlement Service.\nRe-provision with old plan compensates Re-provision service — if the workflow\nrolls back after provisioning, restore the service configuration to the original plan.\nRestore old resource reservation compensates Update resource inventory — return\nthe resource reservation to the original plan's resource requirements in the Service Inventory.\nRelease pre-authorisation compensates Pre-authorise charge — if the workflow\nrolls back before charge capture, release the held payment pre-authorisation via the Payment Gateway.\nReverse charge capture compensates Capture charge — if post-capture rollback\nis required, void or refund the captured transaction via the Payment Gateway.\nPublish rollback event compensates Publish upgrade started event — publish an\noms.subscription.upgrade.rolled_back event to the Kafka Event Bus to notify downstream consumers of the failed upgrade.",
+  "workflow_metadata": {
+    "name": "Subscription Plan Upgrade Workflow",
+    "description": "Manages the end-to-end upgrade of a customer's active subscription plan, including eligibility validation, proration billing, service re-provisioning with new entitlements, and rollback if any step fails. Ensures the customer is never left without service during the transition.",
+    "purpose": "Manages the end-to-end upgrade of a customer's active subscription plan, including eligibility validation, proration billing, service re-provisioning with new entitlements, and rollback if any step fails. Ensures the customer is never left without service during the transition.",
+    "actors": [
+      "Customer Care Agent (CRM operator)",
+      "Billing Team (for proration disputes)",
+      "Compliance Officer (for regulatory plan changes)"
+    ],
+    "systems": [
+      "OMS Temporal Workflow (orchestration)",
+      "CRM / Care Console",
+      "Product Catalog Service",
+      "Entitlement Service",
+      "Provisioning Platform (TMF640)",
+      "Service Inventory (TMF638)",
+      "Billing / Mediation System",
+      "Payment Gateway",
+      "Kafka Event Bus",
+      "Notification Service",
+      "Audit / Compliance Archive"
+    ],
+    "trigger_events": [
+      "Customer submits a subscription upgrade request through the self-service portal",
+      "Customer submits a subscription upgrade request through the mobile app",
+      "Care Agent submits the request via the CRM"
+    ],
+    "start_states": [
+      "Upgrade requested"
+    ],
+    "end_states": [
+      "Upgrade completed",
+      "Upgrade failed",
+      "Upgrade rejected"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.950"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "subscriptionId — identifier of the active subscription to upgrade",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "input-2",
+        "statement": "targetPlanId — identifier of the destination plan in the Product Catalog",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "input-3",
+        "statement": "effectiveDate — immediate or an ISO-8601 future date",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "input-4",
+        "statement": "requestedBy — customer or agent",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "input-5",
+        "statement": "promoCode — optional promotional discount code",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "output-1",
+        "statement": "upgradeId — identifier of the completed upgrade transaction",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "output-2",
+        "statement": "newPlanId — confirmed active plan identifier post-upgrade",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "output-3",
+        "statement": "proratedAmount — billing adjustment applied (positive = charge, negative = credit)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "output-4",
+        "statement": "provisioningStatus — completed or rolled_back",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "output-5",
+        "statement": "effectiveTimestamp — ISO-8601 time at which the new plan became active",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-1",
+        "statement": "validate request payload (subscriptionId, targetPlanId, effectiveDate)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-2",
+        "statement": "resolve target plan via Product Catalog Service",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-3",
+        "statement": "check subscription eligibility for upgrade",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-4",
+        "statement": "calculate proration amount via Billing / Mediation System",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-5",
+        "statement": "validate and apply promotional discount (if promoCode provided)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-6",
+        "statement": "pre-authorise proration charge via Payment Gateway",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-7",
+        "statement": "update entitlements in Entitlement Service",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-8",
+        "statement": "re-provision service via Provisioning Platform (TMF640)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-9",
+        "statement": "update resource reservation in Service Inventory (TMF638)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-10",
+        "statement": "capture pre-authorised charge via Payment Gateway",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-11",
+        "statement": "send upgrade confirmation via Notification Service",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "activity-12",
+        "statement": "record upgrade audit trail in Audit / Compliance Archive",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "decision-1",
+        "statement": "reject upgrade if subscription is ineligible",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "decision-2",
+        "statement": "skip promo code application if validation fails",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "decision-3",
+        "statement": "reject upgrade if pre-authorisation fails",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-SU-01: Target plan must have higher tier or price than current plan",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-SU-02: Upgrades only allowed if subscription is active or suspended",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-SU-03: Only one in-flight change order allowed per subscription",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "rule-4",
+        "statement": "BR-SU-04: Proration formula: (daysremaining / daysincycle) × (newrate − old_rate)",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "rule-5",
+        "statement": "BR-SU-05: Promo codes must be validated against Product Catalog",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "rule-6",
+        "statement": "BR-SU-06: Payment Gateway pre-authorisation required before provisioning",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "rule-7",
+        "statement": "BR-SU-07: Entitlement updates and Kafka events must be atomic (saga pattern)",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "rule-8",
+        "statement": "BR-SU-08: Regulatory plan changes require Compliance Officer review",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "event-1",
+        "statement": "oms.subscription.upgrade.rejected (published to Kafka Event Bus)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "event-2",
+        "statement": "oms.subscription.upgrade.started (published to Kafka Event Bus)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "event-3",
+        "statement": "oms.subscription.upgrade.completed (published to Kafka Event Bus)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "event-4",
+        "statement": "oms.subscription.upgrade.rolled_back (published to Kafka Event Bus)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-1",
+        "statement": "Product Catalog Service: GET /catalog/plans/{planId}",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-2",
+        "statement": "Entitlement Service: PUT /entitlements/{subscriptionId}",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-3",
+        "statement": "Billing / Mediation System: POST /billing/prorate",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-4",
+        "statement": "Billing / Mediation System: POST /billing/promo/validate",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-5",
+        "statement": "Payment Gateway: POST /payments/pre-auth",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-6",
+        "statement": "Payment Gateway: POST /payments/capture/{preAuthId}",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-7",
+        "statement": "Payment Gateway: DELETE /payments/pre-auth/{preAuthId}",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-8",
+        "statement": "Provisioning Platform: PUT TMF640 /serviceActivation",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-9",
+        "statement": "Service Inventory: PATCH TMF638 /resourceInventory",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-10",
+        "statement": "Notification Service: POST /notify/customer",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-11",
+        "statement": "Audit / Compliance Archive: POST /audit/transactions",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "api-12",
+        "statement": "Kafka Event Bus: PUBLISH oms.subscription.upgrade.*",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-1",
+        "statement": "OMS Temporal Workflow (orchestration)",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-2",
+        "statement": "CRM / Care Console",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-3",
+        "statement": "Product Catalog Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-4",
+        "statement": "Entitlement Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-5",
+        "statement": "Provisioning Platform (TMF640)",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-6",
+        "statement": "Service Inventory (TMF638)",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-7",
+        "statement": "Billing / Mediation System",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-8",
+        "statement": "Payment Gateway",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-9",
+        "statement": "Kafka Event Bus",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-10",
+        "statement": "Notification Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "system-11",
+        "statement": "Audit / Compliance Archive",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "exception-1",
+        "statement": "Plan not found (reject with PLANNOTFOUND)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "exception-2",
+        "statement": "Plan unavailable in region (reject with PLANREGIONUNAVAILABLE)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "exception-3",
+        "statement": "Ineligible subscription state (reject with SUBSCRIPTIONNOTUPGRADEABLE)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "exception-4",
+        "statement": "Concurrent change order conflict (reject with CONCURRENTCHANGEORDER_CONFLICT)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "exception-5",
+        "statement": "Invalid promotional code (skip discount, notify customer)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "exception-6",
+        "statement": "Pre-authorisation failure (reject with PAYMENTPREAUTH_FAILED)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "exception-7",
+        "statement": "Provisioning timeout (trigger rollback)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "exception-8",
+        "statement": "Entitlement update failure (retry, then rollback)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "exception-9",
+        "statement": "Charge capture failure (trigger rollback)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "exception-10",
+        "statement": "Compliance hold (pause workflow, require approval)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "state_transition-1",
+        "statement": "Start -> Upgrade requested",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "state_transition-2",
+        "statement": "Upgrade requested -> upgrade_rejected (if ineligible)",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "state_transition-3",
+        "statement": "Upgrade requested -> upgradeinprogress (if eligible)",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "state_transition-4",
+        "statement": "upgradeinprogress -> Upgrade failed (if charge capture fails)",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "state_transition-5",
+        "statement": "upgradeinprogress -> active (with new plan) (if successful)",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "state_transition-6",
+        "statement": "upgradeinprogress -> upgrade_rejected (if pre-authorisation fails)",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "timer-1",
+        "statement": "Request payload validation: 5 seconds (timeout error)",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "timer-2",
+        "statement": "Product Catalog plan resolution: 10 seconds (retry once)",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "timer-3",
+        "statement": "Eligibility check: 15 seconds (escalate)",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "timer-4",
+        "statement": "Payment Gateway pre-authorisation: 30 seconds (treat as failure)",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "timer-5",
+        "statement": "Service re-provisioning: 10 minutes (trigger rollback)",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "timer-6",
+        "statement": "Entire workflow: 30 minutes (SLA-breach alert)",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "timer-7",
+        "statement": "Promotional code validation: 5 seconds (skip discount)",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "retry-1",
+        "statement": "Resolve target plan: 2 retries (5s delay)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "retry-2",
+        "statement": "Calculate proration: 2 retries (5s delay)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "retry-3",
+        "statement": "Pre-authorise charge: 1 retry (10s delay)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "retry-4",
+        "statement": "Update entitlements: 3 retries (exponential backoff)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "retry-5",
+        "statement": "Re-provision service: 3 retries (exponential backoff)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "retry-6",
+        "statement": "Update resource inventory: 3 retries (10s delay)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "retry-7",
+        "statement": "Capture charge: 2 retries (15s delay)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "retry-8",
+        "statement": "Send notification: 5 retries (exponential backoff)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "retry-9",
+        "statement": "Record audit trail: 3 retries (5s delay)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Restore old entitlements (compensate Entitlement Service update)",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "compensation-2",
+        "statement": "Re-provision with old plan (compensate Provisioning Platform)",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "compensation-3",
+        "statement": "Restore old resource reservation (compensate Service Inventory)",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "compensation-4",
+        "statement": "Release pre-authorisation (compensate Payment Gateway pre-auth)",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "compensation-5",
+        "statement": "Reverse charge capture (compensate Payment Gateway capture)",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      },
+      {
+        "id": "compensation-6",
+        "statement": "Publish rollback event (compensate upgrade started event)",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.95
+      }
+    ]
+  },
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "validate request payload (subscriptionId, targetPlanId, effectiveDate)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "resolve target plan via Product Catalog Service",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "check subscription eligibility for upgrade",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "calculate proration amount via Billing / Mediation System",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_5",
+        "label": "validate and apply promotional discount (if promoCode provided)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_6",
+        "label": "pre-authorise proration charge via Payment Gateway",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_7",
+        "label": "update entitlements in Entitlement Service",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_8",
+        "label": "re-provision service via Provisioning Platform (TMF640)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_9",
+        "label": "update resource reservation in Service Inventory (TMF638)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_10",
+        "label": "capture pre-authorised charge via Payment Gateway",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_11",
+        "label": "send upgrade confirmation via Notification Service",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_12",
+        "label": "record upgrade audit trail in Audit / Compliance Archive",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "reject upgrade if subscription is ineligible",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_2",
+        "label": "skip promo code application if validation fails",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_3",
+        "label": "reject upgrade if pre-authorisation fails",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "Plan not found (reject with PLANNOTFOUND)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "Plan unavailable in region (reject with PLANREGIONUNAVAILABLE)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_3",
+        "label": "Ineligible subscription state (reject with SUBSCRIPTIONNOTUPGRADEABLE)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_4",
+        "label": "Concurrent change order conflict (reject with CONCURRENTCHANGEORDER_CONFLICT)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_5",
+        "label": "Invalid promotional code (skip discount, notify customer)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_6",
+        "label": "Pre-authorisation failure (reject with PAYMENTPREAUTH_FAILED)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_7",
+        "label": "Provisioning timeout (trigger rollback)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_8",
+        "label": "Entitlement update failure (retry, then rollback)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_9",
+        "label": "Charge capture failure (trigger rollback)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_10",
+        "label": "Compliance hold (pause workflow, require approval)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Restore old entitlements (compensate Entitlement Service update)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_2",
+        "label": "Re-provision with old plan (compensate Provisioning Platform)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_3",
+        "label": "Restore old resource reservation (compensate Service Inventory)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_4",
+        "label": "Release pre-authorisation (compensate Payment Gateway pre-auth)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_5",
+        "label": "Reverse charge capture (compensate Payment Gateway capture)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_6",
+        "label": "Publish rollback event (compensate upgrade started event)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "oms.subscription.upgrade.rejected (published to Kafka Event Bus)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "oms.subscription.upgrade.started (published to Kafka Event Bus)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "oms.subscription.upgrade.completed (published to Kafka Event Bus)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_4",
+        "label": "oms.subscription.upgrade.rolled_back (published to Kafka Event Bus)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "state_1",
+        "label": "Start",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_2",
+        "label": "Upgrade requested",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_3",
+        "label": "upgrade_rejected (if ineligible)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_4",
+        "label": "upgradeinprogress (if eligible)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_5",
+        "label": "upgradeinprogress",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_6",
+        "label": "Upgrade failed (if charge capture fails)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_7",
+        "label": "active (with new plan) (if successful)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_8",
+        "label": "upgrade_rejected (if pre-authorisation fails)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "decision_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "decision_2",
+        "target": "activity_3",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e7",
+        "source": "decision_2",
+        "target": "exception_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e8",
+        "source": "activity_3",
+        "target": "decision_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "decision_3",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e10",
+        "source": "decision_3",
+        "target": "exception_3",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e11",
+        "source": "activity_4",
+        "target": "activity_5",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "activity_5",
+        "target": "activity_6",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "activity_6",
+        "target": "activity_7",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e14",
+        "source": "activity_7",
+        "target": "activity_8",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "activity_8",
+        "target": "activity_9",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "activity_9",
+        "target": "activity_10",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "activity_10",
+        "target": "activity_11",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e18",
+        "source": "activity_11",
+        "target": "activity_12",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e19",
+        "source": "activity_12",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e20",
+        "source": "activity_1",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e21",
+        "source": "exception_1",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e22",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e23",
+        "source": "activity_2",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e24",
+        "source": "exception_2",
+        "target": "compensation_2",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e25",
+        "source": "compensation_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e26",
+        "source": "activity_3",
+        "target": "exception_3",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e27",
+        "source": "exception_3",
+        "target": "compensation_3",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e28",
+        "source": "compensation_3",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e29",
+        "source": "activity_4",
+        "target": "exception_4",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e30",
+        "source": "exception_4",
+        "target": "compensation_4",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e31",
+        "source": "compensation_4",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e32",
+        "source": "activity_5",
+        "target": "exception_5",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e33",
+        "source": "exception_5",
+        "target": "compensation_5",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e34",
+        "source": "compensation_5",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e35",
+        "source": "activity_6",
+        "target": "exception_6",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e36",
+        "source": "exception_6",
+        "target": "compensation_6",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e37",
+        "source": "compensation_6",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e38",
+        "source": "activity_7",
+        "target": "exception_7",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e39",
+        "source": "exception_7",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e40",
+        "source": "activity_8",
+        "target": "exception_8",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e41",
+        "source": "exception_8",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e42",
+        "source": "activity_9",
+        "target": "exception_9",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e43",
+        "source": "exception_9",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e44",
+        "source": "activity_10",
+        "target": "exception_10",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e45",
+        "source": "exception_10",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e46",
+        "source": "exception_1",
+        "target": "activity_1",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e47",
+        "source": "exception_2",
+        "target": "activity_2",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e48",
+        "source": "exception_3",
+        "target": "activity_3",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e49",
+        "source": "exception_4",
+        "target": "activity_4",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e50",
+        "source": "exception_5",
+        "target": "activity_5",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e51",
+        "source": "exception_6",
+        "target": "activity_6",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e52",
+        "source": "exception_7",
+        "target": "activity_7",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e53",
+        "source": "exception_8",
+        "target": "activity_8",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e54",
+        "source": "exception_9",
+        "target": "activity_9",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e55",
+        "source": "activity_12",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e56",
+        "source": "activity_12",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e57",
+        "source": "activity_12",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e58",
+        "source": "activity_12",
+        "target": "event_4",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e59",
+        "source": "state_1",
+        "target": "state_2",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e60",
+        "source": "state_2",
+        "target": "state_3",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e61",
+        "source": "state_2",
+        "target": "state_4",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e62",
+        "source": "state_5",
+        "target": "state_6",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e63",
+        "source": "state_5",
+        "target": "state_7",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e64",
+        "source": "state_5",
+        "target": "state_8",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.15: 0 error(s), 17 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Orphan node 'Start' has no incoming edges.",
+        "location": "state_1",
+        "suggestion": "Add a transition from a predecessor node."
+      },
+      {
+        "id": "issue-2",
+        "severity": "warning",
+        "message": "Orphan node 'upgradeinprogress' has no incoming edges.",
+        "location": "state_5",
+        "suggestion": "Add a transition from a predecessor node."
+      },
+      {
+        "id": "issue-3",
+        "severity": "warning",
+        "message": "Dead-end node 'oms.subscription.upgrade.rejected (published to Kafka Event Bus)' has no outgoing edges.",
+        "location": "event_1",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-4",
+        "severity": "warning",
+        "message": "Dead-end node 'oms.subscription.upgrade.started (published to Kafka Event Bus)' has no outgoing edges.",
+        "location": "event_2",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-5",
+        "severity": "warning",
+        "message": "Dead-end node 'oms.subscription.upgrade.completed (published to Kafka Event Bus)' has no outgoing edges.",
+        "location": "event_3",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-6",
+        "severity": "warning",
+        "message": "Dead-end node 'oms.subscription.upgrade.rolled_back (published to Kafka Event Bus)' has no outgoing edges.",
+        "location": "event_4",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-7",
+        "severity": "warning",
+        "message": "Dead-end node 'upgrade_rejected (if ineligible)' has no outgoing edges.",
+        "location": "state_3",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-8",
+        "severity": "warning",
+        "message": "Dead-end node 'upgradeinprogress (if eligible)' has no outgoing edges.",
+        "location": "state_4",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-9",
+        "severity": "warning",
+        "message": "Dead-end node 'Upgrade failed (if charge capture fails)' has no outgoing edges.",
+        "location": "state_6",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-10",
+        "severity": "warning",
+        "message": "Dead-end node 'active (with new plan) (if successful)' has no outgoing edges.",
+        "location": "state_7",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-11",
+        "severity": "warning",
+        "message": "Dead-end node 'upgrade_rejected (if pre-authorisation fails)' has no outgoing edges.",
+        "location": "state_8",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-12",
+        "severity": "warning",
+        "message": "State 'Upgrade requested' is unreachable from the start node.",
+        "location": "state_2",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-13",
+        "severity": "warning",
+        "message": "State 'upgrade_rejected (if ineligible)' is unreachable from the start node.",
+        "location": "state_3",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-14",
+        "severity": "warning",
+        "message": "State 'upgradeinprogress (if eligible)' is unreachable from the start node.",
+        "location": "state_4",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-15",
+        "severity": "warning",
+        "message": "State 'Upgrade failed (if charge capture fails)' is unreachable from the start node.",
+        "location": "state_6",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-16",
+        "severity": "warning",
+        "message": "State 'active (with new plan) (if successful)' is unreachable from the start node.",
+        "location": "state_7",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-17",
+        "severity": "warning",
+        "message": "State 'upgrade_rejected (if pre-authorisation fails)' is unreachable from the start node.",
+        "location": "state_8",
+        "suggestion": "Connect this state to the reachable graph from start."
+      }
+    ],
+    "score": 0.15,
+    "health_score": 0.15,
+    "confidence": 0.9111,
+    "reviewer": "auto",
+    "reviewed_at": "2026-06-26T02:22:15.136670Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Represents the initial intake or start of the workflow.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Marks the completion or end of the workflow.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "validate",
+        "rationale": "Involves validating the request payload, which is a verification step.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "process",
+        "rationale": "Resolving the target plan involves data retrieval and transformation.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "validate",
+        "rationale": "Checks subscription eligibility, a verification step.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "process",
+        "rationale": "Calculating proration involves computational work.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_5",
+        "phase": "validate",
+        "rationale": "Validates promotional code before application.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "activity_6",
+        "phase": "validate",
+        "rationale": "Pre-authorisation is a verification step.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_7",
+        "phase": "process",
+        "rationale": "Updating entitlements is a core transformation step.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_8",
+        "phase": "process",
+        "rationale": "Re-provisioning is a core operational task.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_9",
+        "phase": "process",
+        "rationale": "Updating resource reservation is a core transformation.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_10",
+        "phase": "activate",
+        "rationale": "Capturing payment is a downstream fulfillment action.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_11",
+        "phase": "activate",
+        "rationale": "Sending confirmation is a notification step.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_12",
+        "phase": "activate",
+        "rationale": "Recording audit trail is part of workflow completion.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Decision gate based on eligibility check.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "decision_2",
+        "phase": "validate",
+        "rationale": "Decision gate for promo code validation.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "decision_3",
+        "phase": "validate",
+        "rationale": "Decision gate for pre-authorisation check.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "process",
+        "rationale": "Error during plan resolution (process phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_2",
+        "phase": "process",
+        "rationale": "Error during plan resolution (process phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_3",
+        "phase": "validate",
+        "rationale": "Error during eligibility check (validate phase).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "exception_4",
+        "phase": "process",
+        "rationale": "Error during proration calculation (process phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_5",
+        "phase": "validate",
+        "rationale": "Error during promo code validation (validate phase).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "exception_6",
+        "phase": "validate",
+        "rationale": "Error during pre-authorisation (validate phase).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "exception_7",
+        "phase": "process",
+        "rationale": "Error during provisioning (process phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_8",
+        "phase": "process",
+        "rationale": "Error during entitlement update (process phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_9",
+        "phase": "activate",
+        "rationale": "Error during charge capture (activate phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_10",
+        "phase": "activate",
+        "rationale": "Compliance hold during activation.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "process",
+        "rationale": "Compensates entitlement update (process phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "compensation_2",
+        "phase": "process",
+        "rationale": "Compensates provisioning (process phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "compensation_3",
+        "phase": "process",
+        "rationale": "Compensates resource reservation (process phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "compensation_4",
+        "phase": "validate",
+        "rationale": "Compensates pre-authorisation (validate phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "compensation_5",
+        "phase": "activate",
+        "rationale": "Compensates charge capture (activate phase).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "compensation_6",
+        "phase": "activate",
+        "rationale": "Publishes rollback event (activation).",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "event_1",
+        "phase": "activate",
+        "rationale": "Published event for rejection (activation).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_2",
+        "phase": "activate",
+        "rationale": "Published event for start (activation).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_3",
+        "phase": "activate",
+        "rationale": "Published event for completion (activation).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_4",
+        "phase": "activate",
+        "rationale": "Published event for rollback (activation).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_1",
+        "phase": "capture",
+        "rationale": "Initial state of the workflow.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "state_2",
+        "phase": "capture",
+        "rationale": "Upgrade requested state (intake).",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_3",
+        "phase": "validate",
+        "rationale": "Rejected state due to validation failure.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "state_4",
+        "phase": "process",
+        "rationale": "In-progress state during processing.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "state_5",
+        "phase": "process",
+        "rationale": "Ongoing in-progress state.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "state_6",
+        "phase": "activate",
+        "rationale": "Failed state due to activation failure.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "state_7",
+        "phase": "activate",
+        "rationale": "Active state after successful activation.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_8",
+        "phase": "validate",
+        "rationale": "Rejected state due to pre-authorisation failure.",
+        "confidence": 0.8
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "state_1",
+          "state_2"
+        ],
+        "summary": "3 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "activity_1",
+          "activity_3",
+          "activity_5",
+          "activity_6",
+          "decision_1",
+          "decision_2",
+          "decision_3",
+          "exception_3",
+          "exception_5",
+          "exception_6",
+          "compensation_4",
+          "state_3",
+          "state_8"
+        ],
+        "summary": "13 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_2",
+          "activity_4",
+          "activity_7",
+          "activity_8",
+          "activity_9",
+          "exception_1",
+          "exception_2",
+          "exception_4",
+          "exception_7",
+          "exception_8",
+          "compensation_1",
+          "compensation_2",
+          "compensation_3",
+          "state_4",
+          "state_5"
+        ],
+        "summary": "15 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "activity_10",
+          "activity_11",
+          "activity_12",
+          "exception_9",
+          "exception_10",
+          "compensation_5",
+          "compensation_6",
+          "event_1",
+          "event_2",
+          "event_3",
+          "event_4",
+          "state_6",
+          "state_7"
+        ],
+        "summary": "14 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "Subscriptionupgradeworkflow",
+    "task_queue": "subscription-upgrade-queue",
+    "description": "Orchestrates end-to-end subscription upgrade process with validation, billing, provisioning, and compliance steps",
+    "activities": [
+      {
+        "name": "Validaterequestpayload",
+        "source_node_id": "start",
+        "description": "Validate subscription upgrade request payload parameters",
+        "inputs": [
+          "subscriptionId",
+          "targetPlanId",
+          "effectiveDate"
+        ],
+        "outputs": [
+          "validationResult"
+        ],
+        "timeout_seconds": 10.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Resolvetargetplan",
+        "source_node_id": "decision_1",
+        "description": "Resolve target plan details from Product Catalog Service",
+        "inputs": [
+          "subscriptionId",
+          "targetPlanId"
+        ],
+        "outputs": [
+          "planDetails"
+        ],
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "Checksubscriptioneligibility",
+        "source_node_id": "decision_2",
+        "description": "Check subscription eligibility for upgrade",
+        "inputs": [
+          "subscriptionId",
+          "planDetails"
+        ],
+        "outputs": [
+          "eligibilityResult"
+        ],
+        "timeout_seconds": 15.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Calculateprorationamount",
+        "source_node_id": "activity_5",
+        "description": "Calculate proration amount via Billing/Mediation System",
+        "inputs": [
+          "subscriptionId",
+          "planDetails",
+          "effectiveDate"
+        ],
+        "outputs": [
+          "prorationAmount"
+        ],
+        "timeout_seconds": 45.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 1.5,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "Applypromotionaldiscount",
+        "source_node_id": "activity_4",
+        "description": "Validate and apply promotional discount if promoCode provided",
+        "inputs": [
+          "promoCode",
+          "prorationAmount"
+        ],
+        "outputs": [
+          "discountedAmount"
+        ],
+        "timeout_seconds": 20.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Preauthoriseprorationcharge",
+        "source_node_id": "activity_5",
+        "description": "Pre-authorise proration charge via Payment Gateway",
+        "inputs": [
+          "subscriptionId",
+          "discountedAmount"
+        ],
+        "outputs": [
+          "authorisationToken"
+        ],
+        "timeout_seconds": 60.0,
+        "retry_policy": {
+          "maximum_attempts": 2,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": [
+            "PAYMENT_METHOD_EXPIRED"
+          ]
+        }
+      },
+      {
+        "name": "Updateentitlements",
+        "source_node_id": "activity_6",
+        "description": "Update entitlements in Entitlement Service",
+        "inputs": [
+          "subscriptionId",
+          "planDetails"
+        ],
+        "outputs": [
+          "entitlementUpdateResult"
+        ],
+        "timeout_seconds": 45.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 3.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "Reprovisionservice",
+        "source_node_id": "activity_7",
+        "description": "Re-provision service via Provisioning Platform (TMF640)",
+        "inputs": [
+          "subscriptionId",
+          "planDetails"
+        ],
+        "outputs": [
+          "provisioningResult"
+        ],
+        "timeout_seconds": 300.0,
+        "retry_policy": {
+          "maximum_attempts": 5,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": 60.0,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "Updateresourcereservation",
+        "source_node_id": "activity_8",
+        "description": "Update resource reservation in Service Inventory (TMF638)",
+        "inputs": [
+          "subscriptionId",
+          "provisioningResult"
+        ],
+        "outputs": [
+          "reservationUpdateResult"
+        ],
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "Capturepreauthorisedcharge",
+        "source_node_id": "activity_9",
+        "description": "Capture pre-authorised charge via Payment Gateway",
+        "inputs": [
+          "authorisationToken",
+          "discountedAmount"
+        ],
+        "outputs": [
+          "paymentReceipt"
+        ],
+        "timeout_seconds": 45.0,
+        "retry_policy": {
+          "maximum_attempts": 2,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "Sendupgradeconfirmation",
+        "source_node_id": "activity_10",
+        "description": "Send upgrade confirmation via Notification Service",
+        "inputs": [
+          "subscriptionId",
+          "paymentReceipt"
+        ],
+        "outputs": [
+          "notificationResult"
+        ],
+        "timeout_seconds": 20.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Recordupgradeaudittrail",
+        "source_node_id": "activity_11",
+        "description": "Record upgrade audit trail in Audit/Compliance Archive",
+        "inputs": [
+          "subscriptionId",
+          "paymentReceipt",
+          "provisioningResult"
+        ],
+        "outputs": [
+          "auditTrailId"
+        ],
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      }
+    ],
+    "signals": [
+      {
+        "name": "ComplianceApprovalRequired",
+        "description": "Signal for manual compliance approval during upgrade process",
+        "payload": [
+          "complianceReason"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetUpgradeStatus",
+        "description": "Query current state of subscription upgrade process",
+        "returns": "UpgradeStatus"
+      },
+      {
+        "name": "GetAuditTrail",
+        "description": "Retrieve audit trail information for completed upgrade",
+        "returns": "AuditTrailDetails"
+      }
+    ],
+    "child_workflows": [],
+    "timers": [
+      {
+        "name": "ProvisioningSLATimer",
+        "duration_seconds": 3600.0,
+        "description": "SLA timer for service provisioning step"
+      }
+    ],
+    "compensation_activities": [
+      {
+        "name": "Restoreoldentitlements",
+        "compensates": "UpdateEntitlements",
+        "source_node_id": "exception_7",
+        "description": "Revert entitlements update in Entitlement Service",
+        "retry_policy": null
+      },
+      {
+        "name": "Revertprovisioning",
+        "compensates": "ReProvisionService",
+        "source_node_id": "exception_8",
+        "description": "Re-provision with original plan configuration",
+        "retry_policy": null
+      },
+      {
+        "name": "Restoreresourcereservation",
+        "compensates": "UpdateResourceReservation",
+        "source_node_id": "exception_9",
+        "description": "Restore previous resource reservation state",
+        "retry_policy": null
+      },
+      {
+        "name": "Releasepreauthorisation",
+        "compensates": "PreAuthoriseProrationCharge",
+        "source_node_id": "exception_6",
+        "description": "Void pre-authorisation with Payment Gateway",
+        "retry_policy": null
+      },
+      {
+        "name": "Reversepaymentcapture",
+        "compensates": "CapturePreAuthorisedCharge",
+        "source_node_id": "exception_9",
+        "description": "Refund captured payment amount",
+        "retry_policy": null
+      },
+      {
+        "name": "Publishrollbackevent",
+        "compensates": "SendUpgradeConfirmation",
+        "source_node_id": "exception_10",
+        "description": "Notify systems of upgrade rollback completion",
+        "retry_policy": null
+      }
+    ],
+    "default_retry_policy": {
+      "maximum_attempts": 3,
+      "initial_interval_seconds": 1.0,
+      "backoff_coefficient": 2.0,
+      "maximum_interval_seconds": null,
+      "non_retryable_error_types": []
+    }
+  },
+  "temporal_code": {
+    "target": "python",
+    "package_name": "subscriptionupgradeworkflow",
+    "files": [
+      {
+        "path": "__init__.py",
+        "language": "python",
+        "content": "\"\"\"Generated Temporal workflow package for Subscriptionupgradeworkflow.\n\nThis package was rendered deterministically from a TemporalWorkflowDesign by\nworkflow-compiler. Business logic in the activities is intentionally left as\n``NotImplementedError`` / ``TODO`` for you to fill in.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom .workflow import Subscriptionupgradeworkflow\n\n__all__ = [\"Subscriptionupgradeworkflow\"]"
+      },
+      {
+        "path": "shared.py",
+        "language": "python",
+        "content": "\"\"\"Shared dataclasses for the Subscriptionupgradeworkflow workflow.\n\nTemporal passes a single dataclass argument to workflows and activities so that\ninputs evolve compatibly. Field types default to ``str`` -- refine them to match\nyour real domain types.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom typing import Any\n\n\n@dataclass\nclass WorkflowInput:\n    \"\"\"Input to the Subscriptionupgradeworkflow workflow.\"\"\"\n\n    payload: dict[str, Any] = field(default_factory=dict)  # TODO: define real fields\n\n\n@dataclass\nclass ValidaterequestpayloadInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    subscription_id: str = \"\"\n    target_plan_id: str = \"\"\n    effective_date: str = \"\"\n\n\n@dataclass\nclass ResolvetargetplanInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    subscription_id: str = \"\"\n    target_plan_id: str = \"\"\n\n\n@dataclass\nclass ChecksubscriptioneligibilityInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    subscription_id: str = \"\"\n    plan_details: str = \"\"\n\n\n@dataclass\nclass CalculateprorationamountInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    subscription_id: str = \"\"\n    plan_details: str = \"\"\n    effective_date: str = \"\"\n\n\n@dataclass\nclass ApplypromotionaldiscountInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    promo_code: str = \"\"\n    proration_amount: str = \"\"\n\n\n@dataclass\nclass PreauthoriseprorationchargeInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    subscription_id: str = \"\"\n    discounted_amount: str = \"\"\n\n\n@dataclass\nclass UpdateentitlementsInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    subscription_id: str = \"\"\n    plan_details: str = \"\"\n\n\n@dataclass\nclass ReprovisionserviceInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    subscription_id: str = \"\"\n    plan_details: str = \"\"\n\n\n@dataclass\nclass UpdateresourcereservationInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    subscription_id: str = \"\"\n    provisioning_result: str = \"\"\n\n\n@dataclass\nclass CapturepreauthorisedchargeInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    authorisation_token: str = \"\"\n    discounted_amount: str = \"\"\n\n\n@dataclass\nclass SendupgradeconfirmationInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    subscription_id: str = \"\"\n    payment_receipt: str = \"\"\n\n\n@dataclass\nclass RecordupgradeaudittrailInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    subscription_id: str = \"\"\n    payment_receipt: str = \"\"\n    provisioning_result: str = \"\"\n\n\n@dataclass\nclass RestoreoldentitlementsInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass RevertprovisioningInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass RestoreresourcereservationInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass ReleasepreauthorisationInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass ReversepaymentcaptureInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass PublishrollbackeventInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass"
+      },
+      {
+        "path": "activities.py",
+        "language": "python",
+        "content": "\"\"\"Activities for the Subscriptionupgradeworkflow workflow.\n\nEach activity is a thin, retryable unit of work. Replace the ``NotImplementedError``\nwith real logic; activities may use I/O, SDKs, and blocking calls freely.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom temporalio import activity\n\nfrom .shared import (\n    ValidaterequestpayloadInput,\n    ResolvetargetplanInput,\n    ChecksubscriptioneligibilityInput,\n    CalculateprorationamountInput,\n    ApplypromotionaldiscountInput,\n    PreauthoriseprorationchargeInput,\n    UpdateentitlementsInput,\n    ReprovisionserviceInput,\n    UpdateresourcereservationInput,\n    CapturepreauthorisedchargeInput,\n    SendupgradeconfirmationInput,\n    RecordupgradeaudittrailInput,\n    RestoreoldentitlementsInput,\n    RevertprovisioningInput,\n    RestoreresourcereservationInput,\n    ReleasepreauthorisationInput,\n    ReversepaymentcaptureInput,\n    PublishrollbackeventInput,\n)\n\n\n@activity.defn(name=\"Validaterequestpayload\")\nasync def validaterequestpayload(arg: ValidaterequestpayloadInput) -> str:\n    \"\"\"Validate subscription upgrade request payload parameters\"\"\"\n    activity.logger.info(\"Running validaterequestpayload\", extra={\"input\": arg})\n    raise NotImplementedError(\"validaterequestpayload is not implemented yet.\")\n\n@activity.defn(name=\"Resolvetargetplan\")\nasync def resolvetargetplan(arg: ResolvetargetplanInput) -> str:\n    \"\"\"Resolve target plan details from Product Catalog Service\"\"\"\n    activity.logger.info(\"Running resolvetargetplan\", extra={\"input\": arg})\n    raise NotImplementedError(\"resolvetargetplan is not implemented yet.\")\n\n@activity.defn(name=\"Checksubscriptioneligibility\")\nasync def checksubscriptioneligibility(arg: ChecksubscriptioneligibilityInput) -> str:\n    \"\"\"Check subscription eligibility for upgrade\"\"\"\n    activity.logger.info(\"Running checksubscriptioneligibility\", extra={\"input\": arg})\n    raise NotImplementedError(\"checksubscriptioneligibility is not implemented yet.\")\n\n@activity.defn(name=\"Calculateprorationamount\")\nasync def calculateprorationamount(arg: CalculateprorationamountInput) -> str:\n    \"\"\"Calculate proration amount via Billing/Mediation System\"\"\"\n    activity.logger.info(\"Running calculateprorationamount\", extra={\"input\": arg})\n    raise NotImplementedError(\"calculateprorationamount is not implemented yet.\")\n\n@activity.defn(name=\"Applypromotionaldiscount\")\nasync def applypromotionaldiscount(arg: ApplypromotionaldiscountInput) -> str:\n    \"\"\"Validate and apply promotional discount if promoCode provided\"\"\"\n    activity.logger.info(\"Running applypromotionaldiscount\", extra={\"input\": arg})\n    raise NotImplementedError(\"applypromotionaldiscount is not implemented yet.\")\n\n@activity.defn(name=\"Preauthoriseprorationcharge\")\nasync def preauthoriseprorationcharge(arg: PreauthoriseprorationchargeInput) -> str:\n    \"\"\"Pre-authorise proration charge via Payment Gateway\"\"\"\n    activity.logger.info(\"Running preauthoriseprorationcharge\", extra={\"input\": arg})\n    raise NotImplementedError(\"preauthoriseprorationcharge is not implemented yet.\")\n\n@activity.defn(name=\"Updateentitlements\")\nasync def updateentitlements(arg: UpdateentitlementsInput) -> str:\n    \"\"\"Update entitlements in Entitlement Service\"\"\"\n    activity.logger.info(\"Running updateentitlements\", extra={\"input\": arg})\n    raise NotImplementedError(\"updateentitlements is not implemented yet.\")\n\n@activity.defn(name=\"Reprovisionservice\")\nasync def reprovisionservice(arg: ReprovisionserviceInput) -> str:\n    \"\"\"Re-provision service via Provisioning Platform (TMF640)\"\"\"\n    activity.logger.info(\"Running reprovisionservice\", extra={\"input\": arg})\n    raise NotImplementedError(\"reprovisionservice is not implemented yet.\")\n\n@activity.defn(name=\"Updateresourcereservation\")\nasync def updateresourcereservation(arg: UpdateresourcereservationInput) -> str:\n    \"\"\"Update resource reservation in Service Inventory (TMF638)\"\"\"\n    activity.logger.info(\"Running updateresourcereservation\", extra={\"input\": arg})\n    raise NotImplementedError(\"updateresourcereservation is not implemented yet.\")\n\n@activity.defn(name=\"Capturepreauthorisedcharge\")\nasync def capturepreauthorisedcharge(arg: CapturepreauthorisedchargeInput) -> str:\n    \"\"\"Capture pre-authorised charge via Payment Gateway\"\"\"\n    activity.logger.info(\"Running capturepreauthorisedcharge\", extra={\"input\": arg})\n    raise NotImplementedError(\"capturepreauthorisedcharge is not implemented yet.\")\n\n@activity.defn(name=\"Sendupgradeconfirmation\")\nasync def sendupgradeconfirmation(arg: SendupgradeconfirmationInput) -> str:\n    \"\"\"Send upgrade confirmation via Notification Service\"\"\"\n    activity.logger.info(\"Running sendupgradeconfirmation\", extra={\"input\": arg})\n    raise NotImplementedError(\"sendupgradeconfirmation is not implemented yet.\")\n\n@activity.defn(name=\"Recordupgradeaudittrail\")\nasync def recordupgradeaudittrail(arg: RecordupgradeaudittrailInput) -> str:\n    \"\"\"Record upgrade audit trail in Audit/Compliance Archive\"\"\"\n    activity.logger.info(\"Running recordupgradeaudittrail\", extra={\"input\": arg})\n    raise NotImplementedError(\"recordupgradeaudittrail is not implemented yet.\")\n\n@activity.defn(name=\"Restoreoldentitlements\")\nasync def restoreoldentitlements(arg: RestoreoldentitlementsInput) -> str:\n    \"\"\"Revert entitlements update in Entitlement Service\"\"\"\n    activity.logger.info(\"Running restoreoldentitlements\", extra={\"input\": arg})\n    raise NotImplementedError(\"restoreoldentitlements is not implemented yet.\")\n\n@activity.defn(name=\"Revertprovisioning\")\nasync def revertprovisioning(arg: RevertprovisioningInput) -> str:\n    \"\"\"Re-provision with original plan configuration\"\"\"\n    activity.logger.info(\"Running revertprovisioning\", extra={\"input\": arg})\n    raise NotImplementedError(\"revertprovisioning is not implemented yet.\")\n\n@activity.defn(name=\"Restoreresourcereservation\")\nasync def restoreresourcereservation(arg: RestoreresourcereservationInput) -> str:\n    \"\"\"Restore previous resource reservation state\"\"\"\n    activity.logger.info(\"Running restoreresourcereservation\", extra={\"input\": arg})\n    raise NotImplementedError(\"restoreresourcereservation is not implemented yet.\")\n\n@activity.defn(name=\"Releasepreauthorisation\")\nasync def releasepreauthorisation(arg: ReleasepreauthorisationInput) -> str:\n    \"\"\"Void pre-authorisation with Payment Gateway\"\"\"\n    activity.logger.info(\"Running releasepreauthorisation\", extra={\"input\": arg})\n    raise NotImplementedError(\"releasepreauthorisation is not implemented yet.\")\n\n@activity.defn(name=\"Reversepaymentcapture\")\nasync def reversepaymentcapture(arg: ReversepaymentcaptureInput) -> str:\n    \"\"\"Refund captured payment amount\"\"\"\n    activity.logger.info(\"Running reversepaymentcapture\", extra={\"input\": arg})\n    raise NotImplementedError(\"reversepaymentcapture is not implemented yet.\")\n\n@activity.defn(name=\"Publishrollbackevent\")\nasync def publishrollbackevent(arg: PublishrollbackeventInput) -> str:\n    \"\"\"Notify systems of upgrade rollback completion\"\"\"\n    activity.logger.info(\"Running publishrollbackevent\", extra={\"input\": arg})\n    raise NotImplementedError(\"publishrollbackevent is not implemented yet.\")"
+      },
+      {
+        "path": "workflow.py",
+        "language": "python",
+        "content": "\"\"\"The Subscriptionupgradeworkflow Temporal workflow.\n\nWorkflow code must be deterministic: do all I/O inside activities, and use\n``workflow.*`` helpers (``execute_activity``, ``execute_child_workflow``,\n``sleep``, signals, queries) rather than calling the outside world directly.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Awaitable, Callable\nfrom datetime import timedelta\nfrom typing import Any\n\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\n\nwith workflow.unsafe.imports_passed_through():\n    from .activities import (\n        validaterequestpayload,\n        resolvetargetplan,\n        checksubscriptioneligibility,\n        calculateprorationamount,\n        applypromotionaldiscount,\n        preauthoriseprorationcharge,\n        updateentitlements,\n        reprovisionservice,\n        updateresourcereservation,\n        capturepreauthorisedcharge,\n        sendupgradeconfirmation,\n        recordupgradeaudittrail,\n        restoreoldentitlements,\n        revertprovisioning,\n        restoreresourcereservation,\n        releasepreauthorisation,\n        reversepaymentcapture,\n        publishrollbackevent,\n    )\n    from .shared import (\n        WorkflowInput,\n        ValidaterequestpayloadInput,\n        ResolvetargetplanInput,\n        ChecksubscriptioneligibilityInput,\n        CalculateprorationamountInput,\n        ApplypromotionaldiscountInput,\n        PreauthoriseprorationchargeInput,\n        UpdateentitlementsInput,\n        ReprovisionserviceInput,\n        UpdateresourcereservationInput,\n        CapturepreauthorisedchargeInput,\n        SendupgradeconfirmationInput,\n        RecordupgradeaudittrailInput,\n        RestoreoldentitlementsInput,\n        RevertprovisioningInput,\n        RestoreresourcereservationInput,\n        ReleasepreauthorisationInput,\n        ReversepaymentcaptureInput,\n        PublishrollbackeventInput,\n    )\n\nPROVISIONING_SLATIMER = timedelta(seconds=3600)  # SLA timer for service provisioning step\n\n\n@workflow.defn\nclass Subscriptionupgradeworkflow:\n    \"\"\"Orchestrates end-to-end subscription upgrade process with validation, billing, provisioning, and compliance steps\"\"\"\n\n    def __init__(self) -> None:\n        self._status: str = \"pending\"\n        self._compliance_approval_required_received: bool = False\n\n    @workflow.run\n    async def run(self, arg: WorkflowInput) -> str:\n        self._status = \"running\"\n        compensations: list[Callable[[], Awaitable[Any]]] = []\n        try:\n            await workflow.execute_activity(\n                validaterequestpayload,\n                ValidaterequestpayloadInput(),\n                start_to_close_timeout=timedelta(seconds=10),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n            await workflow.execute_activity(\n                resolvetargetplan,\n                ResolvetargetplanInput(),\n                start_to_close_timeout=timedelta(seconds=30),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n            await workflow.execute_activity(\n                checksubscriptioneligibility,\n                ChecksubscriptioneligibilityInput(),\n                start_to_close_timeout=timedelta(seconds=15),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n            await workflow.execute_activity(\n                applypromotionaldiscount,\n                ApplypromotionaldiscountInput(),\n                start_to_close_timeout=timedelta(seconds=20),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n            await workflow.execute_activity(\n                calculateprorationamount,\n                CalculateprorationamountInput(),\n                start_to_close_timeout=timedelta(seconds=45),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=1.5, maximum_attempts=3),\n            )\n            await workflow.execute_activity(\n                preauthoriseprorationcharge,\n                PreauthoriseprorationchargeInput(),\n                start_to_close_timeout=timedelta(seconds=60),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=2, non_retryable_error_types=['PAYMENT_METHOD_EXPIRED']),\n            )\n            await workflow.execute_activity(\n                updateentitlements,\n                UpdateentitlementsInput(),\n                start_to_close_timeout=timedelta(seconds=45),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=3), backoff_coefficient=2, maximum_attempts=3),\n            )\n            await workflow.execute_activity(\n                reprovisionservice,\n                ReprovisionserviceInput(),\n                start_to_close_timeout=timedelta(seconds=300),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=5, maximum_interval=timedelta(seconds=60)),\n            )\n            await workflow.execute_activity(\n                updateresourcereservation,\n                UpdateresourcereservationInput(),\n                start_to_close_timeout=timedelta(seconds=30),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n            await workflow.execute_activity(\n                capturepreauthorisedcharge,\n                CapturepreauthorisedchargeInput(),\n                start_to_close_timeout=timedelta(seconds=45),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=2),\n            )\n            await workflow.execute_activity(\n                sendupgradeconfirmation,\n                SendupgradeconfirmationInput(),\n                start_to_close_timeout=timedelta(seconds=20),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n            await workflow.execute_activity(\n                recordupgradeaudittrail,\n                RecordupgradeaudittrailInput(),\n                start_to_close_timeout=timedelta(seconds=30),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n        except Exception:\n            for compensate in reversed(compensations):\n                await compensate()\n            self._status = \"compensated\"\n            raise\n        self._status = \"completed\"\n        return self._status\n\n    @workflow.signal\n    async def compliance_approval_required(self, compliance_reason: str) -> None:\n        \"\"\"Handle the 'ComplianceApprovalRequired' signal. TODO: react to it.\"\"\"\n        self._compliance_approval_required_received = True\n\n    @workflow.query\n    def get_upgrade_status(self) -> str:\n        \"\"\"Query current state of subscription upgrade process\"\"\"\n        return self._status\n\n    @workflow.query\n    def get_audit_trail(self) -> str:\n        \"\"\"Retrieve audit trail information for completed upgrade\"\"\"\n        return self._status"
+      },
+      {
+        "path": "worker.py",
+        "language": "python",
+        "content": "\"\"\"Worker process for the Subscriptionupgradeworkflow workflow.\n\nRun this after starting a Temporal server (``temporal server start-dev``):\n\n    python -m subscriptionupgradeworkflow.worker\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\n\nfrom temporalio.client import Client\nfrom temporalio.worker import Worker\n\nfrom .workflow import Subscriptionupgradeworkflow\nfrom .activities import (\n    validaterequestpayload,\n    resolvetargetplan,\n    checksubscriptioneligibility,\n    calculateprorationamount,\n    applypromotionaldiscount,\n    preauthoriseprorationcharge,\n    updateentitlements,\n    reprovisionservice,\n    updateresourcereservation,\n    capturepreauthorisedcharge,\n    sendupgradeconfirmation,\n    recordupgradeaudittrail,\n    restoreoldentitlements,\n    revertprovisioning,\n    restoreresourcereservation,\n    releasepreauthorisation,\n    reversepaymentcapture,\n    publishrollbackevent,\n)\n\nTASK_QUEUE = \"subscription-upgrade-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and run the worker until cancelled.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n    worker = Worker(\n        client,\n        task_queue=TASK_QUEUE,\n        workflows=[Subscriptionupgradeworkflow],\n        activities=[validaterequestpayload, resolvetargetplan, checksubscriptioneligibility, calculateprorationamount, applypromotionaldiscount, preauthoriseprorationcharge, updateentitlements, reprovisionservice, updateresourcereservation, capturepreauthorisedcharge, sendupgradeconfirmation, recordupgradeaudittrail, restoreoldentitlements, revertprovisioning, restoreresourcereservation, releasepreauthorisation, reversepaymentcapture, publishrollbackevent],\n    )\n    await worker.run()\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "README.md",
+        "language": "markdown",
+        "content": "# Subscriptionupgradeworkflow (generated Temporal workflow)\n\nOrchestrates end-to-end subscription upgrade process with validation, billing, provisioning, and compliance steps\n\nThis package was generated **deterministically** from a reviewed\n`TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,\nqueries, timers, child workflows, retry policies, and saga compensation are\nwired up, but each activity body raises `NotImplementedError` for you to fill in.\n\n## Files\n\n| File | Purpose |\n|------|---------|\n| `shared.py` | Dataclasses for workflow / activity inputs |\n| `activities.py` | `@activity.defn` units of work (implement these) |\n| `workflow.py` | `@workflow.defn` orchestration: `Subscriptionupgradeworkflow` |\n| `worker.py` | Worker registering the workflow + activities on `subscription-upgrade-queue` |\n\n## Run it\n\n```bash\npip install temporalio\ntemporal server start-dev          # in one terminal\npython -m subscriptionupgradeworkflow.worker # in another\n```\n\nThen start the workflow from a client:\n\n```python\nfrom temporalio.client import Client\nfrom subscriptionupgradeworkflow.workflow import Subscriptionupgradeworkflow\nfrom subscriptionupgradeworkflow.shared import WorkflowInput\n\nasync def start() -> None:\n    client = await Client.connect(\"localhost:7233\")\n    handle = await client.start_workflow(\n        Subscriptionupgradeworkflow.run,\n        WorkflowInput(),\n        id=\"subscriptionupgradeworkflow-1\",\n        task_queue=\"subscription-upgrade-queue\",\n    )\n    print(await handle.result())\n```\n\n## Next steps\n\n- Implement each activity in `activities.py`.\n- Replace the default `str` input fields in `shared.py` with real types.\n- Review the generated retry policies and timeouts against your SLAs."
+      }
+    ]
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"validate request payload (subscriptionId, targetPlanId, effectiveDate)\"]\n    activity_2[\"resolve target plan via Product Catalog Service\"]\n    activity_3[\"check subscription eligibility for upgrade\"]\n    activity_4[\"calculate proration amount via Billing / Mediation System\"]\n    activity_5[\"validate and apply promotional discount (if promoCode provided)\"]\n    activity_6[\"pre-authorise proration charge via Payment Gateway\"]\n    activity_7[\"update entitlements in Entitlement Service\"]\n    activity_8[\"re-provision service via Provisioning Platform (TMF640)\"]\n    activity_9[\"update resource reservation in Service Inventory (TMF638)\"]\n    activity_10[\"capture pre-authorised charge via Payment Gateway\"]\n    activity_11[\"send upgrade confirmation via Notification Service\"]\n    activity_12[\"record upgrade audit trail in Audit / Compliance Archive\"]\n    decision_1{\"reject upgrade if subscription is ineligible\"}\n    decision_2{\"skip promo code application if validation fails\"}\n    decision_3{\"reject upgrade if pre-authorisation fails\"}\n    exception_1([\"Plan not found (reject with PLANNOTFOUND)\"])\n    exception_2([\"Plan unavailable in region (reject with PLANREGIONUNAVAILABLE)\"])\n    exception_3([\"Ineligible subscription state (reject with SUBSCRIPTIONNOTUPGRADEABLE)\"])\n    exception_4([\"Concurrent change order conflict (reject with CONCURRENTCHANGEORDER_CONFLICT)\"])\n    exception_5([\"Invalid promotional code (skip discount, notify customer)\"])\n    exception_6([\"Pre-authorisation failure (reject with PAYMENTPREAUTH_FAILED)\"])\n    exception_7([\"Provisioning timeout (trigger rollback)\"])\n    exception_8([\"Entitlement update failure (retry, then rollback)\"])\n    exception_9([\"Charge capture failure (trigger rollback)\"])\n    exception_10([\"Compliance hold (pause workflow, require approval)\"])\n    compensation_1[\"Restore old entitlements (compensate Entitlement Service update)\"]\n    compensation_2[\"Re-provision with old plan (compensate Provisioning Platform)\"]\n    compensation_3[\"Restore old resource reservation (compensate Service Inventory)\"]\n    compensation_4[\"Release pre-authorisation (compensate Payment Gateway pre-auth)\"]\n    compensation_5[\"Reverse charge capture (compensate Payment Gateway capture)\"]\n    compensation_6[\"Publish rollback event (compensate upgrade started event)\"]\n    event_1([\"oms.subscription.upgrade.rejected (published to Kafka Event Bus)\"])\n    event_2([\"oms.subscription.upgrade.started (published to Kafka Event Bus)\"])\n    event_3([\"oms.subscription.upgrade.completed (published to Kafka Event Bus)\"])\n    event_4([\"oms.subscription.upgrade.rolled_back (published to Kafka Event Bus)\"])\n    state_1[\"Start\"]\n    state_2[\"Upgrade requested\"]\n    state_3[\"upgrade_rejected (if ineligible)\"]\n    state_4[\"upgradeinprogress (if eligible)\"]\n    state_5[\"upgradeinprogress\"]\n    state_6[\"Upgrade failed (if charge capture fails)\"]\n    state_7[\"active (with new plan) (if successful)\"]\n    state_8[\"upgrade_rejected (if pre-authorisation fails)\"]\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> decision_2\n    decision_2 -->|yes| activity_3\n    decision_2 -->|no| exception_2\n    activity_3 --> decision_3\n    decision_3 -->|yes| activity_4\n    decision_3 -->|no| exception_3\n    activity_4 --> activity_5\n    activity_5 --> activity_6\n    activity_6 --> activity_7\n    activity_7 --> activity_8\n    activity_8 --> activity_9\n    activity_9 --> activity_10\n    activity_10 --> activity_11\n    activity_11 --> activity_12\n    activity_12 --> end_node\n    activity_1 -.->|on error| exception_1\n    exception_1 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    activity_2 -.->|on error| exception_2\n    exception_2 -.->|compensate| compensation_2\n    compensation_2 --> end_node\n    activity_3 -.->|on error| exception_3\n    exception_3 -.->|compensate| compensation_3\n    compensation_3 --> end_node\n    activity_4 -.->|on error| exception_4\n    exception_4 -.->|compensate| compensation_4\n    compensation_4 --> end_node\n    activity_5 -.->|on error| exception_5\n    exception_5 -.->|compensate| compensation_5\n    compensation_5 --> end_node\n    activity_6 -.->|on error| exception_6\n    exception_6 -.->|compensate| compensation_6\n    compensation_6 --> end_node\n    activity_7 -.->|on error| exception_7\n    exception_7 -.->|compensate| compensation_1\n    activity_8 -.->|on error| exception_8\n    exception_8 -.->|compensate| compensation_1\n    activity_9 -.->|on error| exception_9\n    exception_9 -.->|compensate| compensation_1\n    activity_10 -.->|on error| exception_10\n    exception_10 -.->|compensate| compensation_1\n    exception_1 -.->|retry| activity_1\n    exception_2 -.->|retry| activity_2\n    exception_3 -.->|retry| activity_3\n    exception_4 -.->|retry| activity_4\n    exception_5 -.->|retry| activity_5\n    exception_6 -.->|retry| activity_6\n    exception_7 -.->|retry| activity_7\n    exception_8 -.->|retry| activity_8\n    exception_9 -.->|retry| activity_9\n    activity_12 -.->|emits| event_1\n    activity_12 -.->|emits| event_2\n    activity_12 -.->|emits| event_3\n    activity_12 -.->|emits| event_4\n    state_1 -->|transition| state_2\n    state_2 -->|transition| state_3\n    state_2 -->|transition| state_4\n    state_5 -->|transition| state_6\n    state_5 -->|transition| state_7\n    state_5 -->|transition| state_8\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,state_1,state_2 capture;\n    class activity_1,activity_3,activity_5,activity_6,decision_1,decision_2,decision_3,exception_3,exception_5,exception_6,compensation_4,state_3,state_8 validate;\n    class activity_2,activity_4,activity_7,activity_8,activity_9,exception_1,exception_2,exception_4,exception_7,exception_8,compensation_1,compensation_2,compensation_3,state_4,state_5 process;\n    class end_node,activity_10,activity_11,activity_12,exception_9,exception_10,compensation_5,compensation_6,event_1,event_2,event_3,event_4,state_6,state_7 activate;",
+    "title": "Subscription Plan Upgrade Workflow"
+  },
+  "confidence_scores": {
+    "metadata": 0.975,
+    "facts": 0.975,
+    "graph": 1.0,
+    "cvpa": 0.9267,
+    "temporal": 0.975,
+    "overall": null,
+    "notes": {
+      "facts": "98 facts across 13 categories; 0 duplicate(s) removed.",
+      "cvpa": "45 nodes classified; 45 from model, 0 by fallback.",
+      "temporal": "12 activities, 1 signals, 0 child workflows, 6 compensations.",
+      "temporal_code": "6 files for package 'subscriptionupgradeworkflow'."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-06-26T02:19:33.839199Z",
+  "updated_at": "2026-06-26T02:26:35.364905Z"
+}

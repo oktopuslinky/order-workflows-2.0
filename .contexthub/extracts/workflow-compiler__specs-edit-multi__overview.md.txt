@@ -1,0 +1,40 @@
+# Workflow Specification Project
+
+- project id: `b9b301bf-83a7-4f67-bce0-9a646905852d`
+- stage: completed
+- spec approval: approved
+
+## Workflows
+- `order-placement.md` — Order Placement Workflow
+- `order-fulfilment.md` — Order Fulfilment
+- `payment-reconciliation.md` — Payment Reconciliation
+
+## Cross-Workflow Dependencies
+- order-fulfilment.`payment_id` → payment-reconciliation.`payment_id` (confirmed)
+
+## Latest Validation Findings
+### order-placement
+- none
+### order-fulfilment
+- [WARN] grounding: rule: Hazardous items must ship via ground carriers only is marked [human] and lacks explicit source evidence
+- [WARN] grounding: timers: Carrier pickup confirmation within 24 hours is marked [human] and conflicts with the 12-hour deadline in the source document
+- [WARN] grounding: human-provided element 'activity:a6' is not supported by the document — please confirm or remove it yourself
+- [WARN] grounding: human-provided element 'compensation:c2' is not supported by the document — please confirm or remove it yourself
+- [WARN] grounding: cross_dependencies: The dependency to 'payment-reconciliation' is not explicitly described in the source document's cross-workflow dependencies section
+### payment-reconciliation
+- [WARN] completeness: inputs: payment_id
+- [WARN] completeness: inputs: order_id
+- [WARN] completeness: outputs: reconciliation_status
+- [WARN] completeness: outputs: discrepancy_report_id
+- [WARN] completeness: cross_dependencies: payment_id from order-fulfilment to payment-reconciliation
+- [WARN] grounding: activity:a6: Activity a6 is marked as [human] but lacks explicit support in the source document
+- [WARN] grounding: activity:a7: Activity a7 is marked as [human] but lacks explicit support in the source document
+- [WARN] grounding: activity:a8: Activity a8 is marked as [human] but lacks explicit support in the source document
+
+## How to proceed
+
+1. Review and edit each workflow's `<slug>.md` file.
+2. Answer the Open Questions (fill the `Answer:` lines, tick the boxes).
+3. Confirm the cross-workflow dependencies (tick their boxes).
+4. Run `workflow-compiler validate <project-id>` to check your edits.
+5. Run `workflow-compiler approve-spec <project-id>` to generate the graphs, Temporal designs, and code.

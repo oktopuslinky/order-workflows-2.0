@@ -1,0 +1,2609 @@
+{
+  "workflow_id": "0292fde8-cd2d-4d7a-9010-26d59038a5fd",
+  "document_text": "# Order Management Operations\n\n<!--\n  workflow-compiler specification (v1) — slug: order-fulfilment\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nManages the lifecycle of an order from placement through fulfillment to potential return, ensuring inventory, payment, and shipping processes are executed correctly.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Shopper, Order Operations, Warehouse Operator, Fulfillment Operations, Returns Operations, Customer\n- systems: Order Service, Catalogue Service, Inventory Service, Payment Gateway, Fulfillment Service, Warehouse Service, Carrier Service, Returns Service\n- triggers: checkout.submitted, order.fulfil, return.requested\n- start states: Cart submitted for checkout, Order placed, Return requested\n- end states: Order placed or rejected, Order fulfilled or cancelled, Return processed or rejected\n- tags: \n\n## Inputs\n- cart_id\n- customer_id\n- amount\n- currency\n- order_id\n- shipment_id\n- reason_code\n\n## Outputs\n- order_id\n- authorization_id\n- placement_status\n- shipment_id\n- payment_id\n- fulfilment_status\n- return_id\n- refund_id\n- return_status\n\n## Business Rules\n- BR-2: Inventory must be reserved before payment is authorised\n- BR-3: Payment must be authorised before the order is created\n- BR-2: The shipment must be packed before it is dispatched\n- BR-3: Payment is captured only after the carrier confirms pickup\n- BR-2: The returned item must be received before the refund is issued\n- BR-3: A refund may not exceed the captured payment amount\n\n## API Interfaces\n- /orders/validate-cart\n- /inventory/reserve\n- /payments/authorize\n- /orders/create\n- /warehouse/pick\n- /warehouse/pack\n- /carrier/dispatch\n- /payments/capture\n- /returns/authorize\n- /warehouse/receive\n- /payments/refund\n\n## Systems Involved\n- Order Service\n- Catalogue Service\n- Inventory Service\n- Payment Gateway\n- Fulfilment Service\n- Warehouse Service\n- Carrier Service\n- Returns Service\n\n## Timers and SLAs\n- Validate the cart must complete within 5 seconds\n- Authorise payment must complete within 30 seconds\n- Dispatch the shipment must complete within 60 seconds\n- Carrier pickup confirmation must arrive within 12 hours\n- Authorise the return must complete within 10 seconds\n- Issue the refund must complete within 30 seconds\n\n## Retries\n- Reserve inventory: retry up to 3 times with exponential backoff starting at 2 seconds\n- Authorise payment: retry up to 2 times with a fixed 5-second delay\n- Dispatch the shipment: retry up to 3 times with exponential backoff starting at 2 seconds\n- Capture payment: retry up to 5 times with exponential backoff starting at 1 second\n- Receive the returned item: retry up to 3 times with exponential backoff starting at 2 seconds\n- Issue the refund: retry up to 5 times with exponential backoff starting at 1 second\n\n## Activities\n- [a1] Validate Cart\n- [a2] Reserve Inventory\n- [a3] Authorise Payment\n- [a4] Create Order\n- [a5] Pick Items\n- [a6] Pack Shipment\n- [a7] Dispatch Shipment\n- [a8] Capture Payment\n- [a9] Authorise Return\n- [a10] Receive Returned Item\n- [a11] Issue Refund\n\n## Decisions\n- [d1] Is Cart Eligible? — after: a1; yes: a2; no: e1\n- [d2] Is Payment Authorised? — after: a3; yes: a4; no: e2\n- [d3] Is Dispatch Accepted? — after: a7; yes: a8; no: e3\n- [d4] Is Return Eligible? — after: a9; yes: a10; no: e4\n\n## Exceptions\n- [e1] CartNotEligible\n- [e2] PaymentDeclined — raised by: a3\n- [e3] CarrierRejected — raised by: a7\n- [e4] ReturnNotEligible\n- [e5] PickupTimeout — raised by: a7\n- [e6] RefundFailed — raised by: a11\n\n## Compensations\n- [c1] Release Inventory — compensates: a2\n- [c2] Unpack Shipment — compensates: a6\n\n## Events\n- [v1] [ev1] checkout.submitted — emitted by: start\n- [v2] [ev2] order.fulfil — emitted by: a4\n- [v3] [ev3] return.requested — emitted by: start\n- [v4] [ev4] carrier.picked_up — emitted by: a7\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n<!-- none -->\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n<!-- none -->\n\n## Cross-Workflow Dependencies\n- [x] uses output `orderid` of `order-placement` as input `orderid` — Order Fulfilment consumes the order_id produced by Order Placement\n- [x] provides output `shipmentid` to `order-return` input `shipmentid` — Order Return consumes the shipment_id produced by Order Fulfilment",
+  "project_id": "44a7f79a-4bf6-4c4a-9997-0c5ea5d0a55a",
+  "workflow_metadata": {
+    "name": "Order Management Operations",
+    "description": "Manages the lifecycle of an order from placement through fulfillment to potential return, ensuring inventory, payment, and shipping processes are executed correctly.",
+    "purpose": "Manages the lifecycle of an order from placement through fulfillment to potential return, ensuring inventory, payment, and shipping processes are executed correctly.",
+    "actors": [
+      "Shopper",
+      "Order Operations",
+      "Warehouse Operator",
+      "Fulfillment Operations",
+      "Returns Operations",
+      "Customer"
+    ],
+    "systems": [
+      "Order Service",
+      "Catalogue Service",
+      "Inventory Service",
+      "Payment Gateway",
+      "Fulfillment Service",
+      "Warehouse Service",
+      "Carrier Service",
+      "Returns Service"
+    ],
+    "trigger_events": [
+      "checkout.submitted",
+      "order.fulfil",
+      "return.requested"
+    ],
+    "start_states": [
+      "Cart submitted for checkout",
+      "Order placed",
+      "Return requested"
+    ],
+    "end_states": [
+      "Order placed or rejected",
+      "Order fulfilled or cancelled",
+      "Return processed or rejected"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "cart_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "customer_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-3",
+        "statement": "amount",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-4",
+        "statement": "currency",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-5",
+        "statement": "order_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-6",
+        "statement": "shipment_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-7",
+        "statement": "reason_code",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "order_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "authorization_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-3",
+        "statement": "placement_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-4",
+        "statement": "shipment_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-5",
+        "statement": "payment_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-6",
+        "statement": "fulfilment_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-7",
+        "statement": "return_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-8",
+        "statement": "refund_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-9",
+        "statement": "return_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Validate Cart",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Reserve Inventory",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Authorise Payment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-4",
+        "statement": "Create Order",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-5",
+        "statement": "Pick Items",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-6",
+        "statement": "Pack Shipment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-7",
+        "statement": "Dispatch Shipment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-8",
+        "statement": "Capture Payment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-9",
+        "statement": "Authorise Return",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-10",
+        "statement": "Receive Returned Item",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-11",
+        "statement": "Issue Refund",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Is Cart Eligible?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-2",
+        "statement": "Is Payment Authorised?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-3",
+        "statement": "Is Dispatch Accepted?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-4",
+        "statement": "Is Return Eligible?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-2: Inventory must be reserved before payment is authorised",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-3: Payment must be authorised before the order is created",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-2: The shipment must be packed before it is dispatched",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-4",
+        "statement": "BR-3: Payment is captured only after the carrier confirms pickup",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-5",
+        "statement": "BR-2: The returned item must be received before the refund is issued",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-6",
+        "statement": "BR-3: A refund may not exceed the captured payment amount",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "[ev1] checkout.submitted",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-2",
+        "statement": "[ev2] order.fulfil",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-3",
+        "statement": "[ev3] return.requested",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-4",
+        "statement": "[ev4] carrier.picked_up",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "/orders/validate-cart",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "/inventory/reserve",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-3",
+        "statement": "/payments/authorize",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-4",
+        "statement": "/orders/create",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-5",
+        "statement": "/warehouse/pick",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-6",
+        "statement": "/warehouse/pack",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-7",
+        "statement": "/carrier/dispatch",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-8",
+        "statement": "/payments/capture",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-9",
+        "statement": "/returns/authorize",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-10",
+        "statement": "/warehouse/receive",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-11",
+        "statement": "/payments/refund",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Order Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Catalogue Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Inventory Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-4",
+        "statement": "Payment Gateway",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-5",
+        "statement": "Fulfilment Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-6",
+        "statement": "Warehouse Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-7",
+        "statement": "Carrier Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-8",
+        "statement": "Returns Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "CartNotEligible",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-2",
+        "statement": "PaymentDeclined",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-3",
+        "statement": "CarrierRejected",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-4",
+        "statement": "ReturnNotEligible",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-5",
+        "statement": "PickupTimeout",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-6",
+        "statement": "RefundFailed",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-1",
+        "statement": "Validate the cart must complete within 5 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-2",
+        "statement": "Authorise payment must complete within 30 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-3",
+        "statement": "Dispatch the shipment must complete within 60 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-4",
+        "statement": "Carrier pickup confirmation must arrive within 12 hours",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-5",
+        "statement": "Authorise the return must complete within 10 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-6",
+        "statement": "Issue the refund must complete within 30 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Reserve inventory: retry up to 3 times with exponential backoff starting at 2 seconds",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "Authorise payment: retry up to 2 times with a fixed 5-second delay",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-3",
+        "statement": "Dispatch the shipment: retry up to 3 times with exponential backoff starting at 2 seconds",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-4",
+        "statement": "Capture payment: retry up to 5 times with exponential backoff starting at 1 second",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-5",
+        "statement": "Receive the returned item: retry up to 3 times with exponential backoff starting at 2 seconds",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-6",
+        "statement": "Issue the refund: retry up to 5 times with exponential backoff starting at 1 second",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Release Inventory compensates Reserve Inventory",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-2",
+        "statement": "Unpack Shipment compensates Pack Shipment",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Validate Cart",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Reserve Inventory",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Authorise Payment",
+          "parallel_group": null
+        },
+        {
+          "id": "a4",
+          "name": "Create Order",
+          "parallel_group": null
+        },
+        {
+          "id": "a5",
+          "name": "Pick Items",
+          "parallel_group": null
+        },
+        {
+          "id": "a6",
+          "name": "Pack Shipment",
+          "parallel_group": null
+        },
+        {
+          "id": "a7",
+          "name": "Dispatch Shipment",
+          "parallel_group": null
+        },
+        {
+          "id": "a8",
+          "name": "Capture Payment",
+          "parallel_group": null
+        },
+        {
+          "id": "a9",
+          "name": "Authorise Return",
+          "parallel_group": null
+        },
+        {
+          "id": "a10",
+          "name": "Receive Returned Item",
+          "parallel_group": null
+        },
+        {
+          "id": "a11",
+          "name": "Issue Refund",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Is Cart Eligible?",
+          "after": "a1",
+          "yes_target": "a2",
+          "no_target": "e1"
+        },
+        {
+          "id": "d2",
+          "question": "Is Payment Authorised?",
+          "after": "a3",
+          "yes_target": "a4",
+          "no_target": "e2"
+        },
+        {
+          "id": "d3",
+          "question": "Is Dispatch Accepted?",
+          "after": "a7",
+          "yes_target": "a8",
+          "no_target": "e3"
+        },
+        {
+          "id": "d4",
+          "question": "Is Return Eligible?",
+          "after": "a9",
+          "yes_target": "a10",
+          "no_target": "e4"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "CartNotEligible",
+          "raised_by": null
+        },
+        {
+          "id": "e2",
+          "reason": "PaymentDeclined",
+          "raised_by": "a3"
+        },
+        {
+          "id": "e3",
+          "reason": "CarrierRejected",
+          "raised_by": "a7"
+        },
+        {
+          "id": "e4",
+          "reason": "ReturnNotEligible",
+          "raised_by": null
+        },
+        {
+          "id": "e5",
+          "reason": "PickupTimeout",
+          "raised_by": "a7"
+        },
+        {
+          "id": "e6",
+          "reason": "RefundFailed",
+          "raised_by": "a11"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Release Inventory",
+          "compensates": "a2"
+        },
+        {
+          "id": "c2",
+          "name": "Unpack Shipment",
+          "compensates": "a6"
+        }
+      ],
+      "events": [
+        {
+          "id": "v1",
+          "name": "[ev1] checkout.submitted",
+          "emitted_by": "start"
+        },
+        {
+          "id": "v2",
+          "name": "[ev2] order.fulfil",
+          "emitted_by": "a4"
+        },
+        {
+          "id": "v3",
+          "name": "[ev3] return.requested",
+          "emitted_by": "start"
+        },
+        {
+          "id": "v4",
+          "name": "[ev4] carrier.picked_up",
+          "emitted_by": "a7"
+        }
+      ],
+      "transitions": []
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): checkout.submitted, order.fulfil, return.requested.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "7 input(s): cart_id, customer_id, amount, currency, order_id, shipment_id, reason_code.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "9 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 4 decision(s) have both branches.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 2 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "Waits are present and at least one timer/deadline was declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "6 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "6 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "No free-form state transitions.",
+        "question": null,
+        "answer": null
+      }
+    ]
+  },
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Validate Cart",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Reserve Inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Authorise Payment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Create Order",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_5",
+        "label": "Pick Items",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_6",
+        "label": "Pack Shipment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_7",
+        "label": "Dispatch Shipment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_8",
+        "label": "Capture Payment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_9",
+        "label": "Authorise Return",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_10",
+        "label": "Receive Returned Item",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_11",
+        "label": "Issue Refund",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Is Cart Eligible?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_2",
+        "label": "Is Payment Authorised?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_3",
+        "label": "Is Dispatch Accepted?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_4",
+        "label": "Is Return Eligible?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "CartNotEligible",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "PaymentDeclined",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_3",
+        "label": "CarrierRejected",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_4",
+        "label": "ReturnNotEligible",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_5",
+        "label": "PickupTimeout",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_6",
+        "label": "RefundFailed",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Release Inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_2",
+        "label": "Unpack Shipment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "[ev1] checkout.submitted",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "[ev2] order.fulfil",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "[ev3] return.requested",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_4",
+        "label": "[ev4] carrier.picked_up",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "activity_3",
+        "target": "decision_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e7",
+        "source": "decision_2",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e8",
+        "source": "decision_2",
+        "target": "exception_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e9",
+        "source": "activity_4",
+        "target": "activity_5",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "activity_5",
+        "target": "activity_6",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "activity_6",
+        "target": "activity_7",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "activity_7",
+        "target": "decision_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "decision_3",
+        "target": "activity_8",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e14",
+        "source": "decision_3",
+        "target": "exception_3",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e15",
+        "source": "activity_8",
+        "target": "activity_9",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "activity_9",
+        "target": "decision_4",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "decision_4",
+        "target": "activity_10",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e18",
+        "source": "decision_4",
+        "target": "exception_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e19",
+        "source": "activity_10",
+        "target": "activity_11",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e20",
+        "source": "activity_11",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e21",
+        "source": "activity_3",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e22",
+        "source": "activity_7",
+        "target": "exception_3",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e23",
+        "source": "activity_7",
+        "target": "exception_5",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e24",
+        "source": "activity_11",
+        "target": "exception_6",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e25",
+        "source": "activity_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e26",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e27",
+        "source": "activity_6",
+        "target": "compensation_2",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e28",
+        "source": "compensation_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e29",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e30",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e31",
+        "source": "activity_4",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e32",
+        "source": "start",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e33",
+        "source": "event_3",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e34",
+        "source": "activity_7",
+        "target": "event_4",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e35",
+        "source": "exception_6",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e36",
+        "source": "exception_4",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e37",
+        "source": "exception_3",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e38",
+        "source": "exception_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e39",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e40",
+        "source": "exception_5",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.9: 0 error(s), 2 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Dead-end node '[ev2] order.fulfil' has no outgoing edges.",
+        "location": "event_2",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-2",
+        "severity": "warning",
+        "message": "Dead-end node '[ev4] carrier.picked_up' has no outgoing edges.",
+        "location": "event_4",
+        "suggestion": "Add a transition toward an END node."
+      }
+    ],
+    "score": 0.9,
+    "health_score": 0.9,
+    "confidence": 1.0,
+    "reviewer": "auto-threshold",
+    "reviewed_at": "2026-07-07T19:38:58.921906Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Initiates the workflow, indicating intake of the process.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Concludes the workflow, signifying the end of the process.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "validate",
+        "rationale": "Checks if the cart is eligible, a validation step.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "process",
+        "rationale": "Reserves inventory, a core operational task.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "validate",
+        "rationale": "Authorises payment, involving a verification check.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "process",
+        "rationale": "Creates an order, a key transformation step.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_5",
+        "phase": "process",
+        "rationale": "Picks items, part of the core fulfillment process.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_6",
+        "phase": "process",
+        "rationale": "Packs shipment, continuing the fulfillment process.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_7",
+        "phase": "process",
+        "rationale": "Dispatches shipment, final step in fulfillment.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_8",
+        "phase": "activate",
+        "rationale": "Captures payment, a downstream financial effect.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_9",
+        "phase": "validate",
+        "rationale": "Authorises return, involving a check or verification.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_10",
+        "phase": "process",
+        "rationale": "Receives returned item, a core reverse logistics task.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_11",
+        "phase": "activate",
+        "rationale": "Issues refund, a final downstream customer action.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Evaluates eligibility, a direct validation check.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_2",
+        "phase": "validate",
+        "rationale": "Assesses payment authorisation, a verification decision.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_3",
+        "phase": "validate",
+        "rationale": "Checks dispatch acceptance, involving a validation step.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_4",
+        "phase": "validate",
+        "rationale": "Determines return eligibility, a clear validation.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "capture",
+        "rationale": "Triggers on an ineligible cart, an input condition.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_2",
+        "phase": "validate",
+        "rationale": "Occurs on payment decline, a failed validation.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "exception_3",
+        "phase": "activate",
+        "rationale": "Triggered by carrier rejection, affecting downstream actions.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_4",
+        "phase": "validate",
+        "rationale": "Indicates a return not eligible, a validation outcome.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "exception_5",
+        "phase": "activate",
+        "rationale": "Occurs on pickup timeout, impacting final actions.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_6",
+        "phase": "activate",
+        "rationale": "Triggers on refund failure, a final step issue.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "process",
+        "rationale": "Releases inventory, compensating for a previous process step.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "compensation_2",
+        "phase": "process",
+        "rationale": "Unpacks shipment, a compensatory operational task.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "Represents a submitted checkout event, an initial input.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "event_2",
+        "phase": "activate",
+        "rationale": "Emitted on order fulfillment, a final process outcome.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_3",
+        "phase": "capture",
+        "rationale": "Triggers on a return request, an input event.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "event_4",
+        "phase": "activate",
+        "rationale": "Occurs on carrier pickup, a final external action.",
+        "confidence": 0.9
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "exception_1",
+          "event_1",
+          "event_3"
+        ],
+        "summary": "4 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "activity_1",
+          "activity_3",
+          "activity_9",
+          "decision_1",
+          "decision_2",
+          "decision_3",
+          "decision_4",
+          "exception_2",
+          "exception_4"
+        ],
+        "summary": "9 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_2",
+          "activity_4",
+          "activity_5",
+          "activity_6",
+          "activity_7",
+          "activity_10",
+          "compensation_1",
+          "compensation_2"
+        ],
+        "summary": "8 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "activity_8",
+          "activity_11",
+          "exception_3",
+          "exception_5",
+          "exception_6",
+          "event_2",
+          "event_4"
+        ],
+        "summary": "8 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "EcommerceOrderFulfillment",
+    "task_queue": "ecommerce-queue",
+    "description": "Manages the full lifecycle of an e-commerce order from cart validation through shipment and potential returns.",
+    "workflow_inputs": [
+      {
+        "name": "cart_id",
+        "type": "str"
+      },
+      {
+        "name": "customer_id",
+        "type": "str"
+      },
+      {
+        "name": "amount",
+        "type": "float"
+      },
+      {
+        "name": "currency",
+        "type": "str"
+      },
+      {
+        "name": "order_id",
+        "type": "str"
+      },
+      {
+        "name": "shipment_id",
+        "type": "str"
+      },
+      {
+        "name": "reason_code",
+        "type": "str"
+      }
+    ],
+    "result_type": "str",
+    "activities": [
+      {
+        "name": "ValidateCart",
+        "source_node_id": "activity_1",
+        "description": "Checks if the cart is eligible for checkout.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "cart_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "eligibility_status"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 5.0,
+        "retry_policy": null
+      },
+      {
+        "name": "ReserveInventory",
+        "source_node_id": "activity_2",
+        "description": "Reserves inventory for the order items.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "inventory_reservation_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "AuthorisePayment",
+        "source_node_id": "activity_3",
+        "description": "Attempts to authorise the payment.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "amount",
+            "type": "float"
+          },
+          {
+            "name": "currency",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "payment_authorisation_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 2,
+          "initial_interval_seconds": 5.0,
+          "backoff_coefficient": 1.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": [
+            "PaymentDeclined"
+          ]
+        }
+      },
+      {
+        "name": "CreateOrder",
+        "source_node_id": "activity_4",
+        "description": "Creates a new order in the system.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "customer_id",
+            "type": "str"
+          },
+          {
+            "name": "cart_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "order_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      },
+      {
+        "name": "PickItems",
+        "source_node_id": "activity_5",
+        "description": "Picks the ordered items from the warehouse.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "picking_status"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      },
+      {
+        "name": "PackShipment",
+        "source_node_id": "activity_6",
+        "description": "Prepares the shipment.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "shipment_pack_status"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      },
+      {
+        "name": "DispatchShipment",
+        "source_node_id": "activity_7",
+        "description": "Dispatches the shipment to the carrier.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "shipment_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "dispatch_status"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 3600.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": [
+            "CarrierRejected",
+            "PickupTimeout"
+          ]
+        }
+      },
+      {
+        "name": "CapturePayment",
+        "source_node_id": "activity_8",
+        "description": "Captures the authorised payment.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "payment_authorisation_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "payment_capture_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 5,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "AuthoriseReturn",
+        "source_node_id": "activity_9",
+        "description": "Checks if a return is eligible.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "reason_code",
+            "type": "str"
+          },
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "return_eligibility"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 10.0,
+        "retry_policy": null
+      },
+      {
+        "name": "ReceiveReturnedItem",
+        "source_node_id": "activity_10",
+        "description": "Processes the receipt of a returned item.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "return_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "receipt_status"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "IssueRefund",
+        "source_node_id": "activity_11",
+        "description": "Issues a refund for the return.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "payment_capture_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "refund_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 5,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": [
+            "RefundFailed"
+          ]
+        }
+      }
+    ],
+    "signals": [
+      {
+        "name": "checkout.submitted",
+        "description": "Triggered when checkout is submitted.",
+        "payload": [
+          "cart_id",
+          "customer_id"
+        ]
+      },
+      {
+        "name": "order.fulfil",
+        "description": "Emitted when order is fulfilled.",
+        "payload": [
+          "order_id"
+        ]
+      },
+      {
+        "name": "return.requested",
+        "description": "Triggered when a return is requested.",
+        "payload": [
+          "order_id",
+          "reason_code"
+        ]
+      },
+      {
+        "name": "carrier.picked_up",
+        "description": "Emitted when carrier picks up shipment.",
+        "payload": [
+          "shipment_id"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetOrderStatus",
+        "description": "Returns the current order status.",
+        "returns": "str",
+        "state_field": "order_status"
+      },
+      {
+        "name": "GetShipmentStatus",
+        "description": "Returns the current shipment status.",
+        "returns": "str",
+        "state_field": "shipment_status"
+      }
+    ],
+    "child_workflows": [],
+    "timers": [
+      {
+        "name": "CartValidationTimeout",
+        "duration_seconds": 5.0,
+        "description": "Timeout for cart validation."
+      },
+      {
+        "name": "PaymentAuthorisationTimeout",
+        "duration_seconds": 30.0,
+        "description": "Timeout for payment authorisation."
+      },
+      {
+        "name": "DispatchTimeout",
+        "duration_seconds": 3600.0,
+        "description": "Timeout for shipment dispatch."
+      },
+      {
+        "name": "ReturnAuthorisationTimeout",
+        "duration_seconds": 10.0,
+        "description": "Timeout for return authorisation."
+      },
+      {
+        "name": "RefundTimeout",
+        "duration_seconds": 30.0,
+        "description": "Timeout for refund processing."
+      }
+    ],
+    "compensation_activities": [
+      {
+        "name": "ReleaseInventory",
+        "compensates": "ReserveInventory",
+        "source_node_id": "compensation_1",
+        "description": "Releases reserved inventory upon failure.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "inventory_reservation_id",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "inventory_reservation_id",
+            "source": "step_output",
+            "ref": "ReserveInventory"
+          }
+        ],
+        "retry_policy": null
+      },
+      {
+        "name": "UnpackShipment",
+        "compensates": "PackShipment",
+        "source_node_id": "compensation_2",
+        "description": "Unpacks shipment if dispatch fails.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "shipment_pack_status",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "shipment_pack_status",
+            "source": "step_output",
+            "ref": "PackShipment"
+          }
+        ],
+        "retry_policy": null
+      }
+    ],
+    "default_retry_policy": {
+      "maximum_attempts": 3,
+      "initial_interval_seconds": 1.0,
+      "backoff_coefficient": 2.0,
+      "maximum_interval_seconds": null,
+      "non_retryable_error_types": []
+    },
+    "plan": [
+      {
+        "id": "S1",
+        "kind": "activity",
+        "description": null,
+        "ref": "ValidateCart",
+        "bindings": [
+          {
+            "param": "cart_id",
+            "source": "workflow_input",
+            "ref": "cart_id"
+          }
+        ],
+        "result_name": "eligibility",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "S2",
+        "kind": "branch",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": "eligibility == 'eligible'",
+        "lanes": [
+          [
+            {
+              "id": "S3",
+              "kind": "activity",
+              "description": null,
+              "ref": "ReserveInventory",
+              "bindings": [
+                {
+                  "param": "order_id",
+                  "source": "workflow_input",
+                  "ref": "order_id"
+                }
+              ],
+              "result_name": "inventory_reservation",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S4",
+              "kind": "activity",
+              "description": null,
+              "ref": "AuthorisePayment",
+              "bindings": [
+                {
+                  "param": "amount",
+                  "source": "workflow_input",
+                  "ref": "amount"
+                },
+                {
+                  "param": "currency",
+                  "source": "workflow_input",
+                  "ref": "currency"
+                }
+              ],
+              "result_name": "payment_authorisation",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S5",
+              "kind": "branch",
+              "description": null,
+              "ref": null,
+              "bindings": [],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": "payment_authorisation == 'successful'",
+              "lanes": [
+                [
+                  {
+                    "id": "S6",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "CreateOrder",
+                    "bindings": [
+                      {
+                        "param": "customer_id",
+                        "source": "workflow_input",
+                        "ref": "customer_id"
+                      },
+                      {
+                        "param": "cart_id",
+                        "source": "workflow_input",
+                        "ref": "cart_id"
+                      }
+                    ],
+                    "result_name": "order_created",
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S7",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "PickItems",
+                    "bindings": [
+                      {
+                        "param": "order_id",
+                        "source": "step_output",
+                        "ref": "S6"
+                      }
+                    ],
+                    "result_name": "picking_done",
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S8",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "PackShipment",
+                    "bindings": [
+                      {
+                        "param": "order_id",
+                        "source": "step_output",
+                        "ref": "S6"
+                      }
+                    ],
+                    "result_name": "shipment_packed",
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S9",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "DispatchShipment",
+                    "bindings": [
+                      {
+                        "param": "shipment_id",
+                        "source": "workflow_input",
+                        "ref": "shipment_id"
+                      }
+                    ],
+                    "result_name": "shipment_dispatched",
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S10",
+                    "kind": "signal_gate",
+                    "description": null,
+                    "ref": null,
+                    "bindings": [],
+                    "result_name": null,
+                    "signal": "carrier.picked_up",
+                    "condition": "shipment_dispatched == 'picked_up'",
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S11",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "CapturePayment",
+                    "bindings": [
+                      {
+                        "param": "payment_authorisation_id",
+                        "source": "step_output",
+                        "ref": "S4"
+                      }
+                    ],
+                    "result_name": "payment_captured",
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  }
+                ],
+                [
+                  {
+                    "id": "S12",
+                    "kind": "signal_gate",
+                    "description": null,
+                    "ref": null,
+                    "bindings": [],
+                    "result_name": null,
+                    "signal": "return.requested",
+                    "condition": "true",
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S13",
+                    "kind": "activity",
+                    "description": null,
+                    "ref": "AuthoriseReturn",
+                    "bindings": [
+                      {
+                        "param": "reason_code",
+                        "source": "workflow_input",
+                        "ref": "reason_code"
+                      },
+                      {
+                        "param": "order_id",
+                        "source": "step_output",
+                        "ref": "S6"
+                      }
+                    ],
+                    "result_name": "return_eligible",
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": null,
+                    "lanes": []
+                  },
+                  {
+                    "id": "S14",
+                    "kind": "branch",
+                    "description": null,
+                    "ref": null,
+                    "bindings": [],
+                    "result_name": null,
+                    "signal": null,
+                    "condition": null,
+                    "timer": null,
+                    "predicate": "return_eligible == 'eligible'",
+                    "lanes": [
+                      [
+                        {
+                          "id": "S15",
+                          "kind": "activity",
+                          "description": null,
+                          "ref": "ReceiveReturnedItem",
+                          "bindings": [
+                            {
+                              "param": "return_id",
+                              "source": "step_output",
+                              "ref": "S13"
+                            }
+                          ],
+                          "result_name": "item_received",
+                          "signal": null,
+                          "condition": null,
+                          "timer": null,
+                          "predicate": null,
+                          "lanes": []
+                        },
+                        {
+                          "id": "S16",
+                          "kind": "activity",
+                          "description": null,
+                          "ref": "IssueRefund",
+                          "bindings": [
+                            {
+                              "param": "payment_capture_id",
+                              "source": "step_output",
+                              "ref": "S11"
+                            }
+                          ],
+                          "result_name": "refund_issued",
+                          "signal": null,
+                          "condition": null,
+                          "timer": null,
+                          "predicate": null,
+                          "lanes": []
+                        }
+                      ],
+                      []
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            {
+              "id": "S18",
+              "kind": "signal_gate",
+              "description": null,
+              "ref": null,
+              "bindings": [],
+              "result_name": null,
+              "signal": "checkout.submitted",
+              "condition": "true",
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ]
+        ]
+      }
+    ]
+  },
+  "temporal_code": {
+    "target": "python",
+    "package_name": "ecommerce_order_fulfillment",
+    "files": [
+      {
+        "path": "shared.py",
+        "language": "python",
+        "content": "\"\"\"Shared dataclasses for the EcommerceOrderFulfillment workflow.\n\nTemporal passes a single dataclass argument to workflows and activities so that\ninputs evolve compatibly. Refine the field types to match your real domain types.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom typing import Any\n\n\n@dataclass\nclass WorkflowInput:\n    \"\"\"Input to the EcommerceOrderFulfillment workflow.\"\"\"\n\n    cart_id: str = \"\"\n    customer_id: str = \"\"\n    amount: float = 0.0\n    currency: str = \"\"\n    order_id: str = \"\"\n    shipment_id: str = \"\"\n    reason_code: str = \"\"\n\n\n@dataclass\nclass ValidateCartInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    cart_id: str = \"\"\n\n\n@dataclass\nclass ReserveInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n\n\n@dataclass\nclass AuthorisePaymentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    amount: float = 0.0\n    currency: str = \"\"\n\n\n@dataclass\nclass CreateOrderInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    customer_id: str = \"\"\n    cart_id: str = \"\"\n\n\n@dataclass\nclass PickItemsInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n\n\n@dataclass\nclass PackShipmentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n\n\n@dataclass\nclass DispatchShipmentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    shipment_id: str = \"\"\n\n\n@dataclass\nclass CapturePaymentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    payment_authorisation_id: str = \"\"\n\n\n@dataclass\nclass AuthoriseReturnInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    reason_code: str = \"\"\n    order_id: str = \"\"\n\n\n@dataclass\nclass ReceiveReturnedItemInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    return_id: str = \"\"\n\n\n@dataclass\nclass IssueRefundInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    payment_capture_id: str = \"\"\n\n\n@dataclass\nclass ReleaseInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    inventory_reservation_id: str = \"\"\n\n\n@dataclass\nclass UnpackShipmentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    shipment_pack_status: str = \"\""
+      },
+      {
+        "path": "activities.py",
+        "language": "python",
+        "content": "\"\"\"Activities for the EcommerceOrderFulfillment workflow.\n\nEach activity is a thin, retryable unit of work. Replace the ``NotImplementedError``\nwith real logic; activities may use I/O, SDKs, and blocking calls freely.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom temporalio import activity\n\nfrom shared import (\n    ValidateCartInput,\n    ReserveInventoryInput,\n    AuthorisePaymentInput,\n    CreateOrderInput,\n    PickItemsInput,\n    PackShipmentInput,\n    DispatchShipmentInput,\n    CapturePaymentInput,\n    AuthoriseReturnInput,\n    ReceiveReturnedItemInput,\n    IssueRefundInput,\n    ReleaseInventoryInput,\n    UnpackShipmentInput,\n)\n\n\n@activity.defn(name=\"ValidateCart\")\nasync def validate_cart(arg: ValidateCartInput) -> str:\n    \"\"\"Checks if the cart is eligible for checkout.\"\"\"\n    activity.logger.info(\"Running validate_cart\", extra={\"input\": arg})\n    # TODO: implement validate_cart. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"ReserveInventory\")\nasync def reserve_inventory(arg: ReserveInventoryInput) -> str:\n    \"\"\"Reserves inventory for the order items.\"\"\"\n    activity.logger.info(\"Running reserve_inventory\", extra={\"input\": arg})\n    # TODO: implement reserve_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"AuthorisePayment\")\nasync def authorise_payment(arg: AuthorisePaymentInput) -> str:\n    \"\"\"Attempts to authorise the payment.\"\"\"\n    activity.logger.info(\"Running authorise_payment\", extra={\"input\": arg})\n    # TODO: implement authorise_payment. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"CreateOrder\")\nasync def create_order(arg: CreateOrderInput) -> str:\n    \"\"\"Creates a new order in the system.\"\"\"\n    activity.logger.info(\"Running create_order\", extra={\"input\": arg})\n    # TODO: implement create_order. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"PickItems\")\nasync def pick_items(arg: PickItemsInput) -> str:\n    \"\"\"Picks the ordered items from the warehouse.\"\"\"\n    activity.logger.info(\"Running pick_items\", extra={\"input\": arg})\n    # TODO: implement pick_items. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"PackShipment\")\nasync def pack_shipment(arg: PackShipmentInput) -> str:\n    \"\"\"Prepares the shipment.\"\"\"\n    activity.logger.info(\"Running pack_shipment\", extra={\"input\": arg})\n    # TODO: implement pack_shipment. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"DispatchShipment\")\nasync def dispatch_shipment(arg: DispatchShipmentInput) -> str:\n    \"\"\"Dispatches the shipment to the carrier.\"\"\"\n    activity.logger.info(\"Running dispatch_shipment\", extra={\"input\": arg})\n    # TODO: implement dispatch_shipment. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"CapturePayment\")\nasync def capture_payment(arg: CapturePaymentInput) -> str:\n    \"\"\"Captures the authorised payment.\"\"\"\n    activity.logger.info(\"Running capture_payment\", extra={\"input\": arg})\n    # TODO: implement capture_payment. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"AuthoriseReturn\")\nasync def authorise_return(arg: AuthoriseReturnInput) -> str:\n    \"\"\"Checks if a return is eligible.\"\"\"\n    activity.logger.info(\"Running authorise_return\", extra={\"input\": arg})\n    # TODO: implement authorise_return. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"ReceiveReturnedItem\")\nasync def receive_returned_item(arg: ReceiveReturnedItemInput) -> str:\n    \"\"\"Processes the receipt of a returned item.\"\"\"\n    activity.logger.info(\"Running receive_returned_item\", extra={\"input\": arg})\n    # TODO: implement receive_returned_item. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"IssueRefund\")\nasync def issue_refund(arg: IssueRefundInput) -> str:\n    \"\"\"Issues a refund for the return.\"\"\"\n    activity.logger.info(\"Running issue_refund\", extra={\"input\": arg})\n    # TODO: implement issue_refund. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"ReleaseInventory\")\nasync def release_inventory(arg: ReleaseInventoryInput) -> str:\n    \"\"\"Releases reserved inventory upon failure.\"\"\"\n    activity.logger.info(\"Running release_inventory\", extra={\"input\": arg})\n    # TODO: implement release_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"UnpackShipment\")\nasync def unpack_shipment(arg: UnpackShipmentInput) -> str:\n    \"\"\"Unpacks shipment if dispatch fails.\"\"\"\n    activity.logger.info(\"Running unpack_shipment\", extra={\"input\": arg})\n    # TODO: implement unpack_shipment. Returns a placeholder so the bundle runs as-is.\n    return \"\""
+      },
+      {
+        "path": "workflow.py",
+        "language": "python",
+        "content": "\"\"\"The EcommerceOrderFulfillment Temporal workflow.\n\nWorkflow code must be deterministic: do all I/O inside activities, and use\n``workflow.*`` helpers (``execute_activity``, ``execute_child_workflow``,\n``sleep``, signals, queries) rather than calling the outside world directly.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Callable\nfrom datetime import timedelta\nfrom typing import Any\n\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\n\nwith workflow.unsafe.imports_passed_through():\n    from activities import (\n        validate_cart,\n        reserve_inventory,\n        authorise_payment,\n        create_order,\n        pick_items,\n        pack_shipment,\n        dispatch_shipment,\n        capture_payment,\n        authorise_return,\n        receive_returned_item,\n        issue_refund,\n        release_inventory,\n        unpack_shipment,\n    )\n    from shared import (\n        WorkflowInput,\n        ValidateCartInput,\n        ReserveInventoryInput,\n        AuthorisePaymentInput,\n        CreateOrderInput,\n        PickItemsInput,\n        PackShipmentInput,\n        DispatchShipmentInput,\n        CapturePaymentInput,\n        AuthoriseReturnInput,\n        ReceiveReturnedItemInput,\n        IssueRefundInput,\n        ReleaseInventoryInput,\n        UnpackShipmentInput,\n    )\n\nCART_VALIDATION_TIMEOUT = timedelta(seconds=5)  # Timeout for cart validation.\nPAYMENT_AUTHORISATION_TIMEOUT = timedelta(seconds=30)  # Timeout for payment authorisation.\nDISPATCH_TIMEOUT = timedelta(seconds=3600)  # Timeout for shipment dispatch.\nRETURN_AUTHORISATION_TIMEOUT = timedelta(seconds=10)  # Timeout for return authorisation.\nREFUND_TIMEOUT = timedelta(seconds=30)  # Timeout for refund processing.\n\n\n@workflow.defn\nclass EcommerceOrderFulfillment:\n    \"\"\"Manages the full lifecycle of an e-commerce order from cart validation through shipment and potential returns.\"\"\"\n\n    def __init__(self) -> None:\n        self._status: str = \"pending\"\n        self._checkout_submitted_received: bool = False\n        self._order_fulfil_received: bool = False\n        self._return_requested_received: bool = False\n        self._carrier_picked_up_received: bool = False\n\n    @workflow.run\n    async def run(self, arg: WorkflowInput) -> str:\n        self._status = \"running\"\n        compensations: list[tuple[Callable[..., Any], Any]] = []\n        try:\n            workflow.logger.info(\"Running step: ValidateCart\")\n            eligibility = await workflow.execute_activity(\n                validate_cart,\n                ValidateCartInput(cart_id=arg.cart_id),\n                start_to_close_timeout=timedelta(seconds=5),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n            should_eligibility_eligible = True  # TODO: set from a real condition: eligibility == 'eligible'\n            if should_eligibility_eligible:\n                workflow.logger.info(\"Running step: ReserveInventory\")\n                inventory_reservation = await workflow.execute_activity(\n                    reserve_inventory,\n                    ReserveInventoryInput(order_id=arg.order_id),\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2, maximum_attempts=3),\n                )\n                compensations.append((release_inventory, ReleaseInventoryInput(inventory_reservation_id=inventory_reservation)))\n                workflow.logger.info(\"Running step: AuthorisePayment\")\n                payment_authorisation = await workflow.execute_activity(\n                    authorise_payment,\n                    AuthorisePaymentInput(amount=arg.amount, currency=arg.currency),\n                    start_to_close_timeout=timedelta(seconds=30),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), backoff_coefficient=1, maximum_attempts=2, non_retryable_error_types=['PaymentDeclined']),\n                )\n                should_payment_authorisation_successful = True  # TODO: set from a real condition: payment_authorisation == 'successful'\n                if should_payment_authorisation_successful:\n                    workflow.logger.info(\"Running step: CreateOrder\")\n                    order_created = await workflow.execute_activity(\n                        create_order,\n                        CreateOrderInput(customer_id=arg.customer_id, cart_id=arg.cart_id),\n                        start_to_close_timeout=timedelta(seconds=60),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                    )\n                    workflow.logger.info(\"Running step: PickItems\")\n                    picking_done = await workflow.execute_activity(\n                        pick_items,\n                        PickItemsInput(order_id=order_created),\n                        start_to_close_timeout=timedelta(seconds=60),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                    )\n                    workflow.logger.info(\"Running step: PackShipment\")\n                    shipment_packed = await workflow.execute_activity(\n                        pack_shipment,\n                        PackShipmentInput(order_id=order_created),\n                        start_to_close_timeout=timedelta(seconds=60),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                    )\n                    compensations.append((unpack_shipment, UnpackShipmentInput(shipment_pack_status=shipment_packed)))\n                    workflow.logger.info(\"Running step: DispatchShipment\")\n                    shipment_dispatched = await workflow.execute_activity(\n                        dispatch_shipment,\n                        DispatchShipmentInput(shipment_id=arg.shipment_id),\n                        start_to_close_timeout=timedelta(seconds=3600),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2, maximum_attempts=3, non_retryable_error_types=['CarrierRejected', 'PickupTimeout']),\n                    )\n                    # Wait until: shipment_dispatched == 'picked_up'\n                    workflow.logger.info(\"Waiting for signal: carrier.picked_up\")\n                    # TODO: pass timeout= to wait_condition so a signal that never arrives can't block the workflow forever.\n                    await workflow.wait_condition(lambda: self._carrier_picked_up_received)\n                    workflow.logger.info(\"Running step: CapturePayment\")\n                    payment_captured = await workflow.execute_activity(\n                        capture_payment,\n                        CapturePaymentInput(payment_authorisation_id=payment_authorisation),\n                        start_to_close_timeout=timedelta(seconds=60),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=5),\n                    )\n                else:\n                    # Wait until: true\n                    workflow.logger.info(\"Waiting for signal: return.requested\")\n                    # TODO: pass timeout= to wait_condition so a signal that never arrives can't block the workflow forever.\n                    await workflow.wait_condition(lambda: self._return_requested_received)\n                    workflow.logger.info(\"Running step: AuthoriseReturn\")\n                    return_eligible = await workflow.execute_activity(\n                        authorise_return,\n                        AuthoriseReturnInput(reason_code=arg.reason_code, order_id=order_created),\n                        start_to_close_timeout=timedelta(seconds=10),\n                        retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                    )\n                    should_return_eligible_eligible = True  # TODO: set from a real condition: return_eligible == 'eligible'\n                    if should_return_eligible_eligible:\n                        workflow.logger.info(\"Running step: ReceiveReturnedItem\")\n                        item_received = await workflow.execute_activity(\n                            receive_returned_item,\n                            ReceiveReturnedItemInput(return_id=return_eligible),\n                            start_to_close_timeout=timedelta(seconds=60),\n                            retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2, maximum_attempts=3),\n                        )\n                        workflow.logger.info(\"Running step: IssueRefund\")\n                        refund_issued = await workflow.execute_activity(\n                            issue_refund,\n                            IssueRefundInput(payment_capture_id=payment_captured),\n                            start_to_close_timeout=timedelta(seconds=30),\n                            retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=5, non_retryable_error_types=['RefundFailed']),\n                        )\n            else:\n                # Wait until: true\n                workflow.logger.info(\"Waiting for signal: checkout.submitted\")\n                # TODO: pass timeout= to wait_condition so a signal that never arrives can't block the workflow forever.\n                await workflow.wait_condition(lambda: self._checkout_submitted_received)\n        except Exception:\n            for _comp_fn, _comp_arg in reversed(compensations):\n                await workflow.execute_activity(\n                    _comp_fn,\n                    _comp_arg,\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                )\n            self._status = \"compensated\"\n            raise\n        self._status = \"completed\"\n        return self._status\n\n    @workflow.signal\n    def checkout_submitted(self, cart_id: str, customer_id: str) -> None:\n        \"\"\"Handle the 'checkout.submitted' signal.\"\"\"\n        self._checkout_submitted_received = True\n\n    @workflow.signal\n    def order_fulfil(self, order_id: str) -> None:\n        \"\"\"Handle the 'order.fulfil' signal.\"\"\"\n        self._order_fulfil_received = True\n\n    @workflow.signal\n    def return_requested(self, order_id: str, reason_code: str) -> None:\n        \"\"\"Handle the 'return.requested' signal.\"\"\"\n        self._return_requested_received = True\n\n    @workflow.signal\n    def carrier_picked_up(self, shipment_id: str) -> None:\n        \"\"\"Handle the 'carrier.picked_up' signal.\"\"\"\n        self._carrier_picked_up_received = True\n\n    @workflow.query\n    def get_order_status(self) -> str:\n        \"\"\"Returns the current order status.\"\"\"\n        return self._status\n\n    @workflow.query\n    def get_shipment_status(self) -> str:\n        \"\"\"Returns the current shipment status.\"\"\"\n        return self._status"
+      },
+      {
+        "path": "worker.py",
+        "language": "python",
+        "content": "\"\"\"Worker process for the EcommerceOrderFulfillment workflow.\n\nStart a local Temporal dev server in one terminal::\n\n    temporal server start-dev\n\nThen, from inside this package directory, run the worker::\n\n    python worker.py\n\nKeep it running, then start a workflow with ``python starter.py``.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\n\nfrom temporalio import workflow\nfrom temporalio.client import Client\nfrom temporalio.worker import Worker\n\nwith workflow.unsafe.imports_passed_through():\n    from workflow import EcommerceOrderFulfillment\n    from activities import (\n        validate_cart,\n        reserve_inventory,\n        authorise_payment,\n        create_order,\n        pick_items,\n        pack_shipment,\n        dispatch_shipment,\n        capture_payment,\n        authorise_return,\n        receive_returned_item,\n        issue_refund,\n        release_inventory,\n        unpack_shipment,\n    )\n\nTASK_QUEUE = \"ecommerce-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and run the worker until cancelled.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n    worker = Worker(\n        client,\n        task_queue=TASK_QUEUE,\n        workflows=[EcommerceOrderFulfillment],\n        activities=[validate_cart, reserve_inventory, authorise_payment, create_order, pick_items, pack_shipment, dispatch_shipment, capture_payment, authorise_return, receive_returned_item, issue_refund, release_inventory, unpack_shipment],\n    )\n    print(f\"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.\")\n    await worker.run()\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "starter.py",
+        "language": "python",
+        "content": "\"\"\"Start a EcommerceOrderFulfillment workflow execution.\n\nStart the Temporal dev server and the worker first::\n\n    temporal server start-dev      # terminal 1\n    python worker.py               # terminal 2\n\nThen, from inside this package directory::\n\n    python starter.py              # terminal 3\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport uuid\n\nfrom temporalio.client import Client\n\nfrom workflow import EcommerceOrderFulfillment\nfrom shared import WorkflowInput\n\nTASK_QUEUE = \"ecommerce-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and start a single workflow execution.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n\n    handle = await client.start_workflow(\n        EcommerceOrderFulfillment.run,\n        WorkflowInput(),  # TODO: populate the workflow input fields.\n        id=f\"ecommerce_order_fulfillment-{uuid.uuid4()}\",\n        task_queue=TASK_QUEUE,\n    )\n    print(f\"Started workflow {handle.id}\")\n\n    # NOTE: workflows that pause on a signal gate block here until signalled\n    # (e.g. via `temporal workflow signal` or a client `handle.signal(...)`).\n    result = await handle.result()\n    print(\"Workflow result:\", result)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "README.md",
+        "language": "markdown",
+        "content": "# EcommerceOrderFulfillment (generated Temporal workflow)\n\nManages the full lifecycle of an e-commerce order from cart validation through shipment and potential returns.\n\nThis package was generated **deterministically** from a reviewed\n`TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,\nqueries, timers, child workflows, retry policies, and saga compensation are\nwired up, but each activity body raises `NotImplementedError` for you to fill in.\n\nThe files use **flat, absolute imports** (`from activities import ...`), matching\nthe layout in the Temporal Python docs, so each script is run directly from\ninside this directory — no package installation or `PYTHONPATH` needed.\n\n## Files\n\n| File | Purpose |\n|------|---------|\n| `shared.py` | Dataclasses for workflow / activity inputs |\n| `activities.py` | `@activity.defn` units of work (implement these) |\n| `workflow.py` | `@workflow.defn` orchestration: `EcommerceOrderFulfillment` |\n| `worker.py` | Worker registering the workflow + activities on `ecommerce-queue` |\n| `starter.py` | Client that starts one workflow execution |\n\n## Run it\n\nInstall the SDK and start a local Temporal server:\n\n```bash\npip install temporalio\ntemporal server start-dev          # terminal 1, leave running\n```\n\nFrom **inside this directory**, run the worker and then the starter:\n\n```bash\npython worker.py                   # terminal 2, leave running\npython starter.py                  # terminal 3\n```\n\nThe worker polls the `ecommerce-queue` task queue; the starter submits a single\n`EcommerceOrderFulfillment` execution and prints its result. Open the Web UI at\nhttp://localhost:8233 to watch the execution.\n\n## Next steps\n\n- Implement each activity in `activities.py`.\n- Populate the `WorkflowInput()` fields in `starter.py`.\n- Replace the default `str` input fields in `shared.py` with real types.\n- Review the generated retry policies and timeouts against your SLAs.\n- Send the workflow's signal(s) (checkout.submitted, order.fulfil, return.requested, carrier.picked_up) to release any wait gates."
+      }
+    ]
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Validate Cart\"]\n    activity_2[\"Reserve Inventory\"]\n    activity_3[\"Authorise Payment\"]\n    activity_4[\"Create Order\"]\n    activity_5[\"Pick Items\"]\n    activity_6[\"Pack Shipment\"]\n    activity_7[\"Dispatch Shipment\"]\n    activity_8[\"Capture Payment\"]\n    activity_9[\"Authorise Return\"]\n    activity_10[\"Receive Returned Item\"]\n    activity_11[\"Issue Refund\"]\n    decision_1{\"Is Cart Eligible?\"}\n    decision_2{\"Is Payment Authorised?\"}\n    decision_3{\"Is Dispatch Accepted?\"}\n    decision_4{\"Is Return Eligible?\"}\n    exception_1([\"CartNotEligible\"])\n    exception_2([\"PaymentDeclined\"])\n    exception_3([\"CarrierRejected\"])\n    exception_4([\"ReturnNotEligible\"])\n    exception_5([\"PickupTimeout\"])\n    exception_6([\"RefundFailed\"])\n    compensation_1[\"Release Inventory\"]\n    compensation_2[\"Unpack Shipment\"]\n    event_1([\"[ev1] checkout.submitted\"])\n    event_2([\"[ev2] order.fulfil\"])\n    event_3([\"[ev3] return.requested\"])\n    event_4([\"[ev4] carrier.picked_up\"])\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> activity_3\n    activity_3 --> decision_2\n    decision_2 -->|yes| activity_4\n    decision_2 -->|no| exception_2\n    activity_4 --> activity_5\n    activity_5 --> activity_6\n    activity_6 --> activity_7\n    activity_7 --> decision_3\n    decision_3 -->|yes| activity_8\n    decision_3 -->|no| exception_3\n    activity_8 --> activity_9\n    activity_9 --> decision_4\n    decision_4 -->|yes| activity_10\n    decision_4 -->|no| exception_4\n    activity_10 --> activity_11\n    activity_11 --> end_node\n    activity_3 -.->|on error| exception_2\n    activity_7 -.->|on error| exception_3\n    activity_7 -.->|on error| exception_5\n    activity_11 -.->|on error| exception_6\n    activity_2 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    activity_6 -.->|compensate| compensation_2\n    compensation_2 --> end_node\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_4 -.->|emits| event_2\n    start -.->|event| event_3\n    event_3 -.->|triggers| activity_1\n    activity_7 -.->|emits| event_4\n    exception_6 -->|terminates| end_node\n    exception_4 -->|terminates| end_node\n    exception_3 -->|terminates| end_node\n    exception_2 -->|terminates| end_node\n    exception_1 -->|terminates| end_node\n    exception_5 -->|terminates| end_node\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,exception_1,event_1,event_3 capture;\n    class activity_1,activity_3,activity_9,decision_1,decision_2,decision_3,decision_4,exception_2,exception_4 validate;\n    class activity_2,activity_4,activity_5,activity_6,activity_7,activity_10,compensation_1,compensation_2 process;\n    class end_node,activity_8,activity_11,exception_3,exception_5,exception_6,event_2,event_4 activate;",
+    "title": "Order Management Operations"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 0.9,
+    "cvpa": 0.9603,
+    "temporal": 0.95,
+    "overall": null,
+    "notes": {
+      "cvpa": "29 nodes classified; 29 from model, 0 by fallback.",
+      "temporal": "11 activities, 4 signals, 0 child workflows, 2 compensations.",
+      "temporal_code": "6 files for package 'ecommerce_order_fulfillment'."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-07-07T19:38:58.910378Z",
+  "updated_at": "2026-07-07T19:49:47.736352Z"
+}

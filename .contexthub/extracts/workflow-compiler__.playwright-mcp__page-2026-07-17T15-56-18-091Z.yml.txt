@@ -1,0 +1,13 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - link "workflow·compiler" [ref=e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e4]: document → spec → validate → approve → code
+    - navigation [ref=e5]:
+      - link "Projects" [ref=e6] [cursor=pointer]:
+        - /url: /
+      - link "Guide" [ref=e7] [cursor=pointer]:
+        - /url: /guide
+      - button "Switch to dark theme" [ref=e8]: ☾ Dark
+  - main [ref=e9]:
+    - paragraph [ref=e11]: Loading project…

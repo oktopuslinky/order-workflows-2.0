@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "kg",
+      "type": "mcp",
+      "config": {
+        "transport": "stdio",
+        "command": "C:\\Users\\devag\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\python.exe",
+        "args": [
+          "C:\\Users\\devag\\Documents\\Code (local)\\KG-Context\\cli.py",
+          "mcp",
+          "serve",
+          "--repo",
+          "C:\\Users\\devag\\Documents\\Code (local)\\order-workflows-iterative-2.0",
+          "--graph",
+          "C:\\Users\\devag\\Documents\\Code (local)\\order-workflows-iterative-2.0\\.contexthub\\graph.json",
+          "--no-prompt",
+          "--cli"
+        ],
+        "namespace": "kg",
+        "description": "project knowledge-graph tools via local MCP server",
+        "allow": [
+          "kg__explain_path",
+          "kg__fetch_node",
+          "kg__get_impact",
+          "kg__graph_search",
+          "kg__retrieve_context"
+        ],
+        "timeout_seconds": 60,
+        "startup_timeout_seconds": 60
+      }
+    }
+  ]
+}

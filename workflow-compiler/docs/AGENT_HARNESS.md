@@ -236,7 +236,9 @@ WORKFLOW_COMPILER_STATE_STORE_PATH=.workflow_state   # FileStateStore root
 
 ## 9. Testing & commands
 
-- `pip install -e ".[dev]"` — install package + CLI.
+- `pip install .` — user install (package + CLI). `pip install -e ".[dev]"` — contributor install
+  (editable + test/lint tooling).
+- `workflow-compiler init` — write `.env`; `--provider mock --yes` for a non-interactive setup.
 - `pytest` — full suite (~173 tests, no network). LLM hidden behind `BaseLLMProvider`; `MockProvider`
   returns **queued** structured responses in order (e.g. `[discovery, facts, cvpa, temporal]`), HTTP
   layer tested with `httpx.MockTransport`.

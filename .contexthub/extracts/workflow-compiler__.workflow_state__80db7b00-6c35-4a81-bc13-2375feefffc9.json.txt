@@ -1,0 +1,2084 @@
+{
+  "workflow_id": "80db7b00-6c35-4a81-bc13-2375feefffc9",
+  "document_text": "1. New Order Workflow Interface Specification\n\n1.1 Document Control\n\nField | Value\nDocument Name | New Order Workflow Interface Specification\nDomain | Telecom OMS\nWorkflow Type | Temporal.io workflow\nBusiness Flow | New service order\nVersion | 3.0\n\n1.2 Purpose\n\nThis document defines the New Order interface for a telecom OMS, including API input parameters, order types, request/response structures, TMF mappings, Kafka topics, business rules, exceptions, sample payloads, and explicit HTTP status codes.\n\n1.3 Scope\n\nIn Scope | Out of Scope\nProduct order intake | Pricing strategy\nServiceability validation | CPQ design\nService order creation | Network engineering detail\nFulfillment decomposition | Billing product catalog\nProvisioning and activation | Contract drafting\nKafka event publishing | Manual exception policy\n\n1.4 Calling Systems\n\nCalling System | Role\nWeb Portal | Customer order submission\nCRM | Agent-assisted capture\nCPQ | Quote-to-order handoff\nBSS Order Capture | Commercial order intake\nOMS Temporal Workflow | Orchestration\nService Orchestration | Fulfillment execution\nService Inventory | Resource validation/reservation\nProvisioning Platform | Activation execution\nKafka Event Bus | Event propagation\nNotification Service | Messaging\n\n1.5 Order Type and Flow Type\n\nField | Meaning | Example\norderType | Internal OMS type | NEW\nflowType | Workflow classification | NEW_ORDER\naction | Commercial action | ADD\nitemAction | TMF-style action | add\nbusinessReason | Why order exists | new_subscription\n\n1.6 Workflow Summary\n\nStep | Stage | Description\n1 | Capture | Accept request from channel\n2 | Validate | Check eligibility and serviceability\n3 | Create Order | Build commercial and service order records\n4 | Decompose | Split into fulfillment legs\n5 | Provision | Execute backend provisioning\n6 | Activate | Confirm live service\n7 | Complete | Finalize and emit events\n\n1.7 Temporal Workflow Design\n\nComponent | Type | Responsibility\nNewOrderWorkflow | Parent workflow | End-to-end orchestration\nQualificationWorkflow | Child workflow | Eligibility and serviceability\nDecompositionWorkflow | Child workflow | Fulfillment planning\nProvisioningWorkflow | Child workflow | External provisioning execution\nActivationWorkflow | Child workflow | Activation confirmation\nTMFCallActivity | Activity | TMF API invocation\nKafkaPublishActivity | Activity | Event publication\nStatePersistActivity | Activity | Durable state update\n\n1.8 API Interfaces\n\n1.8.1 Create Product Order\n\nItem | Specification\nAPI | TMF622 Product Ordering\nMethod | POST\nEndpoint | /tmf-api/productOrderingManagement/v4/productOrder\nPurpose | Create product order\nRequired by OMS | Yes\nAsync Behavior | Returns 202 and workflow ID\n\nRequest Headers\n\nHeader | Required | Example | Notes\nAuthorization | Yes | Bearer <token> | OAuth2/JWT\nContent-Type | Yes | application/json | JSON body\nX-Correlation-Id | Yes | corr-20260612-0001 | End-to-end trace\nIdempotency-Key | Yes | idemp-001 | Prevent duplicates\nX-Channel-Id | Yes | web-portal | Source channel\n\nRequest Body Structure\n\nField | Type | Required | Example | Description\nexternalId | string | Yes | WEB-ORD-20260612-0001 | Channel reference\ndescription | string | No | New fiber broadband order | Free text\npriority | string | No | normal | Order priority\ncategory | string | Yes | fiber_broadband | Business category\nrequestedStartDate | datetime | No | 2026-06-15T10:00:00Z | Desired start\norderType | string | Yes | NEW | Internal OMS type\nflowType | string | Yes | NEW_ORDER | Workflow classification\nbusinessReason | string | No | new_subscription | Reason code\nrelatedParty | array | Yes | see below | Customer/agent references\nproductOrderItem | array | Yes | see below | Ordered items\nnote | array | No | see below | Remarks and metadata\n\nRelated Party Structure\n\nField | Type | Required | Example\nid | string | Yes | CUST-7788\nrole | string | Yes | customer\nname | string | No | Soumyajit Podder\nreferredType | string | No | Customer\n\nProduct Order Item Structure\n\nField | Type | Required | Example | Description\nid | string | Yes | 1 | Item ID\naction | string | Yes | add | Item action\nproductOffering.id | string | Yes | BB-FTTH-1000 | Offer SKU\nquantity | integer | Yes | 1 | Number of units\nitemState | string | No | acknowledged | Internal state\nrequestedStartDate | datetime | No | 2026-06-15T10:00:00Z | Item start\ncharacteristic | array | No | see below | Service attributes\n\nCharacteristic Structure\n\nField | Type | Required | Example\nname | string | Yes | bandwidth\nvalue | string | Yes | 1Gbps\nvalueType | string | No | string\n\n1.8.2 Service Qualification\n\nItem | Specification\nAPI | TMF645 Service Qualification\nMethod | POST\nEndpoint | /tmf-api/serviceQualification/v4/serviceQualification\nPurpose | Validate serviceability\nInvocation Point | After order intake, before decomposition\n\nRequest Body Structure\n\nField | Type | Required | Example\nserviceType | string | Yes | FTTH\naddress | object | Yes | see below\nproductCode | string | Yes | BB-FTTH-1000\nrequestedCapacity | string | No | 1Gbps\nqualificationType | string | No | serviceAvailability\n\nAddress Structure\n\nField | Type | Required | Example\nstreet | string | Yes | 12 Clyde Street\ncity | string | Yes | Glasgow\npostalCode | string | Yes | G1 5JX\ncountry | string | Yes | UK\n\n1.8.3 Service Order Create\n\nItem | Specification\nAPI | TMF641 Service Ordering\nMethod | POST\nEndpoint | /tmf-api/serviceOrdering/v4/serviceOrder\nPurpose | Create executable service order\nInternal Service Order Type | FULFILLMENT\n\nRequest Body Structure\n\nField | Type | Required | Example\nexternalId | string | Yes | SO-WEB-0001\npriority | string | No | normal\norderType | string | Yes | FULFILLMENT\ncategory | string | Yes | access\nserviceOrderItem | array | Yes | see below\n\nService Order Item Structure\n\nField | Type | Required | Example\nid | string | Yes | 1\naction | string | Yes | add\nservice.id | string | No | SRV-0001\nservice.type | string | Yes | FTTH_ACCESS\nstate | string | No | acknowledged\n\n1.8.4 Activation\n\nItem | Specification\nAPI | TMF640 Service Activation & Configuration\nMethod | POST\nEndpoint | /tmf-api/serviceActivation/v4/serviceActivation\nPurpose | Execute configuration and activate service\n\nRequest Body Structure\n\nField | Type | Required | Example\nactivationType | string | Yes | serviceActivation\nserviceId | string | Yes | SRV-0001\nconfiguration | object | Yes | see below\nrequestedBy | string | No | oms-orchestrator\n\nConfiguration Structure\n\nField | Type | Required | Example\nprofileName | string | Yes | FTTH-STD\nbandwidth | string | Yes | 1Gbps\nvlan | string | No | 100\nipMode | string | No | dynamic\n\n1.9 API Response Objects\n\n1.9.1 Product Order Response\n\nField | Type | Example | Meaning\nid | string | PO-100245 | Product order ID\nexternalId | string | WEB-ORD-20260612-0001 | Channel reference\nstate | string | acknowledged | Order state\norderType | string | NEW | OMS order type\nproductOrderItem[] | array | see below | Items\nhref | string | /.../productOrder/PO-100245 | Resource link\nworkflowId | string | wf-new-0001 | Temporal workflow ID\n\n1.9.2 Service Qualification Response\n\nField | Type | Example | Meaning\nid | string | SQ-0001 | Qualification ID\nqualificationResult | string | qualified | Pass/fail\navailableService | array | see below | Available services\nvalidFor | object | time window | Validity period\n\n1.9.3 Service Order Response\n\nField | Type | Example | Meaning\nid | string | SO-889901 | Service order ID\nstate | string | inProgress | Order progress\norderType | string | FULFILLMENT | Service order type\nserviceOrderItem[] | array | see below | Child items\n\n1.9.4 Activation Response\n\nField | Type | Example | Meaning\nid | string | ACT-55671 | Activation ID\nstate | string | completed | Activation result\nserviceId | string | SRV-0001 | Activated service\nresult | string | success | Outcome\n\n1.10 HTTP Status Codes and Handling\n\nHTTP Code | Domain Code | Meaning | Workflow Action\n200 | OMS-NO-200 | Success | Continue\n201 | OMS-NO-201 | Order created | Emit \"created\" event, proceed\n202 | OMS-NO-202 | Accepted | Async workflow started\n400 | OMS-NO-400 | Bad request | Reject, return validation errors\n401 | OMS-NO-401 | Unauthorized | Stop workflow, reject\n403 | OMS-NO-403 | Forbidden | Stop workflow\n404 | OMS-NO-404 | Not found | Stop workflow\n409 | OMS-NO-409 | Conflict | Retry or manual review\n412 | OMS-NO-412 | Precondition failed | Reject\n422 | OMS-NO-422 | Validation failed | Reject, notify customer\n429 | OMS-NO-429 | Rate limited | Backoff and retry\n500 | OMS-NO-500 | Internal error | Retry with backoff\n502 | OMS-NO-502 | Bad gateway | Retry, escalate if repeated\n504 | OMS-NO-504 | Timeout | Retry or compensate\n\n1.11 Kafka Topics\n\nStage | Topic | Consumer Examples\nOrder requested | oms.order.requested | OMS audit, analytics\nOrder validated | oms.order.validated | CRM, analytics\nOrder rejected | oms.order.rejected | Notification, care\nService order created | oms.service.order.created | Service orchestration\nOrder decomposed | oms.order.decomposed | Fulfillment engines\nProvisioning requested | oms.service.provisioning.requested | Provisioning platform\nProvisioning completed | oms.service.provisioning.completed | Billing, analytics\nService activated | oms.service.activated | Billing, care\nOrder completed | oms.order.completed | Enterprise integration\n\n1.12 Domain Error Codes\n\nDomain Code | HTTP Code | Meaning | Typical Cause | Handling\nOMS-NO-200 | 200 | Success | Valid request | Continue\nOMS-NO-201 | 201 | Order created | Order persisted | Emit event\nOMS-NO-202 | 202 | Accepted | Async workflow | Monitor\nOMS-NO-400 | 400 | Bad request | Missing mandatory field | Reject\nOMS-NO-401 | 401 | Unauthorized | Invalid token | Stop\nOMS-NO-403 | 403 | Forbidden | Caller not allowed | Stop\nOMS-NO-404 | 404 | Not found | Customer/order/resource missing | Stop\nOMS-NO-409 | 409 | Conflict | Duplicate or resource conflict | Retry or manual review\nOMS-NO-412 | 412 | Precondition failed | Not eligible state | Reject\nOMS-NO-422 | 422 | Validation failed | Serviceability or catalog mismatch | Reject\nOMS-NO-429 | 429 | Rate limited | Downstream throttling | Backoff and retry\nOMS-NO-500 | 500 | Internal error | Orchestration/API failure | Retry\nOMS-NO-502 | 502 | Bad gateway | Downstream integration failure | Retry\nOMS-NO-504 | 504 | Timeout | Downstream timeout | Retry or compensation\n\n1.13 Business Rules\n\nRule ID | Rule\nBR-NO-01 | orderType must be NEW\nBR-NO-02 | item.action must be add for new order\nBR-NO-03 | TMF645 must succeed before TMF641 creation\nBR-NO-04 | TMF640 can run only after all service order legs are ready\nBR-NO-05 | Kafka events must be emitted after state persistence\n\n1.14 Exceptions\n\nException | Trigger | Handling\nDuplicate order | Same idempotency key reused | Return previous order or reject\nQualification failure | No service available | Reject\nInventory shortage | No resource available | Retry or reject\nProvisioning timeout | External adapter delay | Retry with backoff\nActivation failure | Service not live | Compensate and retry\n\n1.15 Embedded Shared Conventions\n\nConvention | Rule\n\nConvention | Rule\nCorrelation ID | Required\nIdempotency | Required for create\nAPI calls | Must be activities\nKafka | Event after commit\nAudit | Terminal states logged\nPayload versioning | Explicit version tag recommended",
+  "workflow_metadata": {
+    "name": "New Telecom Service Order Workflow",
+    "description": "This workflow facilitates the intake, validation, creation, and fulfillment of new telecom service orders through a Temporal.io orchestrated process.",
+    "purpose": "This workflow facilitates the intake, validation, creation, and fulfillment of new telecom service orders through a Temporal.io orchestrated process.",
+    "actors": [
+      "Customer",
+      "Agent"
+    ],
+    "systems": [
+      "Web Portal",
+      "CRM",
+      "CPQ",
+      "BSS Order Capture",
+      "OMS Temporal Workflow",
+      "Service Orchestration",
+      "Service Inventory",
+      "Provisioning Platform",
+      "Kafka Event Bus",
+      "Notification Service"
+    ],
+    "trigger_events": [
+      "New order submission via Web Portal",
+      "Agent-assisted order capture via CRM"
+    ],
+    "start_states": [
+      "Capture"
+    ],
+    "end_states": [
+      "Complete"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "Order request from Web Portal, CRM, or BSS Order Capture",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "input-2",
+        "statement": "API input parameters (e.g., externalId, description, priority, category, requestedStartDate, orderType, flowType, businessReason, relatedParty, productOrderItem)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "input-3",
+        "statement": "Idempotency-Key for create API calls",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "input-4",
+        "statement": "X-Correlation-Id for end-to-end trace",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "output-1",
+        "statement": "Product Order Response (id, externalId, state, orderType, productOrderItem, href, workflowId)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "output-2",
+        "statement": "Service Qualification Response (id, qualificationResult, availableService, validFor)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "output-3",
+        "statement": "Service Order Response (id, state, orderType, serviceOrderItem)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "output-4",
+        "statement": "Activation Response (id, state, serviceId, result)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "output-5",
+        "statement": "Kafka Events (various topics, e.g., oms.order.requested, oms.order.completed)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-1",
+        "statement": "Capture (Accept request from channel)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-2",
+        "statement": "Validate (Check eligibility and serviceability)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-3",
+        "statement": "Create Order (Build commercial and service order records)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-4",
+        "statement": "Decompose (Split into fulfillment legs)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-5",
+        "statement": "Provision (Execute backend provisioning)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-6",
+        "statement": "Activate (Confirm live service)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-7",
+        "statement": "Complete (Finalize and emit events)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-8",
+        "statement": "TMF API Invocation (TMFCallActivity)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-9",
+        "statement": "Kafka Event Publication (KafkaPublishActivity)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-10",
+        "statement": "Durable State Update (StatePersistActivity)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "decision-1",
+        "statement": "Eligibility and Serviceability Check (QualificationWorkflow)",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "decision-2",
+        "statement": "Fulfillment Planning (DecompositionWorkflow)",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "decision-3",
+        "statement": "Provisioning Execution Decision (ProvisioningWorkflow)",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "decision-4",
+        "statement": "Activation Confirmation Decision (ActivationWorkflow)",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-NO-01: orderType must be NEW",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-NO-02: item.action must be 'add' for new order",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-NO-03: TMF645 (Service Qualification) must succeed before TMF641 (Service Order Create)",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "rule-4",
+        "statement": "BR-NO-04: TMF640 (Activation) can run only after all service order legs are ready",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "rule-5",
+        "statement": "BR-NO-05: Kafka events must be emitted after state persistence",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-1",
+        "statement": "Order requested (oms.order.requested)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-2",
+        "statement": "Order validated (oms.order.validated)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-3",
+        "statement": "Order rejected (oms.order.rejected)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-4",
+        "statement": "Service order created (oms.service.order.created)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-5",
+        "statement": "Order decomposed (oms.order.decomposed)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-6",
+        "statement": "Provisioning requested (oms.service.provisioning.requested)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-7",
+        "statement": "Provisioning completed (oms.service.provisioning.completed)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-8",
+        "statement": "Service activated (oms.service.activated)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-9",
+        "statement": "Order completed (oms.order.completed)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "api-1",
+        "statement": "TMF622 Product Ordering (POST /tmf-api/productOrderingManagement/v4/productOrder)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "api-2",
+        "statement": "TMF645 Service Qualification (POST /tmf-api/serviceQualification/v4/serviceQualification)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "api-3",
+        "statement": "TMF641 Service Ordering (POST /tmf-api/serviceOrdering/v4/serviceOrder)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "api-4",
+        "statement": "TMF640 Service Activation & Configuration (POST /tmf-api/serviceActivation/v4/serviceActivation)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-1",
+        "statement": "Web Portal",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-2",
+        "statement": "CRM",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-3",
+        "statement": "BSS Order Capture",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-4",
+        "statement": "CPQ",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-5",
+        "statement": "OMS Temporal Workflow",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-6",
+        "statement": "Service Orchestration",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-7",
+        "statement": "Service Inventory",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-8",
+        "statement": "Provisioning Platform",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-9",
+        "statement": "Kafka Event Bus",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-10",
+        "statement": "Notification Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "exception-1",
+        "statement": "Duplicate order (same idempotency key reused)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "exception-2",
+        "statement": "Qualification failure (no service available)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "exception-3",
+        "statement": "Inventory shortage (no resource available)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "exception-4",
+        "statement": "Provisioning timeout (external adapter delay)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "exception-5",
+        "statement": "Activation failure (service not live)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "state_transition-1",
+        "statement": "Capture -> Validate",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "state_transition-2",
+        "statement": "Validate -> Create Order (if valid), else reject",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "state_transition-3",
+        "statement": "Create Order -> Decompose",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "state_transition-4",
+        "statement": "Decompose -> Provision",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "state_transition-5",
+        "statement": "Provision -> Activate",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "state_transition-6",
+        "statement": "Activate -> Complete",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "retry-1",
+        "statement": "Retry on 409 (Conflict), 429 (Rate Limited), 500 (Internal Error), 502 (Bad Gateway), 504 (Timeout)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Activation failure: Compensate and retry",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "compensation-2",
+        "statement": "Provisioning timeout: Retry with backoff or compensate",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "compensation-3",
+        "statement": "504 Timeout: Retry or compensate",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      }
+    ]
+  },
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Capture (Accept request from channel)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Validate (Check eligibility and serviceability)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Create Order (Build commercial and service order records)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Decompose (Split into fulfillment legs)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_5",
+        "label": "Provision (Execute backend provisioning)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_6",
+        "label": "Activate (Confirm live service)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_7",
+        "label": "Complete (Finalize and emit events)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_8",
+        "label": "TMF API Invocation (TMFCallActivity)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_9",
+        "label": "Kafka Event Publication (KafkaPublishActivity)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_10",
+        "label": "Durable State Update (StatePersistActivity)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Eligibility and Serviceability Check (QualificationWorkflow)",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_2",
+        "label": "Fulfillment Planning (DecompositionWorkflow)",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_3",
+        "label": "Provisioning Execution Decision (ProvisioningWorkflow)",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_4",
+        "label": "Activation Confirmation Decision (ActivationWorkflow)",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "Duplicate order (same idempotency key reused)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "Qualification failure (no service available)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_3",
+        "label": "Inventory shortage (no resource available)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_4",
+        "label": "Provisioning timeout (external adapter delay)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_5",
+        "label": "Activation failure (service not live)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Activation failure: Compensate and retry",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_2",
+        "label": "Provisioning timeout: Retry with backoff or compensate",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_3",
+        "label": "504 Timeout: Retry or compensate",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "Order requested (oms.order.requested)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "Order validated (oms.order.validated)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "Order rejected (oms.order.rejected)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_4",
+        "label": "Service order created (oms.service.order.created)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_5",
+        "label": "Order decomposed (oms.order.decomposed)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_6",
+        "label": "Provisioning requested (oms.service.provisioning.requested)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_7",
+        "label": "Provisioning completed (oms.service.provisioning.completed)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_8",
+        "label": "Service activated (oms.service.activated)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_9",
+        "label": "Order completed (oms.order.completed)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "state_1",
+        "label": "Capture",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_2",
+        "label": "Validate",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_3",
+        "label": "Create Order (if valid), else reject",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_4",
+        "label": "Create Order",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_5",
+        "label": "Decompose",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_6",
+        "label": "Provision",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_7",
+        "label": "Activate",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_8",
+        "label": "Complete",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "decision_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "decision_2",
+        "target": "activity_3",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e7",
+        "source": "decision_2",
+        "target": "exception_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e8",
+        "source": "activity_3",
+        "target": "decision_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "decision_3",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e10",
+        "source": "decision_3",
+        "target": "exception_3",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e11",
+        "source": "activity_4",
+        "target": "decision_4",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "decision_4",
+        "target": "activity_5",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e13",
+        "source": "decision_4",
+        "target": "exception_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e14",
+        "source": "activity_5",
+        "target": "activity_6",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "activity_6",
+        "target": "activity_7",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "activity_7",
+        "target": "activity_8",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "activity_8",
+        "target": "activity_9",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e18",
+        "source": "activity_9",
+        "target": "activity_10",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e19",
+        "source": "activity_10",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e20",
+        "source": "activity_1",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e21",
+        "source": "exception_1",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e22",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e23",
+        "source": "activity_2",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e24",
+        "source": "exception_2",
+        "target": "compensation_2",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e25",
+        "source": "compensation_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e26",
+        "source": "activity_3",
+        "target": "exception_3",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e27",
+        "source": "exception_3",
+        "target": "compensation_3",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e28",
+        "source": "compensation_3",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e29",
+        "source": "activity_4",
+        "target": "exception_4",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e30",
+        "source": "exception_4",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e31",
+        "source": "activity_5",
+        "target": "exception_5",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e32",
+        "source": "exception_5",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e33",
+        "source": "exception_1",
+        "target": "activity_1",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e34",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e35",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e36",
+        "source": "activity_10",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e37",
+        "source": "activity_10",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e38",
+        "source": "start",
+        "target": "event_4",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e39",
+        "source": "event_4",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e40",
+        "source": "activity_10",
+        "target": "event_5",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e41",
+        "source": "start",
+        "target": "event_6",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e42",
+        "source": "event_6",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e43",
+        "source": "activity_10",
+        "target": "event_7",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e44",
+        "source": "activity_10",
+        "target": "event_8",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e45",
+        "source": "activity_10",
+        "target": "event_9",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e46",
+        "source": "state_1",
+        "target": "state_2",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e47",
+        "source": "state_2",
+        "target": "state_3",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e48",
+        "source": "state_4",
+        "target": "state_5",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e49",
+        "source": "state_5",
+        "target": "state_6",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e50",
+        "source": "state_6",
+        "target": "state_7",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e51",
+        "source": "state_7",
+        "target": "state_8",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.2: 0 error(s), 16 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Orphan node 'Capture' has no incoming edges.",
+        "location": "state_1",
+        "suggestion": "Add a transition from a predecessor node."
+      },
+      {
+        "id": "issue-2",
+        "severity": "warning",
+        "message": "Orphan node 'Create Order' has no incoming edges.",
+        "location": "state_4",
+        "suggestion": "Add a transition from a predecessor node."
+      },
+      {
+        "id": "issue-3",
+        "severity": "warning",
+        "message": "Dead-end node 'Order validated (oms.order.validated)' has no outgoing edges.",
+        "location": "event_2",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-4",
+        "severity": "warning",
+        "message": "Dead-end node 'Order rejected (oms.order.rejected)' has no outgoing edges.",
+        "location": "event_3",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-5",
+        "severity": "warning",
+        "message": "Dead-end node 'Order decomposed (oms.order.decomposed)' has no outgoing edges.",
+        "location": "event_5",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-6",
+        "severity": "warning",
+        "message": "Dead-end node 'Provisioning completed (oms.service.provisioning.completed)' has no outgoing edges.",
+        "location": "event_7",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-7",
+        "severity": "warning",
+        "message": "Dead-end node 'Service activated (oms.service.activated)' has no outgoing edges.",
+        "location": "event_8",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-8",
+        "severity": "warning",
+        "message": "Dead-end node 'Order completed (oms.order.completed)' has no outgoing edges.",
+        "location": "event_9",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-9",
+        "severity": "warning",
+        "message": "Dead-end node 'Create Order (if valid), else reject' has no outgoing edges.",
+        "location": "state_3",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-10",
+        "severity": "warning",
+        "message": "Dead-end node 'Complete' has no outgoing edges.",
+        "location": "state_8",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-11",
+        "severity": "warning",
+        "message": "State 'Validate' is unreachable from the start node.",
+        "location": "state_2",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-12",
+        "severity": "warning",
+        "message": "State 'Create Order (if valid), else reject' is unreachable from the start node.",
+        "location": "state_3",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-13",
+        "severity": "warning",
+        "message": "State 'Decompose' is unreachable from the start node.",
+        "location": "state_5",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-14",
+        "severity": "warning",
+        "message": "State 'Provision' is unreachable from the start node.",
+        "location": "state_6",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-15",
+        "severity": "warning",
+        "message": "State 'Activate' is unreachable from the start node.",
+        "location": "state_7",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-16",
+        "severity": "warning",
+        "message": "State 'Complete' is unreachable from the start node.",
+        "location": "state_8",
+        "suggestion": "Connect this state to the reachable graph from start."
+      }
+    ],
+    "score": 0.2,
+    "health_score": 0.2,
+    "confidence": 0.9024,
+    "reviewer": "auto",
+    "reviewed_at": "2026-06-25T21:25:42.255768Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Represents the workflow's initiation point.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Marks the workflow's conclusion with downstream effects implied.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "capture",
+        "rationale": "Directly involves intake of a request from a channel.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "validate",
+        "rationale": "Explicitly checks eligibility and serviceability.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "process",
+        "rationale": "Involves transformation (building order records).",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "process",
+        "rationale": "Performs decomposition, a core operational task.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_5",
+        "phase": "process",
+        "rationale": "Executes provisioning, a central operational activity.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_6",
+        "phase": "activate",
+        "rationale": "Confirms the service is live, indicating activation.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_7",
+        "phase": "activate",
+        "rationale": "Finalizes the workflow and emits completion events.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_8",
+        "phase": "process",
+        "rationale": "Involves an external API call, part of core processing.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "activity_9",
+        "phase": "activate",
+        "rationale": "Publishes events, signaling downstream notifications.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "activity_10",
+        "phase": "process",
+        "rationale": "Updates durable state, essential for workflow integrity.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Makes a decision based on eligibility and serviceability checks.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_2",
+        "phase": "validate",
+        "rationale": "Determines fulfillment planning based on previous validation.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "decision_3",
+        "phase": "validate",
+        "rationale": "Evaluates provisioning execution feasibility.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "decision_4",
+        "phase": "activate",
+        "rationale": "Confirms activation, a final validation before completion.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "capture",
+        "rationale": "Triggers on duplicate order, affecting intake.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "exception_2",
+        "phase": "validate",
+        "rationale": "Occurs due to qualification failure during validation.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "exception_3",
+        "phase": "process",
+        "rationale": "Triggered by operational issue (inventory shortage).",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_4",
+        "phase": "process",
+        "rationale": "Results from a provisioning timeout, an operational failure.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_5",
+        "phase": "activate",
+        "rationale": "Activation failure impacts the final activation phase.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "activate",
+        "rationale": "Performs compensation to rectify activation failures.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "compensation_2",
+        "phase": "process",
+        "rationale": "Handles retry or compensation for provisioning timeouts.",
+        "confidence": 0.75
+      },
+      {
+        "node_id": "compensation_3",
+        "phase": "process",
+        "rationale": "Manages retry or compensation for operational timeouts.",
+        "confidence": 0.75
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "Represents an order request event, initiating capture.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_2",
+        "phase": "validate",
+        "rationale": "Emitted after validation, signaling validated status.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "event_3",
+        "phase": "validate",
+        "rationale": "Indicates rejection, a validation outcome.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "event_4",
+        "phase": "capture",
+        "rationale": "Created in response to an initial order request capture.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "event_5",
+        "phase": "process",
+        "rationale": "Emitted after decomposition, a process step.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "event_6",
+        "phase": "capture",
+        "rationale": "Triggers provisioning request capture.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "event_7",
+        "phase": "process",
+        "rationale": "Signals completion of provisioning, an operational task.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "event_8",
+        "phase": "activate",
+        "rationale": "Confirms service activation, the final activation signal.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_9",
+        "phase": "activate",
+        "rationale": "Emitted upon order completion, marking final activation.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_1",
+        "phase": "capture",
+        "rationale": "Initial state for capturing workflow inputs.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "state_2",
+        "phase": "validate",
+        "rationale": "State transitioning into validation checks.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "state_3",
+        "phase": "process",
+        "rationale": "Creates an order if valid, transitioning into process.",
+        "confidence": 0.6
+      },
+      {
+        "node_id": "state_4",
+        "phase": "process",
+        "rationale": "Directly creates an order as part of core processing.",
+        "confidence": 0.6
+      },
+      {
+        "node_id": "state_5",
+        "phase": "process",
+        "rationale": "Decomposes the order, a key operational step.",
+        "confidence": 0.6
+      },
+      {
+        "node_id": "state_6",
+        "phase": "process",
+        "rationale": "Prepares for provisioning, an operational prerequisite.",
+        "confidence": 0.6
+      },
+      {
+        "node_id": "state_7",
+        "phase": "activate",
+        "rationale": "Transitions to activation upon provisioning completion.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "state_8",
+        "phase": "activate",
+        "rationale": "Final state, completing the workflow activation.",
+        "confidence": 0.7
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "activity_1",
+          "exception_1",
+          "event_1",
+          "event_4",
+          "event_6",
+          "state_1"
+        ],
+        "summary": "7 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "activity_2",
+          "decision_1",
+          "decision_2",
+          "decision_3",
+          "exception_2",
+          "event_2",
+          "event_3",
+          "state_2"
+        ],
+        "summary": "8 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_3",
+          "activity_4",
+          "activity_5",
+          "activity_8",
+          "activity_10",
+          "exception_3",
+          "exception_4",
+          "compensation_2",
+          "compensation_3",
+          "event_5",
+          "event_7",
+          "state_3",
+          "state_4",
+          "state_5",
+          "state_6"
+        ],
+        "summary": "15 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "activity_6",
+          "activity_7",
+          "activity_9",
+          "decision_4",
+          "exception_5",
+          "compensation_1",
+          "event_8",
+          "event_9",
+          "state_7",
+          "state_8"
+        ],
+        "summary": "11 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "Orderfulfillmentworkflow",
+    "task_queue": "order-fulfillment-queue",
+    "description": "Manages the end-to-end order fulfillment process from capture to activation.",
+    "activities": [
+      {
+        "name": "Captureorder",
+        "source_node_id": "activity_1",
+        "description": "Accepts request from channel and captures order details.",
+        "inputs": [
+          "orderId",
+          "customerInfo"
+        ],
+        "outputs": [
+          "capturedOrder"
+        ],
+        "timeout_seconds": 30.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Validateorder",
+        "source_node_id": "activity_2",
+        "description": "Checks eligibility and serviceability of the captured order.",
+        "inputs": [
+          "capturedOrder"
+        ],
+        "outputs": [
+          "validatedOrder"
+        ],
+        "timeout_seconds": 20.0,
+        "retry_policy": {
+          "maximum_attempts": 2,
+          "initial_interval_seconds": 5.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": 30.0,
+          "non_retryable_error_types": [
+            "ValidationFailure"
+          ]
+        }
+      },
+      {
+        "name": "Createorderrecords",
+        "source_node_id": "activity_3",
+        "description": "Builds commercial and service order records.",
+        "inputs": [
+          "validatedOrder"
+        ],
+        "outputs": [
+          "orderRecords"
+        ],
+        "timeout_seconds": 25.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Decomposeorder",
+        "source_node_id": "activity_4",
+        "description": "Splits order into fulfillment legs.",
+        "inputs": [
+          "orderRecords"
+        ],
+        "outputs": [
+          "fulfillmentLegs"
+        ],
+        "timeout_seconds": 15.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Provisionservice",
+        "source_node_id": "activity_5",
+        "description": "Executes backend provisioning for each fulfillment leg.",
+        "inputs": [
+          "fulfillmentLegs"
+        ],
+        "outputs": [
+          "provisioningStatus"
+        ],
+        "timeout_seconds": 120.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 10.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": 120.0,
+          "non_retryable_error_types": [
+            "ProvisioningFailure"
+          ]
+        }
+      },
+      {
+        "name": "Activateservice",
+        "source_node_id": "activity_6",
+        "description": "Confirms live service status post-provisioning.",
+        "inputs": [
+          "provisioningStatus"
+        ],
+        "outputs": [
+          "activationStatus"
+        ],
+        "timeout_seconds": 10.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Completeorder",
+        "source_node_id": "activity_7",
+        "description": "Finalizes order and emits completion events.",
+        "inputs": [
+          "activationStatus"
+        ],
+        "outputs": [],
+        "timeout_seconds": 5.0,
+        "retry_policy": null
+      },
+      {
+        "name": "TmfApiInvocation",
+        "source_node_id": "activity_8",
+        "description": "Invokes TMF API for external synchronization.",
+        "inputs": [
+          "orderRecords"
+        ],
+        "outputs": [
+          "tmfResponse"
+        ],
+        "timeout_seconds": 90.0,
+        "retry_policy": {
+          "maximum_attempts": 2,
+          "initial_interval_seconds": 15.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": 90.0,
+          "non_retryable_error_types": [
+            "APIFailure"
+          ]
+        }
+      },
+      {
+        "name": "KafkaEventPublish",
+        "source_node_id": "activity_9",
+        "description": "Publishes order events to Kafka topics.",
+        "inputs": [
+          "activationStatus"
+        ],
+        "outputs": [],
+        "timeout_seconds": 5.0,
+        "retry_policy": null
+      },
+      {
+        "name": "DurableStateUpdate",
+        "source_node_id": "activity_10",
+        "description": "Updates durable state with final order status.",
+        "inputs": [
+          "activationStatus"
+        ],
+        "outputs": [],
+        "timeout_seconds": 5.0,
+        "retry_policy": null
+      }
+    ],
+    "signals": [
+      {
+        "name": "OrderRequestedSignal",
+        "description": "Triggers on receiving a new order request.",
+        "payload": [
+          "orderId"
+        ]
+      },
+      {
+        "name": "ProvisioningTimeoutSignal",
+        "description": "Handles provisioning timeout scenarios.",
+        "payload": [
+          "fulfillmentLegId"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetOrderStatus",
+        "description": "Returns the current status of an order.",
+        "returns": "OrderStatus"
+      }
+    ],
+    "child_workflows": [
+      {
+        "name": "Qualificationworkflow",
+        "source_node_id": "decision_1",
+        "description": "Sub-workflow for detailed eligibility checks.",
+        "inputs": [
+          "capturedOrder"
+        ],
+        "outputs": [
+          "eligibilityResult"
+        ],
+        "task_queue": "qualification-queue"
+      }
+    ],
+    "timers": [
+      {
+        "name": "ProvisioningSLATimer",
+        "duration_seconds": 3600.0,
+        "description": "Ensures provisioning completes within the SLA."
+      }
+    ],
+    "compensation_activities": [
+      {
+        "name": "Compensateactivationfailure",
+        "compensates": "ActivateService",
+        "source_node_id": "compensation_1",
+        "description": "Rolls back activation in case of failure.",
+        "retry_policy": null
+      },
+      {
+        "name": "Compensateprovisioningtimeout",
+        "compensates": "ProvisionService",
+        "source_node_id": "compensation_2",
+        "description": "Handles compensation for provisioning timeouts.",
+        "retry_policy": {
+          "maximum_attempts": 1,
+          "initial_interval_seconds": 0.001,
+          "backoff_coefficient": 1.0,
+          "maximum_interval_seconds": 0.0,
+          "non_retryable_error_types": []
+        }
+      }
+    ],
+    "default_retry_policy": {
+      "maximum_attempts": 3,
+      "initial_interval_seconds": 1.0,
+      "backoff_coefficient": 2.0,
+      "maximum_interval_seconds": 3600.0,
+      "non_retryable_error_types": [
+        "SystemFailure"
+      ]
+    }
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Capture (Accept request from channel)\"]\n    activity_2[\"Validate (Check eligibility and serviceability)\"]\n    activity_3[\"Create Order (Build commercial and service order records)\"]\n    activity_4[\"Decompose (Split into fulfillment legs)\"]\n    activity_5[\"Provision (Execute backend provisioning)\"]\n    activity_6[\"Activate (Confirm live service)\"]\n    activity_7[\"Complete (Finalize and emit events)\"]\n    activity_8[\"TMF API Invocation (TMFCallActivity)\"]\n    activity_9[\"Kafka Event Publication (KafkaPublishActivity)\"]\n    activity_10[\"Durable State Update (StatePersistActivity)\"]\n    decision_1{\"Eligibility and Serviceability Check (QualificationWorkflow)\"}\n    decision_2{\"Fulfillment Planning (DecompositionWorkflow)\"}\n    decision_3{\"Provisioning Execution Decision (ProvisioningWorkflow)\"}\n    decision_4{\"Activation Confirmation Decision (ActivationWorkflow)\"}\n    exception_1([\"Duplicate order (same idempotency key reused)\"])\n    exception_2([\"Qualification failure (no service available)\"])\n    exception_3([\"Inventory shortage (no resource available)\"])\n    exception_4([\"Provisioning timeout (external adapter delay)\"])\n    exception_5([\"Activation failure (service not live)\"])\n    compensation_1[\"Activation failure: Compensate and retry\"]\n    compensation_2[\"Provisioning timeout: Retry with backoff or compensate\"]\n    compensation_3[\"504 Timeout: Retry or compensate\"]\n    event_1([\"Order requested (oms.order.requested)\"])\n    event_2([\"Order validated (oms.order.validated)\"])\n    event_3([\"Order rejected (oms.order.rejected)\"])\n    event_4([\"Service order created (oms.service.order.created)\"])\n    event_5([\"Order decomposed (oms.order.decomposed)\"])\n    event_6([\"Provisioning requested (oms.service.provisioning.requested)\"])\n    event_7([\"Provisioning completed (oms.service.provisioning.completed)\"])\n    event_8([\"Service activated (oms.service.activated)\"])\n    event_9([\"Order completed (oms.order.completed)\"])\n    state_1[\"Capture\"]\n    state_2[\"Validate\"]\n    state_3[\"Create Order (if valid), else reject\"]\n    state_4[\"Create Order\"]\n    state_5[\"Decompose\"]\n    state_6[\"Provision\"]\n    state_7[\"Activate\"]\n    state_8[\"Complete\"]\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> decision_2\n    decision_2 -->|yes| activity_3\n    decision_2 -->|no| exception_2\n    activity_3 --> decision_3\n    decision_3 -->|yes| activity_4\n    decision_3 -->|no| exception_3\n    activity_4 --> decision_4\n    decision_4 -->|yes| activity_5\n    decision_4 -->|no| exception_4\n    activity_5 --> activity_6\n    activity_6 --> activity_7\n    activity_7 --> activity_8\n    activity_8 --> activity_9\n    activity_9 --> activity_10\n    activity_10 --> end_node\n    activity_1 -.->|on error| exception_1\n    exception_1 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    activity_2 -.->|on error| exception_2\n    exception_2 -.->|compensate| compensation_2\n    compensation_2 --> end_node\n    activity_3 -.->|on error| exception_3\n    exception_3 -.->|compensate| compensation_3\n    compensation_3 --> end_node\n    activity_4 -.->|on error| exception_4\n    exception_4 -.->|compensate| compensation_1\n    activity_5 -.->|on error| exception_5\n    exception_5 -.->|compensate| compensation_1\n    exception_1 -.->|retry| activity_1\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_10 -.->|emits| event_2\n    activity_10 -.->|emits| event_3\n    start -.->|event| event_4\n    event_4 -.->|triggers| activity_1\n    activity_10 -.->|emits| event_5\n    start -.->|event| event_6\n    event_6 -.->|triggers| activity_1\n    activity_10 -.->|emits| event_7\n    activity_10 -.->|emits| event_8\n    activity_10 -.->|emits| event_9\n    state_1 -->|transition| state_2\n    state_2 -->|transition| state_3\n    state_4 -->|transition| state_5\n    state_5 -->|transition| state_6\n    state_6 -->|transition| state_7\n    state_7 -->|transition| state_8\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,activity_1,exception_1,event_1,event_4,event_6,state_1 capture;\n    class activity_2,decision_1,decision_2,decision_3,exception_2,event_2,event_3,state_2 validate;\n    class activity_3,activity_4,activity_5,activity_8,activity_10,exception_3,exception_4,compensation_2,compensation_3,event_5,event_7,state_3,state_4,state_5,state_6 process;\n    class end_node,activity_6,activity_7,activity_9,decision_4,exception_5,compensation_1,event_8,event_9,state_7,state_8 activate;",
+    "title": "New Telecom Service Order Workflow"
+  },
+  "confidence_scores": {
+    "metadata": 0.95,
+    "facts": 0.8865,
+    "graph": 1.0,
+    "cvpa": 0.9134,
+    "temporal": 0.9,
+    "overall": null,
+    "notes": {
+      "facts": "66 facts across 12 categories; 0 duplicate(s) removed.",
+      "cvpa": "41 nodes classified; 41 from model, 0 by fallback.",
+      "temporal": "10 activities, 2 signals, 1 child workflows, 2 compensations."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-06-25T21:24:41.564080Z",
+  "updated_at": "2026-06-25T21:27:20.767509Z"
+}

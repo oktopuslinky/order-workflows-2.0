@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "indexed_at": "2026-07-31T02:16:16.696739+00:00",
+  "git_commit": "1a0c002a2b5b",
+  "repo": {
+    "path": "C:\\Users\\devag\\Documents\\Code (local)\\order-workflows-iterative-2.0",
+    "name": "order-workflows-iterative-2.0",
+    "commit": "1a0c002a2b5b"
+  },
+  "stats": {
+    "nodes": 8052,
+    "edges": 15651,
+    "domains": 5
+  },
+  "graph": "graph.json",
+  "options": {
+    "include_functions": true,
+    "include_chunks": true,
+    "max_chunks_per_file": 40,
+    "merge_domains": null,
+    "llm_enrich": false
+  }
+}

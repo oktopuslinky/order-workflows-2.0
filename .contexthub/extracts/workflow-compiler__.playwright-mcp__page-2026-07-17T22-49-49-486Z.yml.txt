@@ -1,0 +1,35 @@
+- generic [ref=e1]:
+  - banner [ref=e2]:
+    - link "workflow·compiler" [ref=e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e4]: document → spec → validate → approve → code
+    - navigation [ref=e5]:
+      - link "Projects" [ref=e6] [cursor=pointer]:
+        - /url: /
+      - link "Guide" [ref=e7] [cursor=pointer]:
+        - /url: /guide
+      - button "Switch to dark theme" [ref=e8]: ☾ Dark
+  - main [ref=e9]:
+    - generic [ref=e12]:
+      - paragraph [ref=e13]: workflow·compiler
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - button "Sign in" [ref=e16] [cursor=pointer]
+          - button "Create account" [active] [ref=e17] [cursor=pointer]
+        - generic [ref=e18]:
+          - generic [ref=e19]:
+            - generic [ref=e20]: Email
+            - textbox "Email" [ref=e21]
+          - generic [ref=e30]:
+            - generic [ref=e31]: Display name (shown as author on edits)
+            - textbox "Display name (shown as author on edits)" [ref=e32]:
+              - /placeholder: defaults to your email name
+          - generic [ref=e22]:
+            - generic [ref=e23]: Password — at least 8 characters
+            - generic [ref=e24]:
+              - textbox "Password — at least 8 characters" [ref=e33]
+              - button "Show password" [ref=e26] [cursor=pointer]: Show
+          - button "Create account" [ref=e34] [cursor=pointer]
+      - paragraph [ref=e28]: Local accounts — stored on this machine, no external
+          services.
+  - alert [ref=e29]

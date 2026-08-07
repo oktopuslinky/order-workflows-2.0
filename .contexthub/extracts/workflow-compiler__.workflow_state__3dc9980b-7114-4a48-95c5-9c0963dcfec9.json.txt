@@ -1,0 +1,811 @@
+{
+  "workflow_id": "3dc9980b-7114-4a48-95c5-9c0963dcfec9",
+  "document_text": "# Customer Onboarding Workflow\n\n<!--\n  workflow-compiler specification (v1) — slug: customer-onboarding\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nRegisters a new customer by validating the application, verifying identity, creating a customer record, and notifying the customer of the outcome.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Customer, Onboarding Service, Identity Service, Customer Service, Notification Service, Provisioning Service, Account Provisioning\n- systems: Onboarding Service, Identity Service, Customer Service, Notification Service, Provisioning Service, Account Provisioning\n- triggers: application.received\n- start states: \n- end states: rejected, registered, rejected (ApplicationIncomplete), rejected (IdentityCheckFailed), failed\n- tags: \n\n## Inputs\n- application_id\n- email\n\n## Outputs\n- customer_record_id\n- onboarding_status\n\n## Business Rules\n- Identity verification required\n- Retry policy for identity verification (up to 3 times, exponential backoff starting at 2 seconds)\n\n## API Interfaces\n- Onboarding Service.validateApplication\n- Identity Service.verifyIdentity\n- Customer Service.createCustomerRecord\n- Notification Service.notifyCustomer\n\n## Systems Involved\n- Onboarding Service\n- Identity Service\n- Customer Service\n- Notification Service\n\n## Timers and SLAs\n<!-- none -->\n\n## Retries\n- Verify customer identity (up to 3 times, exponential backoff starting at 2 seconds)\n- Notify the customer (up to 5 times)\n- Configure the account: retry up to 3 times with exponential backoff starting at 1 second\n- Configure Account\n\n## Activities\n- [a1] Validate Application\n- [a2] Verify Identity\n- [a3] Create Customer Record\n- [a4] Notify Customer\n\n## Decisions\n- [d1] Is Application Complete? — after: a1; yes: a2; no: e1\n\n## Exceptions\n- [e1] ApplicationIncomplete — raised by: a1\n\n## Compensations\n- [c1] Release Reserved Account Number — compensates: a3\n- [c2] Deconfigure Account — compensates: a4\n\n## Events\n- [ev1] application.received — kind: trigger; emitted by: start\n- [ev2] onboarding_status — kind: output_emit; emitted by: a4\n- [v1] account.provision — kind: output_emit; emitted by: a3\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n- The specification lists 'failed' as an end state without clear conditions in the provided document [inferred]\n- Contradiction in retry policies for Notify Customer: Document specifies 'non-fatal' failures without clear resolution path [inferred]\n- Contradiction in 'failed' end state conditions and document evidence [inferred]\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n- [x] (R6-bounded-waits) What deadline bounds each wait (e.g. 24 hours)?\n  Answer: 24 hours — identity verification must complete within 24h or the application is rejected\n- [x] What is the deadline for each wait (e.g., 24 hours)?\n  Answer: 24 hours — same bound applies to every wait in this workflow\n- [ ] What is the specific deadline for Notify Customer retries?\n  Answer: \n\n## Cross-Workflow Dependencies\n- [x] provides output `customer_record_id` to `account-provisioning` input `customer_record_id` — Account Provisioning consumes the customer_record_id produced by Customer Onboarding\n\n## Triggers\n- [x] triggers `account-provisioning` (fire-and-forget) when `when a customer record is registered`\n  input customer_record_id: step output `customer_record_id` (str)",
+  "project_id": "feadb35e-2e40-4929-b1df-663be5fd7031",
+  "workflow_metadata": {
+    "name": "Customer Onboarding Workflow",
+    "description": "Registers a new customer by validating the application, verifying identity, creating a customer record, and notifying the customer of the outcome.",
+    "purpose": "Registers a new customer by validating the application, verifying identity, creating a customer record, and notifying the customer of the outcome.",
+    "actors": [
+      "Customer",
+      "Onboarding Service",
+      "Identity Service",
+      "Customer Service",
+      "Notification Service",
+      "Provisioning Service",
+      "Account Provisioning"
+    ],
+    "systems": [
+      "Onboarding Service",
+      "Identity Service",
+      "Customer Service",
+      "Notification Service",
+      "Provisioning Service",
+      "Account Provisioning"
+    ],
+    "trigger_events": [
+      "application.received"
+    ],
+    "start_states": [],
+    "end_states": [
+      "rejected",
+      "registered",
+      "rejected (ApplicationIncomplete)",
+      "rejected (IdentityCheckFailed)",
+      "failed"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.800"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "application_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "email",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "customer_record_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "onboarding_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Validate Application",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Verify Identity",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Create Customer Record",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-4",
+        "statement": "Notify Customer",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Is Application Complete?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-1",
+        "statement": "Identity verification required",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-2",
+        "statement": "Retry policy for identity verification (up to 3 times, exponential backoff starting at 2 seconds)",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "application.received",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-2",
+        "statement": "onboarding_status",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-3",
+        "statement": "account.provision",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "Onboarding Service.validateApplication",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "Identity Service.verifyIdentity",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-3",
+        "statement": "Customer Service.createCustomerRecord",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-4",
+        "statement": "Notification Service.notifyCustomer",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Onboarding Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Identity Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Customer Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-4",
+        "statement": "Notification Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "ApplicationIncomplete",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Verify customer identity (up to 3 times, exponential backoff starting at 2 seconds)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "Notify the customer (up to 5 times)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-3",
+        "statement": "Configure the account: retry up to 3 times with exponential backoff starting at 1 second",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-4",
+        "statement": "Configure Account",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Release Reserved Account Number compensates Create Customer Record",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-2",
+        "statement": "Deconfigure Account compensates Notify Customer",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Validate Application",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Verify Identity",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Create Customer Record",
+          "parallel_group": null
+        },
+        {
+          "id": "a4",
+          "name": "Notify Customer",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Is Application Complete?",
+          "after": "a1",
+          "yes_target": "a2",
+          "no_target": "e1"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "ApplicationIncomplete",
+          "raised_by": "a1"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Release Reserved Account Number",
+          "compensates": "a3"
+        },
+        {
+          "id": "c2",
+          "name": "Deconfigure Account",
+          "compensates": "a4"
+        }
+      ],
+      "events": [
+        {
+          "id": "ev1",
+          "name": "application.received",
+          "emitted_by": "start",
+          "kind": "trigger"
+        },
+        {
+          "id": "ev2",
+          "name": "onboarding_status",
+          "emitted_by": "a4",
+          "kind": "output_emit"
+        },
+        {
+          "id": "v1",
+          "name": "account.provision",
+          "emitted_by": "a3",
+          "kind": "output_emit"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "t1",
+          "target_workflow": "account-provisioning",
+          "mode": "fire_and_forget",
+          "condition": "when a customer record is registered",
+          "after": null
+        }
+      ],
+      "transitions": []
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): application.received.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "2 input(s): application_id, email.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 decision(s) have both branches.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 2 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "accepted",
+        "evidence": "Waits exist but no timer/deadline was declared; a signal could block forever.",
+        "question": "What deadline bounds each wait (e.g. 24 hours)?",
+        "answer": "24 hours — identity verification must complete within 24h or the application is rejected"
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "1 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "4 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "No free-form state transitions.",
+        "question": null,
+        "answer": null
+      }
+    ]
+  },
+  "outgoing_triggers": [
+    {
+      "source_workflow": "customer-onboarding",
+      "target_workflow": "account-provisioning",
+      "mode": "fire_and_forget",
+      "condition": "when a customer record is registered",
+      "input_map": [
+        {
+          "target_input": "customer_record_id",
+          "source": "step_output",
+          "source_ref": "customer_record_id",
+          "type": "str"
+        }
+      ],
+      "result_binding": null,
+      "user_confirmed": true
+    }
+  ],
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Validate Application",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Verify Identity",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Create Customer Record",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Notify Customer",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Is Application Complete?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "ApplicationIncomplete",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Release Reserved Account Number",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_2",
+        "label": "Deconfigure Account",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "application.received",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "onboarding_status",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "account.provision",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "trigger_1",
+        "label": "Trigger account-provisioning",
+        "node_type": "trigger",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "target_workflow": "account-provisioning",
+          "mode": "fire_and_forget"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "activity_3",
+        "target": "activity_4",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e7",
+        "source": "activity_4",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e8",
+        "source": "activity_1",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "activity_3",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "activity_4",
+        "target": "compensation_2",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "compensation_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e14",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "activity_4",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "activity_3",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "activity_4",
+        "target": "trigger_1",
+        "edge_type": "conditional",
+        "label": "triggers",
+        "condition": "when a customer record is registered"
+      },
+      {
+        "id": "e18",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.95: 0 error(s), 1 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Dead-end node 'Trigger account-provisioning' has no outgoing edges.",
+        "location": "trigger_1",
+        "suggestion": "Add a transition toward an END node."
+      }
+    ],
+    "score": 0.95,
+    "health_score": 0.95,
+    "confidence": 1.0,
+    "reviewer": "workflow-review",
+    "reviewed_at": "2026-07-13T03:10:14.856928Z"
+  },
+  "approval_status": "pending",
+  "cvpa_classification": null,
+  "temporal_design": null,
+  "temporal_code": null,
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Validate Application\"]\n    activity_2[\"Verify Identity\"]\n    activity_3[\"Create Customer Record\"]\n    activity_4[\"Notify Customer\"]\n    decision_1{\"Is Application Complete?\"}\n    exception_1([\"ApplicationIncomplete\"])\n    compensation_1[\"Release Reserved Account Number\"]\n    compensation_2[\"Deconfigure Account\"]\n    event_1([\"application.received\"])\n    event_2([\"onboarding_status\"])\n    event_3([\"account.provision\"])\n    trigger_1[\"Trigger account-provisioning\"]\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> activity_3\n    activity_3 --> activity_4\n    activity_4 --> end_node\n    activity_1 -.->|on error| exception_1\n    activity_3 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    activity_4 -.->|compensate| compensation_2\n    compensation_2 --> end_node\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_4 -.->|emits| event_2\n    activity_3 -.->|emits| event_3\n    activity_4 -->|when a customer record is registered| trigger_1\n    exception_1 -->|terminates| end_node",
+    "title": "Customer Onboarding Workflow"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 0.9,
+    "cvpa": null,
+    "temporal": null,
+    "overall": null,
+    "notes": {}
+  },
+  "stage": "reviewed",
+  "created_at": "2026-07-13T03:10:14.851837Z",
+  "updated_at": "2026-07-13T03:10:14.856928Z"
+}

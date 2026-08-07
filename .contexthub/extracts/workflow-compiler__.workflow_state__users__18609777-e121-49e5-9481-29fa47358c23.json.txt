@@ -1,0 +1,8 @@
+{
+  "user_id": "18609777-e121-49e5-9481-29fa47358c23",
+  "email": "test@example.com",
+  "display_name": "test",
+  "password_hash": "d279d4ed945bfc50f6ea8ea3a7ce864a222c2d80d48ec5e81f37fed49d35d1dfb1e4e2d59d02f22771a26d8f3bf151ad2a7b3d6c847b64fa893f23057140a076",
+  "password_salt": "9992b611aa86fdb9954bde8f14cf1b84",
+  "created_at": "2026-07-17T20:50:16.150811Z"
+}

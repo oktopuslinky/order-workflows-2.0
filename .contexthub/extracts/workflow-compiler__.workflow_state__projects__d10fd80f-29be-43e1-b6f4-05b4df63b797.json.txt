@@ -1,0 +1,1038 @@
+{
+  "project_id": "d10fd80f-29be-43e1-b6f4-05b4df63b797",
+  "document_text": "# Order Management Operations\n\n<!-- IDEAL-CONDITIONS MULTI-WORKFLOW REFERENCE DOCUMENT -------------------------------------------------- This is the multi-flow companion to examples/ideal_temporal_workflow.md. Where that document is deliberately written so ONE workflow compiles cleanly end-to-end, this document is written so the spec-centric front-end (segmentation -> per-workflow facts -> spec gate -> per-workflow graph/CVPA/ Temporal design/code) segments THREE distinct workflows cleanly and links them by typed output->input dependencies.\n\nDesign goals that map 1:1 onto clean segmentation + three clean Temporal designs:\nTHREE workflows, each with ONE start and ONE end. No workflow shares a\nProcess section with another.\nEvery section heading is PREFIXED with its workflow's short name\n(\"Order Placement ...\", \"Order Fulfilment ...\", \"Order Return ...\") so the deterministic section-title matcher slices each workflow's text with no overlap. The bare keyword the facts stage keys on (Process, Trigger, Inputs and Outputs, Retries, Compensation, ...) is preserved after the prefix.\nCross-workflow links are stated explicitly, in both prose (this Overview)\nand via matching field names: an OUTPUT field of one workflow is reused verbatim as an INPUT field of the next (order_id, shipment_id). This is what the segmentation dependency detector keys on.\nWithin each workflow the same per-flow ideal rules as ideal_temporal_workflow.md\napply: stable PascalCase activity names reused verbatim across Process / API Interfaces / Retries / Compensation; every decision's \"no\" branch routes to a NAMED exception (never back to the same step); \"in parallel\" only for genuinely independent activities; saga compensations phrased exactly as \"<Comp> compensates <Activity>\"; the one human/external wait is a signal paired with a timer so it is bounded; inputs are snake_case fields; NO free-form \"X transitions to Y\" state sentences in any Process. -->\n\n## Overview\n\nThe Order Platform team operates three related but independently-deployable workflows. They run in sequence across an order's life but are separate Temporal workflows, each triggered by its own event and each owning its own compensation:\n\nOrder Placement accepts a shopper's cart, validates it, reserves\ninventory, authorises payment, and creates the order. It emits order_id.\nOrder Fulfilment picks, packs, and ships a placed order, then captures the\npreviously-authorised payment. It consumes order_id from Order Placement and emits shipment_id.\nOrder Return authorises and processes a return for a shipped order and\nrefunds the customer. It consumes order_id from Order Placement and shipment_id from Order Fulfilment.\n\nCross-workflow dependencies (output -> input):\n\nOrder Placement order_id -> Order Fulfilment order_id\nOrder Placement order_id -> Order Return order_id\nOrder Fulfilment shipment_id -> Order Return shipment_id\n\n---\n\n## Order Placement Purpose\n\nThe Order Placement workflow turns a submitted shopping cart into a confirmed order: it validates the cart, reserves inventory, authorises payment, and creates the order record. If payment authorisation fails after inventory is reserved, the reservation is released so no stock is held for an order that will not be placed.\n\n## Order Placement Trigger\n\nThe workflow starts when a shopper submits a cart for checkout and a checkout.submitted request reaches the Order Service.\n\n## Order Placement Actors\n\nShopper\nOrder Operations\n\n## Order Placement Systems\n\nOrder Service\nCatalogue Service\nInventory Service\nPayment Gateway\n\n## Order Placement Inputs and Outputs\n\nInputs (these become the workflow input fields)\ncart_id — identifier of the submitted cart\ncustomer_id — identifier of the checking-out customer\namount — cart total to authorise\ncurrency — ISO currency code for the authorisation\n\nOutputs\norder_id — identifier of the created order\nauthorization_id — identifier of the payment authorisation\nplacement_status — placed or rejected\n\n## Order Placement Process\n\nThe Order Service validates the cart using cart_id and returns whether\nthe cart is checkout-eligible.\nIf the cart is not eligible, the workflow raises CartNotEligible and\nrejects the checkout; if the cart is eligible, the workflow continues.\nThe Inventory Service reserves inventory for cart_id and returns a\nreservation_id.\nThe Payment Gateway authorises payment for customer_id for amount in\ncurrency and returns an authorization_id.\nIf the authorisation is declined, the workflow raises PaymentDeclined; if\nthe authorisation succeeds, the workflow continues.\nThe Order Service creates the order for cart_id and returns an\norder_id.\n\n## Order Placement Business Rules\n\nBR-1: A cart may only be placed when it is in the open state.\nBR-2: Inventory must be reserved before payment is authorised.\nBR-3: Payment must be authorised before the order is created.\n\n## Order Placement Timers and SLAs\n\nValidate the cart must complete within 5 seconds.\nAuthorise payment must complete within 30 seconds.\n\n## Order Placement API Interfaces\n\n| System            | Method | Endpoint / Action        | Purpose                                     | |-------------------|--------|--------------------------|---------------------------------------------| | Order Service     | POST   | /orders/validate-cart  | Validate the cart (cart_id)               | | Inventory Service | POST   | /inventory/reserve     | Reserve inventory (cart_id)               | | Payment Gateway   | POST   | /payments/authorize    | Authorise payment (customer_id, amount) | | Order Service     | POST   | /orders/create         | Create the order (cart_id)                |\n\n## Order Placement Exceptions and Error Handling\n\nCartNotEligible: the cart is not in a checkout-eligible state → reject the\ncheckout with reason CART_NOT_ELIGIBLE and end the workflow.\nPaymentDeclined: the Payment Gateway declines the authorisation → release\nthe inventory reservation and end the workflow.\n\n## Order Placement Retries\n\nReserve inventory: retry up to 3 times with exponential backoff\nstarting at 2 seconds.\nAuthorise payment: retry up to 2 times with a fixed 5-second delay;\ndo not retry on a PaymentDeclined error.\n\n## Order Placement Compensation and Rollback\n\nRelease inventory compensates Reserve inventory — return the reserved\nstock if placement is rolled back after reservation.\n\n---\n\n## Order Fulfilment Purpose\n\nThe Order Fulfilment workflow ships a placed order and then captures its payment: it picks the items, packs the shipment, dispatches it, and captures the previously-authorised payment. If dispatch fails after packing, the pack step is rolled back so a packed-but-undispatched shipment is not left stranded.\n\n## Order Fulfilment Trigger\n\nThe workflow starts when an order is placed and an order.fulfil request reaches the Fulfilment Service. It requires the order_id produced by Order Placement.\n\n## Order Fulfilment Actors\n\nWarehouse Operator\nFulfilment Operations\n\n## Order Fulfilment Systems\n\nFulfilment Service\nWarehouse Service\nCarrier Service\nPayment Gateway\n\n## Order Fulfilment Inputs and Outputs\n\nInputs (these become the workflow input fields)\norder_id — identifier of the placed order to fulfil\nauthorization_id — identifier of the payment authorisation to capture\n\nOutputs\nshipment_id — identifier of the dispatched shipment\npayment_id — identifier of the captured payment\nfulfilment_status — shipped or cancelled\n\n## Order Fulfilment Process\n\nThe Warehouse Service picks the items for order_id and returns a\npick_list_id.\nThe Warehouse Service packs the shipment for order_id and returns a\npackage_id.\nThe Carrier Service dispatches the shipment for package_id and returns a\nshipment_id.\nIf dispatch is rejected by the carrier, the workflow raises\nCarrierRejected; if dispatch is accepted, the workflow continues.\nThe workflow waits for carrier pickup confirmation — a carrier.picked_up\nsignal sent by the Carrier Service — for up to the pickup-confirmation deadline.\nThe Payment Gateway captures payment for authorization_id and returns a\npayment_id.\n\n## Order Fulfilment Business Rules\n\nBR-1: An order may only be fulfilled when it is in the placed state.\nBR-2: The shipment must be packed before it is dispatched.\nBR-3: Payment is captured only after the carrier confirms pickup.\n\n## Order Fulfilment Timers and SLAs\n\nDispatch the shipment must complete within 60 seconds.\nCarrier pickup confirmation must arrive within 12 hours; otherwise the\nfulfilment is cancelled.\n\n## Order Fulfilment API Interfaces\n\n| System            | Method | Endpoint / Action        | Purpose                                    | |-------------------|--------|--------------------------|--------------------------------------------| | Warehouse Service | POST   | /warehouse/pick        | Pick the items (order_id)                | | Warehouse Service | POST   | /warehouse/pack        | Pack the shipment (order_id)             | | Carrier Service   | POST   | /carrier/dispatch      | Dispatch the shipment (package_id)       | | Payment Gateway   | POST   | /payments/capture      | Capture payment (authorization_id)       |\n\n## Order Fulfilment Exceptions and Error Handling\n\nCarrierRejected: the carrier rejects the dispatch → roll back the packing\nand end the workflow with status cancelled.\nPickupTimeout: carrier pickup confirmation does not arrive within 12 hours →\nroll back the packing and cancel the fulfilment.\n\n## Order Fulfilment Retries\n\nDispatch the shipment: retry up to 3 times with exponential backoff\nstarting at 2 seconds; do not retry on a CarrierRejected error.\nCapture payment: retry up to 5 times with exponential backoff starting\nat 1 second.\n\n## Order Fulfilment Compensation and Rollback\n\nUnpack the shipment compensates Pack the shipment — undo the packing and\nreturn items to stock if fulfilment is rolled back after packing.\n\n---\n\n## Order Return Purpose\n\nThe Order Return workflow processes a customer's return for a shipped order: it authorises the return, receives the returned item back into the warehouse, and refunds the captured payment. If the refund fails after the item is received, the return is escalated to Returns Operations rather than silently dropped.\n\n## Order Return Trigger\n\nThe workflow starts when a customer requests a return and a return.requested request reaches the Returns Service. It requires the order_id produced by Order Placement and the shipment_id produced by Order Fulfilment.\n\n## Order Return Actors\n\nCustomer\nReturns Operations\n\n## Order Return Systems\n\nReturns Service\nWarehouse Service\nPayment Gateway\n\n## Order Return Inputs and Outputs\n\nInputs (these become the workflow input fields)\norder_id — identifier of the order being returned\nshipment_id — identifier of the shipment being returned\nreason_code — the customer's stated reason for the return\n\nOutputs\nreturn_id — identifier of the processed return\nrefund_id — identifier of the issued refund\nreturn_status — refunded or rejected\n\n## Order Return Process\n\nThe Returns Service authorises the return using order_id and\nreason_code and returns whether the return is eligible.\nIf the return is not eligible, the workflow raises ReturnNotEligible and\nrejects the return; if the return is eligible, the workflow continues.\nThe Warehouse Service receives the returned item for shipment_id and\nreturns a return_id.\nThe Payment Gateway issues the refund for order_id and returns a\nrefund_id.\n\n## Order Return Business Rules\n\nBR-1: A return may only be authorised for an order in the shipped state.\nBR-2: The returned item must be received before the refund is issued.\nBR-3: A refund may not exceed the captured payment amount.\n\n## Order Return Timers and SLAs\n\nAuthorise the return must complete within 10 seconds.\nIssue the refund must complete within 30 seconds.\n\n## Order Return API Interfaces\n\n| System            | Method | Endpoint / Action         | Purpose                                        | |-------------------|--------|---------------------------|------------------------------------------------| | Returns Service   | POST   | /returns/authorize      | Authorise the return (order_id)              | | Warehouse Service | POST   | /warehouse/receive      | Receive the returned item (shipment_id)      | | Payment Gateway   | POST   | /payments/refund        | Issue the refund (order_id)                  |\n\n## Order Return Exceptions and Error Handling\n\nReturnNotEligible: the order is not in a returnable state → reject the return\nwith reason RETURN_NOT_ELIGIBLE and end the workflow.\nRefundFailed: the Payment Gateway cannot issue the refund → escalate the\nreturn to Returns Operations for manual handling.\n\n## Order Return Retries\n\nReceive the returned item: retry up to 3 times with exponential backoff\nstarting at 2 seconds.\nIssue the refund: retry up to 5 times with exponential backoff starting\nat 1 second.",
+  "segments": [
+    {
+      "id": "w1",
+      "slug": "order-placement",
+      "name": "Order Placement",
+      "purpose": "Turns a submitted shopping cart into a confirmed order by validating the cart, reserving inventory, authorising payment, and creating the order record",
+      "section_titles": [
+        "Order Placement Purpose",
+        "Order Placement Trigger",
+        "Order Placement Process",
+        "Overview"
+      ],
+      "text": "## Overview\n\nThe Order Platform team operates three related but independently-deployable workflows. They run in sequence across an order's life but are separate Temporal workflows, each triggered by its own event and each owning its own compensation:\n\nOrder Placement accepts a shopper's cart, validates it, reserves\ninventory, authorises payment, and creates the order. It emits order_id.\nOrder Fulfilment picks, packs, and ships a placed order, then captures the\npreviously-authorised payment. It consumes order_id from Order Placement and emits shipment_id.\nOrder Return authorises and processes a return for a shipped order and\nrefunds the customer. It consumes order_id from Order Placement and shipment_id from Order Fulfilment.\n\nCross-workflow dependencies (output -> input):\n\nOrder Placement order_id -> Order Fulfilment order_id\nOrder Placement order_id -> Order Return order_id\nOrder Fulfilment shipment_id -> Order Return shipment_id\n\n---\n## Order Placement Purpose\n\nThe Order Placement workflow turns a submitted shopping cart into a confirmed order: it validates the cart, reserves inventory, authorises payment, and creates the order record. If payment authorisation fails after inventory is reserved, the reservation is released so no stock is held for an order that will not be placed.\n## Order Placement Trigger\n\nThe workflow starts when a shopper submits a cart for checkout and a checkout.submitted request reaches the Order Service.\n## Order Placement Process\n\nThe Order Service validates the cart using cart_id and returns whether\nthe cart is checkout-eligible.\nIf the cart is not eligible, the workflow raises CartNotEligible and\nrejects the checkout; if the cart is eligible, the workflow continues.\nThe Inventory Service reserves inventory for cart_id and returns a\nreservation_id.\nThe Payment Gateway authorises payment for customer_id for amount in\ncurrency and returns an authorization_id.\nIf the authorisation is declined, the workflow raises PaymentDeclined; if\nthe authorisation succeeds, the workflow continues.\nThe Order Service creates the order for cart_id and returns an\norder_id.",
+      "sliced": true
+    },
+    {
+      "id": "w2",
+      "slug": "order-fulfilment",
+      "name": "Order Fulfilment",
+      "purpose": "Ships a placed order by picking, packing, and dispatching items, then captures the previously-authorised payment",
+      "section_titles": [
+        "Order Fulfilment Purpose",
+        "Order Fulfilment Trigger",
+        "Order Fulfilment Process",
+        "Overview"
+      ],
+      "text": "## Overview\n\nThe Order Platform team operates three related but independently-deployable workflows. They run in sequence across an order's life but are separate Temporal workflows, each triggered by its own event and each owning its own compensation:\n\nOrder Placement accepts a shopper's cart, validates it, reserves\ninventory, authorises payment, and creates the order. It emits order_id.\nOrder Fulfilment picks, packs, and ships a placed order, then captures the\npreviously-authorised payment. It consumes order_id from Order Placement and emits shipment_id.\nOrder Return authorises and processes a return for a shipped order and\nrefunds the customer. It consumes order_id from Order Placement and shipment_id from Order Fulfilment.\n\nCross-workflow dependencies (output -> input):\n\nOrder Placement order_id -> Order Fulfilment order_id\nOrder Placement order_id -> Order Return order_id\nOrder Fulfilment shipment_id -> Order Return shipment_id\n\n---\n## Order Fulfilment Purpose\n\nThe Order Fulfilment workflow ships a placed order and then captures its payment: it picks the items, packs the shipment, dispatches it, and captures the previously-authorised payment. If dispatch fails after packing, the pack step is rolled back so a packed-but-undispatched shipment is not left stranded.\n## Order Fulfilment Trigger\n\nThe workflow starts when an order is placed and an order.fulfil request reaches the Fulfilment Service. It requires the order_id produced by Order Placement.\n## Order Fulfilment Process\n\nThe Warehouse Service picks the items for order_id and returns a\npick_list_id.\nThe Warehouse Service packs the shipment for order_id and returns a\npackage_id.\nThe Carrier Service dispatches the shipment for package_id and returns a\nshipment_id.\nIf dispatch is rejected by the carrier, the workflow raises\nCarrierRejected; if dispatch is accepted, the workflow continues.\nThe workflow waits for carrier pickup confirmation — a carrier.picked_up\nsignal sent by the Carrier Service — for up to the pickup-confirmation deadline.\nThe Payment Gateway captures payment for authorization_id and returns a\npayment_id.",
+      "sliced": true
+    },
+    {
+      "id": "w3",
+      "slug": "order-return",
+      "name": "Order Return",
+      "purpose": "Processes a customer's return for a shipped order by authorising the return, receiving the item back, and refunding the captured payment",
+      "section_titles": [
+        "Order Return Purpose",
+        "Order Return Trigger",
+        "Order Return Process",
+        "Overview"
+      ],
+      "text": "## Overview\n\nThe Order Platform team operates three related but independently-deployable workflows. They run in sequence across an order's life but are separate Temporal workflows, each triggered by its own event and each owning its own compensation:\n\nOrder Placement accepts a shopper's cart, validates it, reserves\ninventory, authorises payment, and creates the order. It emits order_id.\nOrder Fulfilment picks, packs, and ships a placed order, then captures the\npreviously-authorised payment. It consumes order_id from Order Placement and emits shipment_id.\nOrder Return authorises and processes a return for a shipped order and\nrefunds the customer. It consumes order_id from Order Placement and shipment_id from Order Fulfilment.\n\nCross-workflow dependencies (output -> input):\n\nOrder Placement order_id -> Order Fulfilment order_id\nOrder Placement order_id -> Order Return order_id\nOrder Fulfilment shipment_id -> Order Return shipment_id\n\n---\n## Order Return Purpose\n\nThe Order Return workflow processes a customer's return for a shipped order: it authorises the return, receives the returned item back into the warehouse, and refunds the captured payment. If the refund fails after the item is received, the return is escalated to Returns Operations rather than silently dropped.\n## Order Return Trigger\n\nThe workflow starts when a customer requests a return and a return.requested request reaches the Returns Service. It requires the order_id produced by Order Placement and the shipment_id produced by Order Fulfilment.\n## Order Return Process\n\nThe Returns Service authorises the return using order_id and\nreason_code and returns whether the return is eligible.\nIf the return is not eligible, the workflow raises ReturnNotEligible and\nrejects the return; if the return is eligible, the workflow continues.\nThe Warehouse Service receives the returned item for shipment_id and\nreturns a return_id.\nThe Payment Gateway issues the refund for order_id and returns a\nrefund_id.",
+      "sliced": true
+    }
+  ],
+  "specs": [
+    {
+      "slug": "order-placement",
+      "metadata": {
+        "name": "Order Placement Workflow",
+        "description": "The Order Placement workflow turns a submitted shopping cart into a confirmed order by validating the cart, reserving inventory, authorising payment, and creating the order record.",
+        "purpose": "The Order Placement workflow turns a submitted shopping cart into a confirmed order by validating the cart, reserving inventory, authorising payment, and creating the order record.",
+        "actors": [
+          "Shopper"
+        ],
+        "systems": [
+          "Order Service",
+          "Inventory Service",
+          "Payment Gateway"
+        ],
+        "trigger_events": [
+          "checkout.submitted request received by Order Service"
+        ],
+        "start_states": [
+          "Cart Submitted"
+        ],
+        "end_states": [
+          "Order Created (order_id emitted)",
+          "CartNotEligible",
+          "PaymentDeclined",
+          "Payment Authorised"
+        ],
+        "version": "0.1.0",
+        "domain": null,
+        "owner": null,
+        "source_format": null,
+        "tags": [],
+        "extra": {
+          "self_reported_confidence": "0.900"
+        },
+        "created_at": null
+      },
+      "facts": {
+        "facts": [
+          {
+            "id": "input-1",
+            "statement": "cart_id",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "input-2",
+            "statement": "customer_id",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "input-3",
+            "statement": "amount",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "input-4",
+            "statement": "currency",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-1",
+            "statement": "order_id",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-1",
+            "statement": "Validate Cart",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-2",
+            "statement": "Reserve Inventory",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-3",
+            "statement": "Authorise Payment",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-4",
+            "statement": "Create Order",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-1",
+            "statement": "Is Cart Eligible?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-2",
+            "statement": "Is Payment Authorised?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-1",
+            "statement": "If payment authorisation fails after inventory reservation, release reservation",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-1",
+            "statement": "checkout.submitted",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-2",
+            "statement": "order_id",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-1",
+            "statement": "Order Service",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-2",
+            "statement": "Inventory Service",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-3",
+            "statement": "Payment Gateway",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-1",
+            "statement": "Order Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-2",
+            "statement": "Inventory Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-3",
+            "statement": "Payment Gateway",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-1",
+            "statement": "CartNotEligible",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-2",
+            "statement": "PaymentDeclined",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "compensation-1",
+            "statement": "Release Inventory Reservation compensates Reserve Inventory",
+            "category": "compensation",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          }
+        ],
+        "structure": {
+          "activities": [
+            {
+              "id": "a1",
+              "name": "Validate Cart",
+              "parallel_group": null
+            },
+            {
+              "id": "a2",
+              "name": "Reserve Inventory",
+              "parallel_group": null
+            },
+            {
+              "id": "a3",
+              "name": "Authorise Payment",
+              "parallel_group": null
+            },
+            {
+              "id": "a4",
+              "name": "Create Order",
+              "parallel_group": null
+            }
+          ],
+          "decisions": [
+            {
+              "id": "d1",
+              "question": "Is Cart Eligible?",
+              "after": "a1",
+              "yes_target": "a2",
+              "no_target": "rejected"
+            },
+            {
+              "id": "d2",
+              "question": "Is Payment Authorised?",
+              "after": "a3",
+              "yes_target": "a4",
+              "no_target": "e1"
+            }
+          ],
+          "exceptions": [
+            {
+              "id": "e1",
+              "reason": "CartNotEligible",
+              "raised_by": null
+            },
+            {
+              "id": "e2",
+              "reason": "PaymentDeclined",
+              "raised_by": "a3"
+            }
+          ],
+          "compensations": [
+            {
+              "id": "c1",
+              "name": "Release Inventory Reservation",
+              "compensates": "a2"
+            }
+          ],
+          "events": [
+            {
+              "id": "ev1",
+              "name": "checkout.submitted",
+              "emitted_by": "start",
+              "kind": "trigger"
+            },
+            {
+              "id": "ev2",
+              "name": "order_id",
+              "emitted_by": "a4",
+              "kind": "output_emit"
+            }
+          ],
+          "triggers": [],
+          "transitions": []
+        }
+      },
+      "assumptions": [],
+      "ambiguities": [],
+      "open_questions": [
+        {
+          "text": "What deadline bounds each wait (e.g. 24 hours)?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R6-bounded-waits"
+        },
+        {
+          "text": "Which activities should retry, how many times, and with what backoff?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R8-retries"
+        }
+      ],
+      "suggested_edits": [],
+      "provenance": {}
+    },
+    {
+      "slug": "order-fulfilment",
+      "metadata": {
+        "name": "Order Fulfilment",
+        "description": "The Order Fulfilment workflow ships a placed order and captures its payment. It picks, packs, dispatches the shipment, and handles payment capture or rollback if dispatch fails.",
+        "purpose": "The Order Fulfilment workflow ships a placed order and captures its payment. It picks, packs, dispatches the shipment, and handles payment capture or rollback if dispatch fails.",
+        "actors": [
+          "Carrier"
+        ],
+        "systems": [
+          "Warehouse Service",
+          "Carrier Service",
+          "Payment Gateway",
+          "Fulfilment Service"
+        ],
+        "trigger_events": [
+          "order.fulfil request to Fulfilment Service"
+        ],
+        "start_states": [
+          "Order Placed"
+        ],
+        "end_states": [
+          "Shipment Dispatched",
+          "Payment Captured",
+          "Dispatch Failed"
+        ],
+        "version": "0.1.0",
+        "domain": null,
+        "owner": null,
+        "source_format": null,
+        "tags": [],
+        "extra": {
+          "self_reported_confidence": "0.900"
+        },
+        "created_at": null
+      },
+      "facts": {
+        "facts": [
+          {
+            "id": "input-1",
+            "statement": "order_id (from Order Placement)",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-1",
+            "statement": "shipment_id",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-1",
+            "statement": "Pick items",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-2",
+            "statement": "Pack shipment",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-3",
+            "statement": "Dispatch shipment",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-4",
+            "statement": "Capture payment",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-1",
+            "statement": "Dispatch outcome",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-1",
+            "statement": "If dispatch is rejected by the carrier, raise CarrierRejected",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-2",
+            "statement": "Wait for carrier pickup confirmation (carrier.picked_up signal) for up to the pickup-confirmation deadline",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-1",
+            "statement": "order.fulfil request",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-2",
+            "statement": "carrier.picked_up",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-3",
+            "statement": "shipment_id",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-1",
+            "statement": "Warehouse Service (pick, pack)",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-2",
+            "statement": "Carrier Service (dispatch)",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-3",
+            "statement": "Payment Gateway (capture payment)",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-1",
+            "statement": "Fulfilment Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-2",
+            "statement": "Warehouse Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-3",
+            "statement": "Carrier Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-4",
+            "statement": "Payment Gateway",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-1",
+            "statement": "CarrierRejected",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "timer-1",
+            "statement": "pickup-confirmation deadline",
+            "category": "timer",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "compensation-1",
+            "statement": "Rollback pack compensates Pack shipment",
+            "category": "compensation",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          }
+        ],
+        "structure": {
+          "activities": [
+            {
+              "id": "a1",
+              "name": "Pick items",
+              "parallel_group": null
+            },
+            {
+              "id": "a2",
+              "name": "Pack shipment",
+              "parallel_group": null
+            },
+            {
+              "id": "a3",
+              "name": "Dispatch shipment",
+              "parallel_group": null
+            },
+            {
+              "id": "a4",
+              "name": "Capture payment",
+              "parallel_group": null
+            }
+          ],
+          "decisions": [
+            {
+              "id": "d1",
+              "question": "Dispatch outcome",
+              "after": "a3",
+              "yes_target": "a4",
+              "no_target": "e1"
+            }
+          ],
+          "exceptions": [
+            {
+              "id": "e1",
+              "reason": "CarrierRejected",
+              "raised_by": "a3"
+            }
+          ],
+          "compensations": [
+            {
+              "id": "c1",
+              "name": "Rollback pack",
+              "compensates": "a2"
+            }
+          ],
+          "events": [
+            {
+              "id": "ev1",
+              "name": "order.fulfil request",
+              "emitted_by": "start",
+              "kind": "trigger"
+            },
+            {
+              "id": "ev2",
+              "name": "carrier.picked_up",
+              "emitted_by": "a3",
+              "kind": "signal_wait"
+            },
+            {
+              "id": "ev3",
+              "name": "shipment_id",
+              "emitted_by": "a3",
+              "kind": "output_emit"
+            }
+          ],
+          "triggers": [],
+          "transitions": []
+        }
+      },
+      "assumptions": [],
+      "ambiguities": [],
+      "open_questions": [
+        {
+          "text": "Which activities should retry, how many times, and with what backoff?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R8-retries"
+        }
+      ],
+      "suggested_edits": [],
+      "provenance": {}
+    },
+    {
+      "slug": "order-return",
+      "metadata": {
+        "name": "Order Return Workflow",
+        "description": "The Order Return workflow processes a customer's return for a shipped order, authorising the return, receiving the item back into the warehouse, and refunding the customer.",
+        "purpose": "The Order Return workflow processes a customer's return for a shipped order, authorising the return, receiving the item back into the warehouse, and refunding the customer.",
+        "actors": [
+          "Customer",
+          "Returns Operations"
+        ],
+        "systems": [
+          "Returns Service",
+          "Warehouse Service",
+          "Payment Gateway"
+        ],
+        "trigger_events": [
+          "customer requests a return and a return.requested request reaches the Returns Service",
+          "return.requested request reaches the Returns Service"
+        ],
+        "start_states": [
+          "Return Requested"
+        ],
+        "end_states": [
+          "ReturnNotEligible",
+          "Refund Issued",
+          "Return Escalated"
+        ],
+        "version": "0.1.0",
+        "domain": null,
+        "owner": null,
+        "source_format": null,
+        "tags": [],
+        "extra": {
+          "self_reported_confidence": "0.800"
+        },
+        "created_at": null
+      },
+      "facts": {
+        "facts": [
+          {
+            "id": "input-1",
+            "statement": "order_id (from Order Placement)",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "input-2",
+            "statement": "shipment_id (from Order Fulfilment)",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "input-3",
+            "statement": "reason_code",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-1",
+            "statement": "return_id",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-2",
+            "statement": "refund_id",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-1",
+            "statement": "Authorise Return",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-2",
+            "statement": "Receive Returned Item",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-3",
+            "statement": "Issue Refund",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-1",
+            "statement": "Is Return Eligible?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-1",
+            "statement": "If return is not eligible, raise ReturnNotEligible and reject",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-1",
+            "statement": "return.requested",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-2",
+            "statement": "return_id",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-3",
+            "statement": "refund_id",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-1",
+            "statement": "Returns Service (authorise return)",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-2",
+            "statement": "Warehouse Service (receive returned item)",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-3",
+            "statement": "Payment Gateway (issue refund)",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-1",
+            "statement": "Returns Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-2",
+            "statement": "Warehouse Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-3",
+            "statement": "Payment Gateway",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-1",
+            "statement": "ReturnNotEligible",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          }
+        ],
+        "structure": {
+          "activities": [
+            {
+              "id": "a1",
+              "name": "Authorise Return",
+              "parallel_group": null
+            },
+            {
+              "id": "a2",
+              "name": "Receive Returned Item",
+              "parallel_group": null
+            },
+            {
+              "id": "a3",
+              "name": "Issue Refund",
+              "parallel_group": null
+            }
+          ],
+          "decisions": [
+            {
+              "id": "d1",
+              "question": "Is Return Eligible?",
+              "after": "a1",
+              "yes_target": "a2",
+              "no_target": "e1"
+            }
+          ],
+          "exceptions": [
+            {
+              "id": "e1",
+              "reason": "ReturnNotEligible",
+              "raised_by": null
+            }
+          ],
+          "compensations": [],
+          "events": [
+            {
+              "id": "ev1",
+              "name": "return.requested",
+              "emitted_by": "start",
+              "kind": "trigger"
+            },
+            {
+              "id": "ev2",
+              "name": "return_id",
+              "emitted_by": "a2",
+              "kind": "output_emit"
+            },
+            {
+              "id": "ev3",
+              "name": "refund_id",
+              "emitted_by": "a3",
+              "kind": "output_emit"
+            }
+          ],
+          "triggers": [],
+          "transitions": []
+        }
+      },
+      "assumptions": [],
+      "ambiguities": [],
+      "open_questions": [
+        {
+          "text": "What deadline bounds each wait (e.g. 24 hours)?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R6-bounded-waits"
+        },
+        {
+          "text": "Which activities should retry, how many times, and with what backoff?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R8-retries"
+        }
+      ],
+      "suggested_edits": [],
+      "provenance": {}
+    }
+  ],
+  "cross_references": [
+    {
+      "source_workflow": "order-placement",
+      "output_field": "order_id",
+      "output_type": "str",
+      "target_workflow": "order-fulfilment",
+      "input_field": "order_id",
+      "input_type": "str",
+      "description": "Order Fulfilment consumes the order_id produced by Order Placement",
+      "user_confirmed": false
+    },
+    {
+      "source_workflow": "order-placement",
+      "output_field": "order_id",
+      "output_type": "str",
+      "target_workflow": "order-return",
+      "input_field": "order_id",
+      "input_type": "str",
+      "description": "Order Return consumes the order_id produced by Order Placement",
+      "user_confirmed": false
+    },
+    {
+      "source_workflow": "order-fulfilment",
+      "output_field": "shipment_id",
+      "output_type": "str",
+      "target_workflow": "order-return",
+      "input_field": "shipment_id",
+      "input_type": "str",
+      "description": "Order Return consumes the shipment_id produced by Order Fulfilment",
+      "user_confirmed": false
+    }
+  ],
+  "triggers": [
+    {
+      "source_workflow": "order-placement",
+      "target_workflow": "order-fulfilment",
+      "mode": "fire_and_forget",
+      "condition": "when an order is placed",
+      "input_map": [
+        {
+          "target_input": "order_id",
+          "source": "step_output",
+          "source_ref": "order_id",
+          "type": "str"
+        }
+      ],
+      "result_binding": null,
+      "user_confirmed": false
+    },
+    {
+      "source_workflow": "order-fulfilment",
+      "target_workflow": "order-return",
+      "mode": "fire_and_forget",
+      "condition": "when a shipment is dispatched",
+      "input_map": [
+        {
+          "target_input": "shipment_id",
+          "source": "step_output",
+          "source_ref": "shipment_id",
+          "type": "str"
+        }
+      ],
+      "result_binding": null,
+      "user_confirmed": false
+    },
+    {
+      "source_workflow": "order-placement",
+      "target_workflow": "order-return",
+      "mode": "fire_and_forget",
+      "condition": null,
+      "input_map": [
+        {
+          "target_input": "order_id",
+          "source": "step_output",
+          "source_ref": "order_id",
+          "type": "str"
+        }
+      ],
+      "result_binding": null,
+      "user_confirmed": false
+    }
+  ],
+  "spec_approval_status": "pending",
+  "workflow_ids": {},
+  "warnings": [],
+  "validation_findings": {},
+  "stage": "spec_drafted",
+  "created_at": "2026-07-11T00:13:29.981763Z",
+  "updated_at": "2026-07-11T00:18:29.060684Z"
+}

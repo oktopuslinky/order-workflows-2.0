@@ -1,0 +1,1068 @@
+{
+  "workflow_id": "4425b1bb-d402-4d1b-abe8-131404939e1c",
+  "document_text": "# Order Return Workflow\n\n<!--\n  workflow-compiler specification (v1) — slug: order-return\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nProcesses a customer's return for a shipped order, including authorisation, receiving the item, and refunding the customer.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Customer, Returns Operations\n- systems: Returns Service, Warehouse Service, Payment Gateway\n- triggers: customer requests a return (return.requested)\n- start states: shipped\n- end states: return_status: refunded, return_status: rejected\n- tags: \n\n## Inputs\n- order_id\n- shipment_id\n- reason_code\n\n## Outputs\n- return_id\n- refund_id\n- return_status\n\n## Business Rules\n- BR-1: Return authorised only for shipped orders\n- BR-2: Item received before refund\n- BR-3: Refund ≤ captured payment\n\n## API Interfaces\n- Returns Service: POST /returns/authorize\n- Warehouse Service: POST /warehouse/receive\n- Payment Gateway: POST /payments/refund\n\n## Systems Involved\n- Returns Service\n- Warehouse Service\n- Payment Gateway\n\n## Timers and SLAs\n- Authorise return: 10 seconds\n- Issue refund: 30 seconds\n\n## Retries\n- Receive returned item: up to 3 times with exponential backoff (2s start)\n- Issue refund: up to 5 times with exponential backoff (1s start)\n\n## Activities\n- [a1] Authorise return\n- [a2] Receive returned item\n- [a3] Issue refund\n\n## Decisions\n- [d1] Is return eligible? — after: a1; yes: a2; no: e1\n\n## Exceptions\n- [e1] ReturnNotEligible\n- [e2] RefundFailed — raised by: a3\n\n## Compensations\n- [c1] Cancel Return Process — compensates: a3\n\n## Events\n- [v1] [ev1] return.requested — emitted by: start\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n<!-- none -->\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n<!-- none -->\n\n## Cross-Workflow Dependencies\n- [x] uses output `order_id` of `order-placement` as input `order_id` — Order Return consumes the order_id produced by Order Placement\n- [x] uses output `shipment_id` of `order-fulfilment` as input `shipment_id` — Order Return consumes the shipment_id produced by Order Fulfilment",
+  "project_id": "b2a1637b-9006-40a9-96e7-e2fedd58df02",
+  "workflow_metadata": {
+    "name": "Order Return Workflow",
+    "description": "Processes a customer's return for a shipped order, including authorisation, receiving the item, and refunding the customer.",
+    "purpose": "Processes a customer's return for a shipped order, including authorisation, receiving the item, and refunding the customer.",
+    "actors": [
+      "Customer",
+      "Returns Operations"
+    ],
+    "systems": [
+      "Returns Service",
+      "Warehouse Service",
+      "Payment Gateway"
+    ],
+    "trigger_events": [
+      "customer requests a return (return.requested)"
+    ],
+    "start_states": [
+      "shipped"
+    ],
+    "end_states": [
+      "return_status: refunded",
+      "return_status: rejected"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "order_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "shipment_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-3",
+        "statement": "reason_code",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "return_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "refund_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-3",
+        "statement": "return_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Authorise return",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Receive returned item",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Issue refund",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Is return eligible?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-1: Return authorised only for shipped orders",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-2: Item received before refund",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-3: Refund ≤ captured payment",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "[ev1] return.requested",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "Returns Service: POST /returns/authorize",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "Warehouse Service: POST /warehouse/receive",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-3",
+        "statement": "Payment Gateway: POST /payments/refund",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Returns Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Warehouse Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Payment Gateway",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "ReturnNotEligible",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-2",
+        "statement": "RefundFailed",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-1",
+        "statement": "Authorise return: 10 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-2",
+        "statement": "Issue refund: 30 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Receive returned item: up to 3 times with exponential backoff (2s start)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "Issue refund: up to 5 times with exponential backoff (1s start)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Cancel Return Process compensates Issue refund",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Authorise return",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Receive returned item",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Issue refund",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Is return eligible?",
+          "after": "a1",
+          "yes_target": "a2",
+          "no_target": "e1"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "ReturnNotEligible",
+          "raised_by": null
+        },
+        {
+          "id": "e2",
+          "reason": "RefundFailed",
+          "raised_by": "a3"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Cancel Return Process",
+          "compensates": "a3"
+        }
+      ],
+      "events": [
+        {
+          "id": "v1",
+          "name": "[ev1] return.requested",
+          "emitted_by": "start"
+        }
+      ],
+      "transitions": []
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): customer requests a return (return.requested).",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "3 input(s): order_id, shipment_id, reason_code.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "3 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 decision(s) have both branches.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "Waits are present and at least one timer/deadline was declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "No free-form state transitions.",
+        "question": null,
+        "answer": null
+      }
+    ]
+  },
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Authorise return",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Receive returned item",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Issue refund",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Is return eligible?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "ReturnNotEligible",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "RefundFailed",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Cancel Return Process",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "[ev1] return.requested",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "activity_3",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e7",
+        "source": "activity_3",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e8",
+        "source": "exception_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 1.0: 0 error(s), 0 warning(s).",
+    "issues": [],
+    "score": 1.0,
+    "health_score": 1.0,
+    "confidence": 1.0,
+    "reviewer": "auto-threshold",
+    "reviewed_at": "2026-07-08T17:59:07.256643Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Initiates the workflow, indicating intake of the process.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Represents the workflow's conclusion, implying final downstream effects.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "validate",
+        "rationale": "Involves 'Authorise return', suggesting a check or approval process.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "process",
+        "rationale": "'Receive returned item' implies core operational work.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "process",
+        "rationale": "'Issue refund' involves transactional processing, a core operation.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "'Is return eligible?' is a clear decision gate based on validation.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "validate",
+        "rationale": "Triggers upon validation failure (return not eligible), influencing the process flow.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_2",
+        "phase": "activate",
+        "rationale": "'RefundFailed' triggers a compensatory action, an external effect.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "activate",
+        "rationale": "'Cancel Return Process' is a corrective action with external implications.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "'return.requested' signifies the intake of an event triggering the workflow.",
+        "confidence": 1.0
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "event_1"
+        ],
+        "summary": "2 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "activity_1",
+          "decision_1",
+          "exception_1"
+        ],
+        "summary": "3 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_2",
+          "activity_3"
+        ],
+        "summary": "2 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "exception_2",
+          "compensation_1"
+        ],
+        "summary": "3 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "ReturnProcessingWorkflow",
+    "task_queue": "return-processing-queue",
+    "description": "Manages the return processing workflow from authorisation to refund.",
+    "workflow_inputs": [
+      {
+        "name": "order_id",
+        "type": "str"
+      },
+      {
+        "name": "shipment_id",
+        "type": "str"
+      },
+      {
+        "name": "reason_code",
+        "type": "str"
+      }
+    ],
+    "result_type": "str",
+    "activities": [
+      {
+        "name": "AuthoriseReturn",
+        "source_node_id": "activity_1",
+        "description": "Authorise the return via Returns Service",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          },
+          {
+            "name": "shipment_id",
+            "type": "str"
+          },
+          {
+            "name": "reason_code",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "return_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 10.0,
+        "retry_policy": null
+      },
+      {
+        "name": "ReceiveReturnedItem",
+        "source_node_id": "activity_2",
+        "description": "Receive the returned item via Warehouse Service",
+        "inputs": [],
+        "params": [
+          {
+            "name": "shipment_id",
+            "type": "str"
+          },
+          {
+            "name": "return_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "IssueRefund",
+        "source_node_id": "activity_3",
+        "description": "Issue refund via Payment Gateway",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          },
+          {
+            "name": "return_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "refund_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 5,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      }
+    ],
+    "signals": [
+      {
+        "name": "return_requested",
+        "description": "Signal triggered when return is requested",
+        "payload": []
+      }
+    ],
+    "queries": [
+      {
+        "name": "get_return_status",
+        "description": "Query return status",
+        "returns": "str",
+        "state_field": "return_status"
+      }
+    ],
+    "child_workflows": [],
+    "timers": [],
+    "compensation_activities": [
+      {
+        "name": "CancelReturnProcess",
+        "compensates": "IssueRefund",
+        "source_node_id": "compensation_1",
+        "description": "Compensate by cancelling the return process",
+        "inputs": [],
+        "params": [
+          {
+            "name": "refund_id",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "refund_id",
+            "source": "step_output",
+            "ref": "issue_refund_step"
+          }
+        ],
+        "retry_policy": null
+      }
+    ],
+    "default_retry_policy": null,
+    "plan": [
+      {
+        "id": "S1",
+        "kind": "signal_gate",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": "return_requested",
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "A1",
+        "kind": "activity",
+        "description": null,
+        "ref": "AuthoriseReturn",
+        "bindings": [
+          {
+            "param": "order_id",
+            "source": "workflow_input",
+            "ref": "order_id"
+          },
+          {
+            "param": "shipment_id",
+            "source": "workflow_input",
+            "ref": "shipment_id"
+          },
+          {
+            "param": "reason_code",
+            "source": "workflow_input",
+            "ref": "reason_code"
+          }
+        ],
+        "result_name": "authorisation_result",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "D1",
+        "kind": "branch",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": "authorisation_result.return_id is not null",
+        "lanes": [
+          [
+            {
+              "id": "A2",
+              "kind": "activity",
+              "description": null,
+              "ref": "ReceiveReturnedItem",
+              "bindings": [
+                {
+                  "param": "shipment_id",
+                  "source": "workflow_input",
+                  "ref": "shipment_id"
+                },
+                {
+                  "param": "return_id",
+                  "source": "step_output",
+                  "ref": "A1"
+                }
+              ],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "A3",
+              "kind": "activity",
+              "description": null,
+              "ref": "IssueRefund",
+              "bindings": [
+                {
+                  "param": "order_id",
+                  "source": "workflow_input",
+                  "ref": "order_id"
+                },
+                {
+                  "param": "return_id",
+                  "source": "step_output",
+                  "ref": "A1"
+                }
+              ],
+              "result_name": "refund_result",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "C1",
+              "kind": "activity",
+              "description": null,
+              "ref": "CancelReturnProcess",
+              "bindings": [
+                {
+                  "param": "refund_id",
+                  "source": "step_output",
+                  "ref": "A3"
+                }
+              ],
+              "result_name": null,
+              "signal": null,
+              "condition": "refund_result.refund_id is not null and refund_result.error",
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ],
+          [
+            {
+              "id": "E1",
+              "kind": "signal_gate",
+              "description": null,
+              "ref": null,
+              "bindings": [],
+              "result_name": null,
+              "signal": "return_not_eligible",
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ]
+        ]
+      }
+    ]
+  },
+  "temporal_code": {
+    "target": "python",
+    "package_name": "return_processing_workflow",
+    "files": [
+      {
+        "path": "shared.py",
+        "language": "python",
+        "content": "\"\"\"Shared dataclasses for the ReturnProcessingWorkflow workflow.\n\nTemporal passes a single dataclass argument to workflows and activities so that\ninputs evolve compatibly. Refine the field types to match your real domain types.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom typing import Any\n\n\n@dataclass\nclass WorkflowInput:\n    \"\"\"Input to the ReturnProcessingWorkflow workflow.\"\"\"\n\n    order_id: str = \"\"\n    shipment_id: str = \"\"\n    reason_code: str = \"\"\n\n\n@dataclass\nclass AuthoriseReturnInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n    shipment_id: str = \"\"\n    reason_code: str = \"\"\n\n\n@dataclass\nclass ReceiveReturnedItemInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    shipment_id: str = \"\"\n    return_id: str = \"\"\n\n\n@dataclass\nclass IssueRefundInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n    return_id: str = \"\"\n\n\n@dataclass\nclass CancelReturnProcessInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    refund_id: str = \"\""
+      },
+      {
+        "path": "activities.py",
+        "language": "python",
+        "content": "\"\"\"Activities for the ReturnProcessingWorkflow workflow.\n\nEach activity is a thin, retryable unit of work. Replace the ``NotImplementedError``\nwith real logic; activities may use I/O, SDKs, and blocking calls freely.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom temporalio import activity\n\nfrom shared import (\n    AuthoriseReturnInput,\n    ReceiveReturnedItemInput,\n    IssueRefundInput,\n    CancelReturnProcessInput,\n)\n\n\n@activity.defn(name=\"AuthoriseReturn\")\nasync def authorise_return(arg: AuthoriseReturnInput) -> str:\n    \"\"\"Authorise the return via Returns Service\"\"\"\n    activity.logger.info(\"Running authorise_return\", extra={\"input\": arg})\n    # TODO: implement authorise_return. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"ReceiveReturnedItem\")\nasync def receive_returned_item(arg: ReceiveReturnedItemInput) -> str:\n    \"\"\"Receive the returned item via Warehouse Service\"\"\"\n    activity.logger.info(\"Running receive_returned_item\", extra={\"input\": arg})\n    # TODO: implement receive_returned_item. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"IssueRefund\")\nasync def issue_refund(arg: IssueRefundInput) -> str:\n    \"\"\"Issue refund via Payment Gateway\"\"\"\n    activity.logger.info(\"Running issue_refund\", extra={\"input\": arg})\n    # TODO: implement issue_refund. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"CancelReturnProcess\")\nasync def cancel_return_process(arg: CancelReturnProcessInput) -> str:\n    \"\"\"Compensate by cancelling the return process\"\"\"\n    activity.logger.info(\"Running cancel_return_process\", extra={\"input\": arg})\n    # TODO: implement cancel_return_process. Returns a placeholder so the bundle runs as-is.\n    return \"\""
+      },
+      {
+        "path": "workflow.py",
+        "language": "python",
+        "content": "\"\"\"The ReturnProcessingWorkflow Temporal workflow.\n\nWorkflow code must be deterministic: do all I/O inside activities, and use\n``workflow.*`` helpers (``execute_activity``, ``execute_child_workflow``,\n``sleep``, signals, queries) rather than calling the outside world directly.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Callable\nfrom datetime import timedelta\nfrom typing import Any\n\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\n\nwith workflow.unsafe.imports_passed_through():\n    from activities import (\n        authorise_return,\n        receive_returned_item,\n        issue_refund,\n        cancel_return_process,\n    )\n    from shared import (\n        WorkflowInput,\n        AuthoriseReturnInput,\n        ReceiveReturnedItemInput,\n        IssueRefundInput,\n        CancelReturnProcessInput,\n    )\n\n\n\n@workflow.defn\nclass ReturnProcessingWorkflow:\n    \"\"\"Manages the return processing workflow from authorisation to refund.\"\"\"\n\n    def __init__(self) -> None:\n        self._status: str = \"pending\"\n        self._return_requested_received: bool = False\n\n    @workflow.run\n    async def run(self, arg: WorkflowInput) -> str:\n        self._status = \"running\"\n        compensations: list[tuple[Callable[..., Any], Any]] = []\n        try:\n            workflow.logger.info(\"Waiting for signal: return_requested\")\n            # TODO: pass timeout= to wait_condition so a signal that never arrives can't block the workflow forever.\n            await workflow.wait_condition(lambda: self._return_requested_received)\n            workflow.logger.info(\"Running step: AuthoriseReturn\")\n            authorisation_result = await workflow.execute_activity(\n                authorise_return,\n                AuthoriseReturnInput(order_id=arg.order_id, shipment_id=arg.shipment_id, reason_code=arg.reason_code),\n                start_to_close_timeout=timedelta(seconds=10),\n            )\n            should_authorisation_result_return_id_is_not_null = True  # TODO: set from a real condition: authorisation_result.return_id is not null\n            if should_authorisation_result_return_id_is_not_null:\n                workflow.logger.info(\"Running step: ReceiveReturnedItem\")\n                a2_result = await workflow.execute_activity(\n                    receive_returned_item,\n                    ReceiveReturnedItemInput(shipment_id=arg.shipment_id, return_id=authorisation_result),\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2, maximum_attempts=3),\n                )\n                workflow.logger.info(\"Running step: IssueRefund\")\n                refund_result = await workflow.execute_activity(\n                    issue_refund,\n                    IssueRefundInput(order_id=arg.order_id, return_id=authorisation_result),\n                    start_to_close_timeout=timedelta(seconds=30),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=5),\n                )\n                compensations.append((cancel_return_process, CancelReturnProcessInput()))\n                workflow.logger.info(\"Running step: CancelReturnProcess\")\n                c1_result = await workflow.execute_activity(\n                    cancel_return_process,\n                    CancelReturnProcessInput(refund_id=refund_result),\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n            else:\n                await workflow.wait_condition(lambda: True)  # TODO: real condition\n        except Exception:\n            for _comp_fn, _comp_arg in reversed(compensations):\n                await workflow.execute_activity(\n                    _comp_fn,\n                    _comp_arg,\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n            self._status = \"compensated\"\n            raise\n        self._status = \"completed\"\n        return self._status\n\n    @workflow.signal\n    def return_requested(self) -> None:\n        \"\"\"Handle the 'return_requested' signal.\"\"\"\n        self._return_requested_received = True\n\n    @workflow.query\n    def get_return_status(self) -> str:\n        \"\"\"Query return status\"\"\"\n        return self._status"
+      },
+      {
+        "path": "worker.py",
+        "language": "python",
+        "content": "\"\"\"Worker process for the ReturnProcessingWorkflow workflow.\n\nStart a local Temporal dev server in one terminal::\n\n    temporal server start-dev\n\nThen, from inside this package directory, run the worker::\n\n    python worker.py\n\nKeep it running, then start a workflow with ``python starter.py``.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\n\nfrom temporalio import workflow\nfrom temporalio.client import Client\nfrom temporalio.worker import Worker\n\nwith workflow.unsafe.imports_passed_through():\n    from workflow import ReturnProcessingWorkflow\n    from activities import (\n        authorise_return,\n        receive_returned_item,\n        issue_refund,\n        cancel_return_process,\n    )\n\nTASK_QUEUE = \"return-processing-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and run the worker until cancelled.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n    worker = Worker(\n        client,\n        task_queue=TASK_QUEUE,\n        workflows=[ReturnProcessingWorkflow],\n        activities=[authorise_return, receive_returned_item, issue_refund, cancel_return_process],\n    )\n    print(f\"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.\")\n    await worker.run()\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "starter.py",
+        "language": "python",
+        "content": "\"\"\"Start a ReturnProcessingWorkflow workflow execution.\n\nStart the Temporal dev server and the worker first::\n\n    temporal server start-dev      # terminal 1\n    python worker.py               # terminal 2\n\nThen, from inside this package directory::\n\n    python starter.py              # terminal 3\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport uuid\n\nfrom temporalio.client import Client\n\nfrom workflow import ReturnProcessingWorkflow\nfrom shared import WorkflowInput\n\nTASK_QUEUE = \"return-processing-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and start a single workflow execution.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n\n    handle = await client.start_workflow(\n        ReturnProcessingWorkflow.run,\n        WorkflowInput(),  # TODO: populate the workflow input fields.\n        id=f\"return_processing_workflow-{uuid.uuid4()}\",\n        task_queue=TASK_QUEUE,\n    )\n    print(f\"Started workflow {handle.id}\")\n\n    # NOTE: workflows that pause on a signal gate block here until signalled\n    # (e.g. via `temporal workflow signal` or a client `handle.signal(...)`).\n    result = await handle.result()\n    print(\"Workflow result:\", result)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "README.md",
+        "language": "markdown",
+        "content": "# ReturnProcessingWorkflow (generated Temporal workflow)\n\nManages the return processing workflow from authorisation to refund.\n\nThis package was generated **deterministically** from a reviewed\n`TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,\nqueries, timers, child workflows, retry policies, and saga compensation are\nwired up, but each activity body raises `NotImplementedError` for you to fill in.\n\nThe files use **flat, absolute imports** (`from activities import ...`), matching\nthe layout in the Temporal Python docs, so each script is run directly from\ninside this directory — no package installation or `PYTHONPATH` needed.\n\n## Files\n\n| File | Purpose |\n|------|---------|\n| `shared.py` | Dataclasses for workflow / activity inputs |\n| `activities.py` | `@activity.defn` units of work (implement these) |\n| `workflow.py` | `@workflow.defn` orchestration: `ReturnProcessingWorkflow` |\n| `worker.py` | Worker registering the workflow + activities on `return-processing-queue` |\n| `starter.py` | Client that starts one workflow execution |\n\n## Run it\n\nInstall the SDK and start a local Temporal server:\n\n```bash\npip install temporalio\ntemporal server start-dev          # terminal 1, leave running\n```\n\nFrom **inside this directory**, run the worker and then the starter:\n\n```bash\npython worker.py                   # terminal 2, leave running\npython starter.py                  # terminal 3\n```\n\nThe worker polls the `return-processing-queue` task queue; the starter submits a single\n`ReturnProcessingWorkflow` execution and prints its result. Open the Web UI at\nhttp://localhost:8233 to watch the execution.\n\n## Next steps\n\n- Implement each activity in `activities.py`.\n- Populate the `WorkflowInput()` fields in `starter.py`.\n- Replace the default `str` input fields in `shared.py` with real types.\n- Review the generated retry policies and timeouts against your SLAs.\n- Send the workflow's signal(s) (return_requested) to release any wait gates."
+      }
+    ]
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Authorise return\"]\n    activity_2[\"Receive returned item\"]\n    activity_3[\"Issue refund\"]\n    decision_1{\"Is return eligible?\"}\n    exception_1([\"ReturnNotEligible\"])\n    exception_2([\"RefundFailed\"])\n    compensation_1[\"Cancel Return Process\"]\n    event_1([\"[ev1] return.requested\"])\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> activity_3\n    activity_3 --> end_node\n    activity_3 -.->|on error| exception_2\n    exception_2 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    exception_1 -->|terminates| end_node\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,event_1 capture;\n    class activity_1,decision_1,exception_1 validate;\n    class activity_2,activity_3 process;\n    class end_node,exception_2,compensation_1 activate;",
+    "title": "Order Return Workflow"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 0.9,
+    "cvpa": 0.945,
+    "temporal": 0.75,
+    "overall": null,
+    "notes": {
+      "cvpa": "10 nodes classified; 10 from model, 0 by fallback.",
+      "temporal": "3 activities, 1 signals, 0 child workflows, 1 compensations.",
+      "temporal_code": "6 files for package 'return_processing_workflow'."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-07-08T17:59:07.252507Z",
+  "updated_at": "2026-07-08T18:02:03.622863Z"
+}

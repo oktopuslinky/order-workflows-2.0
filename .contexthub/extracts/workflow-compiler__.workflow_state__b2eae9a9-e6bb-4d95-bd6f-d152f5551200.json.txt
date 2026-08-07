@@ -1,0 +1,1502 @@
+{
+  "workflow_id": "b2eae9a9-e6bb-4d95-bd6f-d152f5551200",
+  "document_text": "2. Modify Order Workflow Interface Specification\n\n2.1 Document Control\n\nField | Value\nDocument Name | Modify Order Workflow Interface Specification\nDomain | Telecom OMS\nWorkflow Type | Temporal.io workflow\nBusiness Flow | Modify order\nVersion | 3.0\n\n2.2 Purpose\n\nThis document defines the Modify Order interface for existing telecom orders and active services, including input parameters, order types, request/response structures, TMF mappings, Kafka topics, HTTP status codes, and detailed handling of amendments.\n\n2.3 Order Type and Flow Type\n\nField | Meaning | Example\norderType | Internal OMS type | MODIFY\nflowType | Workflow classification | MODIFY_ORDER\naction | Commercial action | CHANGE\nitemAction | TMF-style action | modify\nbusinessReason | Why order exists | upgrade_bandwidth\n\n2.4 Primary Calling Systems\n\nCalling System | Role\nCRM / Care Console | Receive change request\nSelf-Service Portal | Customer change intake\nOMS Temporal Workflow | Orchestration\nOrder Store | Existing order retrieval\nService Inventory | Resource and dependency validation\nProvisioning Platform | Reconfiguration execution\nBilling / Rating | Repricing and impact handling\nKafka Event Bus | State propagation\nNotification Service | User messaging\n\n2.5 API Interfaces\n\n2.5.1 Change Request Intake\n\nItem | Specification\nAPI | Internal OMS change interface\nMethod | POST\nEndpoint | /oms/order/changeRequest\nPurpose | Accept modify request\nAsync Behavior | Returns 202 and workflow ID\n\nRequest Headers\n\nHeader | Required | Example\nAuthorization | Yes | Bearer <token>\nContent-Type | Yes | application/json\nX-Correlation-Id | Yes | corr-20260612-0002\nIdempotency-Key | Yes | idemp-change-001\n\nRequest Body Structure\n\nField | Type | Required | Example | Notes\norderId | string | Yes | PO-100245 | Existing order\norderType | string | Yes | MODIFY | OMS type\nflowType | string | Yes | MODIFY_ORDER | Flow class\nchangeType | string | Yes | upgrade_bandwidth | Requested change\nrequestedValue | string | Yes | 2Gbps | New value\neffectiveDate | datetime | No | 2026-06-18T00:00:00Z | Effective time\nrequestedBy | string | Yes | agent_102 | Caller\nreason | string | No | customer_upgrade | Human-readable\nchangeScope | string | No | partial | Partial or full\n\n2.5.2 Load Existing Order and Service State\n\nItem | Specification\nAPI | TMF622 / TMF641 / TMF638\nMethods | GET\nPurpose | Read current state before change\n\n2.5.3 Revalidation\n\nItem | Specification\nAPI | TMF645 Service Qualification\nMethod | POST\nPurpose | Re-check qualification after change\n\nRequest Body Structure\n\nField | Type | Required | Example\nserviceType | string | Yes | FTTH\naddress | object | Yes | current service address\nrequestedCapacity | string | Yes | 2Gbps\nimpactLevel | string | No | low, medium, high\n\n2.5.4 Apply Reconfiguration\n\nItem | Specification\nAPI | TMF640 Service Activation & Configuration\nMethod | POST/PATCH\nPurpose | Apply new configuration\nOutcome | Service remains active with modified state\n\n2.6 Request and Response Objects\n\n2.6.1 Change Request Response\n\nField | Type | Example | Meaning\nchangeRequestId | string | CR-20260612-001 | Change identifier\norderId | string | PO-100245 | Existing order\nstate | string | received | Change workflow state\nchangeType | string | upgrade_bandwidth | Requested change\ncorrelationId | string | corr-20260612-0002 | Trace\nworkflowId | string | wf-modify-0001 | Temporal workflow ID\n\n2.6.2 Impact Assessment Response\n\nField | Type | Example | Meaning\nassessmentId | string | IA-0009 | Assessment ID\nresult | string | eligible | Can change or not\nimpactLevel | string | medium | Expected impact\naffectedItems[] | array | service leg refs | Impacted components\n\n2.6.3 Reconfiguration Response\n\nField | Type | Example | Meaning\nreconfigId | string | RC-1001 | Reconfiguration ID\nstate | string | completed | Completion state\nserviceId | string | SRV-0001 | Affected service\nresult | string | success | Result\n\n2.7 HTTP Status Codes and Handling\n\nHTTP Code | Domain Code | Meaning | Workflow Action\n200 | OMS-MO-200 | Success | Change applied\n202 | OMS-MO-202 | Accepted | Async change started\n400 | OMS-MO-400 | Bad request | Invalid change payload\n401 | OMS-MO-401 | Unauthorized | Invalid token\n403 | OMS-MO-403 | Forbidden | Not allowed to modify\n404 | OMS-MO-404 | Order not found | Invalid order reference\n409 | OMS-MO-409 | Conflict | Concurrent update\n412 | OMS-MO-412 | Precondition failed | Order not mutable\n422 | OMS-MO-422 | Validation failed | Impact check failed\n423 | OMS-MO-423 | Locked | Order or service locked\n500 | OMS-MO-500 | Internal error | Workflow/API failure\n504 | OMS-MO-504 | Timeout | Downstream timeout\n\n2.8 TMF API Mapping\n\nBusiness Function | TMF API | Use\nExisting order read/update | TMF622 | Retrieve or amend product order\nExisting service read/update | TMF641 | Retrieve or revise service order\nImpact check | TMF645 | Re-check qualification\nResource validation | TMF638 | Confirm inventory impact\nReconfiguration | TMF640 | Apply updated config\n\n2.9 Kafka Topics\n\nStage | Topic | Meaning\nChange requested | oms.order.change.requested | Modify request received\nChange validated | oms.order.change.validated | Change allowed\nChange rejected | oms.order.change.rejected | Change not allowed\nChange planned | oms.order.change.planned | Impact plan ready\nReconfigure requested | oms.service.reconfigure.requested | Update pushed\nReconfigure completed | oms.service.reconfigure.completed | Update done\nChange completed | oms.order.change.completed | Final completion\n\n2.10 Domain Error Codes\n\nDomain Code | HTTP Code | Meaning | Typical Cause | Handling\nOMS-MO-200 | 200 | Success | Valid change | Continue\nOMS-MO-202 | 202 | Accepted | Async workflow | Monitor\nOMS-MO-400 | 400 | Bad request | Invalid change input | Reject\nOMS-MO-401 | 401 | Unauthorized | Invalid token | Stop\nOMS-MO-403 | 403 | Forbidden | Not allowed | Stop\nOMS-MO-404 | 404 | Order not found | Bad order reference | Stop\nOMS-MO-409 | 409 | Conflict | Concurrent update | Retry with version\nOMS-MO-412 | 412 | Precondition failed | Order not mutable | Reject\nOMS-MO-422 | 422 | Validation failed | Impact check failed | Reject or reroute\nOMS-MO-423 | 423 | Locked | Order/service locked | Hold or escalate\nOMS-MO-500 | 500 | Internal error | Workflow/API failure | Retry\nOMS-MO-504 | 504 | Timeout | External timeout | Retry/compensate\n\n2.11 Business Rules\n\nRule ID | Rule\nBR-MO-01 | orderType must be MODIFY\nBR-MO-02 | Existing order must be in a mutable state\nBR-MO-03 | Impact assessment is mandatory before commit\nBR-MO-04 | Only impacted legs should be reprocessed\nBR-MO-05 | Billing impact must be recalculated if capacity or plan changes\n\n2.12 Exceptions\n\nException | Trigger | Handling\n\nException | Trigger | Handling\nOrder locked | Concurrent processing | Retry or reject\nImpact failure | Change not feasible | Reject\nPartial update | One leg failed | Compensate\nBilling mismatch | Price cannot be recalculated | Hold and escalate\nInventory conflict | Resource not available | Retry or reject\n\n2.13 Embedded Shared Conventions\n\nConvention | Rule\nCorrelation ID | Required\nIdempotency | Required\nTMF calls | Activities only\nKafka publish | After state commit\nAudit trail | Mandatory\nCompensation | Required for partial change",
+  "workflow_metadata": {
+    "name": "Modify Telecom Order Workflow",
+    "description": "This workflow modifies existing telecom orders and active services, handling amendments through a defined interface. It ensures proper reconfiguration, impact assessment, and billing updates.",
+    "purpose": "This workflow modifies existing telecom orders and active services, handling amendments through a defined interface. It ensures proper reconfiguration, impact assessment, and billing updates.",
+    "actors": [
+      "Customer (via Self-Service Portal)",
+      "Agent (via CRM/Care Console)"
+    ],
+    "systems": [
+      "CRM/Care Console",
+      "Self-Service Portal",
+      "OMS Temporal Workflow",
+      "Order Store",
+      "Service Inventory",
+      "Provisioning Platform",
+      "Billing/Rating",
+      "Kafka Event Bus",
+      "Notification Service"
+    ],
+    "trigger_events": [
+      "Receive change request (CRM/Care Console)",
+      "Customer change intake (Self-Service Portal)"
+    ],
+    "start_states": [
+      "Received"
+    ],
+    "end_states": [
+      "Completed",
+      "Rejected",
+      "Failed"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "Change request (orderId, orderType, flowType, changeType, requestedValue, effectiveDate, requestedBy, reason, changeScope)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "input-2",
+        "statement": "Existing order state (from Order Store)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "input-3",
+        "statement": "Service inventory and dependency validation (from Service Inventory)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "input-4",
+        "statement": "Reconfiguration request (serviceType, address, requestedCapacity, impactLevel)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "output-1",
+        "statement": "Change Request Response (changeRequestId, orderId, state, changeType, correlationId, workflowId)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "output-2",
+        "statement": "Impact Assessment Response (assessmentId, result, impactLevel, affectedItems)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "output-3",
+        "statement": "Reconfiguration Response (reconfigId, state, serviceId, result)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-1",
+        "statement": "Receive change request",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-2",
+        "statement": "Load Existing Order and Service State",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-3",
+        "statement": "Revalidation (Service Qualification)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-4",
+        "statement": "Apply Reconfiguration",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-5",
+        "statement": "Repricing and impact handling (Billing / Rating)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "activity-6",
+        "statement": "User messaging (Notification Service)",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "decision-1",
+        "statement": "Validation of change request payload",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "decision-2",
+        "statement": "Impact assessment outcome (eligible/not eligible)",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "decision-3",
+        "statement": "Reconfiguration outcome (success/failure)",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-MO-01: orderType must be MODIFY",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-MO-02: Existing order must be in a mutable state",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-MO-03: Impact assessment is mandatory before commit",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "rule-4",
+        "statement": "BR-MO-04: Only impacted legs should be reprocessed",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "rule-5",
+        "statement": "BR-MO-05: Billing impact must be recalculated if capacity or plan changes",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-1",
+        "statement": "Change requested (oms.order.change.requested)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-2",
+        "statement": "Change validated (oms.order.change.validated)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-3",
+        "statement": "Change rejected (oms.order.change.rejected)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-4",
+        "statement": "Change planned (oms.order.change.planned)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-5",
+        "statement": "Reconfigure requested (oms.service.reconfigure.requested)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-6",
+        "statement": "Reconfigure completed (oms.service.reconfigure.completed)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "event-7",
+        "statement": "Change completed (oms.order.change.completed)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "api-1",
+        "statement": "Internal OMS change interface (POST /oms/order/changeRequest)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "api-2",
+        "statement": "TMF622 (GET, for existing order read/update)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "api-3",
+        "statement": "TMF641 (for existing service read/update)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "api-4",
+        "statement": "TMF645 (POST, for Service Qualification)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "api-5",
+        "statement": "TMF638 (for resource validation)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "api-6",
+        "statement": "TMF640 (POST/PATCH, for Service Activation & Configuration)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-1",
+        "statement": "CRM / Care Console",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-2",
+        "statement": "Self-Service Portal",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-3",
+        "statement": "OMS Temporal Workflow",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-4",
+        "statement": "Order Store",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-5",
+        "statement": "Service Inventory",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-6",
+        "statement": "Provisioning Platform",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-7",
+        "statement": "Billing / Rating",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-8",
+        "statement": "Kafka Event Bus",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "system-9",
+        "statement": "Notification Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "exception-1",
+        "statement": "Order locked (concurrent processing)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "exception-2",
+        "statement": "Impact failure (change not feasible)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "exception-3",
+        "statement": "Partial update (one leg failed)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "exception-4",
+        "statement": "Billing mismatch (price cannot be recalculated)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "exception-5",
+        "statement": "Inventory conflict (resource not available)",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "retry-1",
+        "statement": "Retry with version (for OMS-MO-409)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "retry-2",
+        "statement": "Retry (for OMS-MO-500, OMS-MO-504)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "retry-3",
+        "statement": "Retry or reject (for Inventory conflict)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Compensate (for partial update)",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      },
+      {
+        "id": "compensation-2",
+        "statement": "Compensate (for OMS-MO-504)",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.85
+      }
+    ]
+  },
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Receive change request",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Load Existing Order and Service State",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Revalidation (Service Qualification)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Apply Reconfiguration",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_5",
+        "label": "Repricing and impact handling (Billing / Rating)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_6",
+        "label": "User messaging (Notification Service)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Validation of change request payload",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_2",
+        "label": "Impact assessment outcome (eligible/not eligible)",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_3",
+        "label": "Reconfiguration outcome (success/failure)",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "Order locked (concurrent processing)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "Impact failure (change not feasible)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_3",
+        "label": "Partial update (one leg failed)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_4",
+        "label": "Billing mismatch (price cannot be recalculated)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_5",
+        "label": "Inventory conflict (resource not available)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Compensate (for partial update)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_2",
+        "label": "Compensate (for OMS-MO-504)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "Change requested (oms.order.change.requested)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "Change validated (oms.order.change.validated)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "Change rejected (oms.order.change.rejected)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_4",
+        "label": "Change planned (oms.order.change.planned)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_5",
+        "label": "Reconfigure requested (oms.service.reconfigure.requested)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_6",
+        "label": "Reconfigure completed (oms.service.reconfigure.completed)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_7",
+        "label": "Change completed (oms.order.change.completed)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "decision_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "decision_2",
+        "target": "activity_3",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e7",
+        "source": "decision_2",
+        "target": "exception_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e8",
+        "source": "activity_3",
+        "target": "decision_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "decision_3",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e10",
+        "source": "decision_3",
+        "target": "exception_3",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e11",
+        "source": "activity_4",
+        "target": "activity_5",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "activity_5",
+        "target": "activity_6",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "activity_6",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e14",
+        "source": "activity_1",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "exception_1",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "activity_2",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e18",
+        "source": "exception_2",
+        "target": "compensation_2",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e19",
+        "source": "compensation_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e20",
+        "source": "activity_3",
+        "target": "exception_3",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e21",
+        "source": "exception_3",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e22",
+        "source": "activity_4",
+        "target": "exception_4",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e23",
+        "source": "exception_4",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e24",
+        "source": "activity_5",
+        "target": "exception_5",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e25",
+        "source": "exception_5",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e26",
+        "source": "exception_1",
+        "target": "activity_1",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e27",
+        "source": "exception_2",
+        "target": "activity_2",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e28",
+        "source": "exception_3",
+        "target": "activity_3",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e29",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e30",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e31",
+        "source": "activity_6",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e32",
+        "source": "activity_6",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e33",
+        "source": "activity_6",
+        "target": "event_4",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e34",
+        "source": "start",
+        "target": "event_5",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e35",
+        "source": "event_5",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e36",
+        "source": "activity_6",
+        "target": "event_6",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e37",
+        "source": "activity_6",
+        "target": "event_7",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.75: 0 error(s), 5 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Dead-end node 'Change validated (oms.order.change.validated)' has no outgoing edges.",
+        "location": "event_2",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-2",
+        "severity": "warning",
+        "message": "Dead-end node 'Change rejected (oms.order.change.rejected)' has no outgoing edges.",
+        "location": "event_3",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-3",
+        "severity": "warning",
+        "message": "Dead-end node 'Change planned (oms.order.change.planned)' has no outgoing edges.",
+        "location": "event_4",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-4",
+        "severity": "warning",
+        "message": "Dead-end node 'Reconfigure completed (oms.service.reconfigure.completed)' has no outgoing edges.",
+        "location": "event_6",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-5",
+        "severity": "warning",
+        "message": "Dead-end node 'Change completed (oms.order.change.completed)' has no outgoing edges.",
+        "location": "event_7",
+        "suggestion": "Add a transition toward an END node."
+      }
+    ],
+    "score": 0.75,
+    "health_score": 0.75,
+    "confidence": 1.0,
+    "reviewer": "auto",
+    "reviewed_at": "2026-06-25T16:46:22.200592Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Initiates the workflow, receiving the initial input or event.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Represents the workflow's conclusion, implying final downstream effects.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "capture",
+        "rationale": "Receives the change request, which is the initial data intake.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "process",
+        "rationale": "Loads existing state, preparing data for validation and processing.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "validate",
+        "rationale": "Performs revalidation, a check on service qualification.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "process",
+        "rationale": "Executes reconfiguration, a core transformation activity.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_5",
+        "phase": "process",
+        "rationale": "Handles pricing and billing impacts, involving computational adjustments.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_6",
+        "phase": "activate",
+        "rationale": "Sends notifications, a downstream effect of the workflow's outcome.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Validates the change request payload, making a decision based on checks.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_2",
+        "phase": "validate",
+        "rationale": "Assesses the impact, determining eligibility, a decision gate.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_3",
+        "phase": "validate",
+        "rationale": "Evaluates the reconfiguration outcome, success or failure, a validation check.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "validate",
+        "rationale": "Triggers on concurrent processing issues, requiring validation of state.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "exception_2",
+        "phase": "validate",
+        "rationale": "Indicates a non-feasible change, a validation failure.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_3",
+        "phase": "process",
+        "rationale": "Occurs during partial updates, affecting core processing flow.",
+        "confidence": 0.6
+      },
+      {
+        "node_id": "exception_4",
+        "phase": "process",
+        "rationale": "Relates to billing calculations, a processing error.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "exception_5",
+        "phase": "validate",
+        "rationale": "Involves inventory checks, validating resource availability.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "process",
+        "rationale": "Undoes partial updates, a corrective processing action.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "compensation_2",
+        "phase": "process",
+        "rationale": "Compensates for a specific error (OMS-MO-504), a processing recovery.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "Signals a change request, initiating the workflow's intake.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "event_2",
+        "phase": "activate",
+        "rationale": "Emits a validated change signal, a downstream notification.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_3",
+        "phase": "activate",
+        "rationale": "Notifies of a rejected change, concluding with an outcome.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_4",
+        "phase": "activate",
+        "rationale": "Signals a planned change, an outcome of the workflow.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "event_5",
+        "phase": "capture",
+        "rationale": "Triggers a reconfigure request, capturing the initial event.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "event_6",
+        "phase": "activate",
+        "rationale": "Confirms reconfiguration completion, a final outcome signal.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "event_7",
+        "phase": "activate",
+        "rationale": "Emits the completion of the change, the workflow's final outcome.",
+        "confidence": 0.95
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "activity_1",
+          "event_1",
+          "event_5"
+        ],
+        "summary": "4 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "activity_3",
+          "decision_1",
+          "decision_2",
+          "decision_3",
+          "exception_1",
+          "exception_2",
+          "exception_5"
+        ],
+        "summary": "7 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_2",
+          "activity_4",
+          "activity_5",
+          "exception_3",
+          "exception_4",
+          "compensation_1",
+          "compensation_2"
+        ],
+        "summary": "7 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "activity_6",
+          "event_2",
+          "event_3",
+          "event_4",
+          "event_6",
+          "event_7"
+        ],
+        "summary": "7 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "Orderchangerequestworkflow",
+    "task_queue": "order-change-queue",
+    "description": "Manages the order change request process from receipt to completion.",
+    "activities": [
+      {
+        "name": "Receivechangerequest",
+        "source_node_id": "activity_1",
+        "description": "Initial activity to receive the change request.",
+        "inputs": [
+          "changeRequestPayload"
+        ],
+        "outputs": [
+          "requestId"
+        ],
+        "timeout_seconds": 30.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Loadexistingorderstate",
+        "source_node_id": "activity_2",
+        "description": "Loads the current state of the order from the database.",
+        "inputs": [
+          "requestId"
+        ],
+        "outputs": [
+          "orderState"
+        ],
+        "timeout_seconds": 15.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": 30.0,
+          "non_retryable_error_types": [
+            "DatabaseNotFoundError"
+          ]
+        }
+      },
+      {
+        "name": "Revalidationservicequalification",
+        "source_node_id": "activity_3",
+        "description": "Revalidates the service qualification based on the change request.",
+        "inputs": [
+          "orderState",
+          "changeRequestPayload"
+        ],
+        "outputs": [
+          "qualificationResult"
+        ],
+        "timeout_seconds": 45.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Applyreconfiguration",
+        "source_node_id": "activity_4",
+        "description": "Applies the reconfiguration to the order if qualified.",
+        "inputs": [
+          "qualificationResult",
+          "orderState"
+        ],
+        "outputs": [
+          "reconfigurationResult"
+        ],
+        "timeout_seconds": 60.0,
+        "retry_policy": {
+          "maximum_attempts": 2,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 1.5,
+          "maximum_interval_seconds": 60.0,
+          "non_retryable_error_types": [
+            "ReconfigurationDeniedError"
+          ]
+        }
+      },
+      {
+        "name": "Repricingimpacthandling",
+        "source_node_id": "activity_5",
+        "description": "Handles repricing and impact analysis post-reconfiguration.",
+        "inputs": [
+          "reconfigurationResult"
+        ],
+        "outputs": [
+          "billingImpact"
+        ],
+        "timeout_seconds": 90.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Usermessagingnotification",
+        "source_node_id": "activity_6",
+        "description": "Sends notification to the user about the change request outcome.",
+        "inputs": [
+          "billingImpact",
+          "reconfigurationResult"
+        ],
+        "outputs": [],
+        "timeout_seconds": 10.0,
+        "retry_policy": {
+          "maximum_attempts": 5,
+          "initial_interval_seconds": 0.5,
+          "backoff_coefficient": 1.2,
+          "maximum_interval_seconds": 10.0,
+          "non_retryable_error_types": [
+            "NotificationServiceUnavailable"
+          ]
+        }
+      }
+    ],
+    "signals": [
+      {
+        "name": "ChangeRequestedSignal",
+        "description": "Signal emitted when a change request is initially received.",
+        "payload": [
+          "changeRequestPayload"
+        ]
+      },
+      {
+        "name": "ReconfigureRequestedSignal",
+        "description": "Signal for triggering reconfiguration externally.",
+        "payload": [
+          "reconfigurationParams"
+        ]
+      },
+      {
+        "name": "ChangeValidatedSignal",
+        "description": "Signal emitted after successful validation of the change request.",
+        "payload": [
+          "validationResult"
+        ]
+      },
+      {
+        "name": "ChangeRejectedSignal",
+        "description": "Signal for rejected change requests.",
+        "payload": [
+          "rejectionReason"
+        ]
+      },
+      {
+        "name": "ChangePlannedSignal",
+        "description": "Signal indicating the change is planned for execution.",
+        "payload": []
+      },
+      {
+        "name": "ReconfigureCompletedSignal",
+        "description": "Signal emitted upon completion of reconfiguration.",
+        "payload": [
+          "reconfigurationOutcome"
+        ]
+      },
+      {
+        "name": "ChangeCompletedSignal",
+        "description": "Final signal upon completion of the entire workflow.",
+        "payload": [
+          "finalOutcome"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetChangeRequestStatus",
+        "description": "Query to retrieve the current status of a change request.",
+        "returns": "statusEnum"
+      },
+      {
+        "name": "RetrieveReconfigurationDetails",
+        "description": "Query for detailed reconfiguration outcomes.",
+        "returns": "reconfigurationDetailObject"
+      }
+    ],
+    "child_workflows": [],
+    "timers": [
+      {
+        "name": "ReconfigurationSLATimer",
+        "duration_seconds": 3600.0,
+        "description": "Timer to ensure reconfiguration completes within an hour."
+      },
+      {
+        "name": "NotificationTimeout",
+        "duration_seconds": 300.0,
+        "description": "Timeout for user notification processing."
+      }
+    ],
+    "compensation_activities": [
+      {
+        "name": "Compensatepartialupdate",
+        "compensates": "ApplyReconfiguration",
+        "source_node_id": "compensation_1",
+        "description": "Rolls back partial updates in case of failures.",
+        "retry_policy": null
+      },
+      {
+        "name": "Compensateomsmo504",
+        "compensates": "LoadExistingOrderState",
+        "source_node_id": "compensation_2",
+        "description": "Handles compensation for specific OMS-MO-504 errors.",
+        "retry_policy": {
+          "maximum_attempts": 1,
+          "initial_interval_seconds": 0.001,
+          "backoff_coefficient": 1.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      }
+    ],
+    "default_retry_policy": {
+      "maximum_attempts": 3,
+      "initial_interval_seconds": 1.0,
+      "backoff_coefficient": 2.0,
+      "maximum_interval_seconds": 60.0,
+      "non_retryable_error_types": [
+        "TemporalInternalError"
+      ]
+    }
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Receive change request\"]\n    activity_2[\"Load Existing Order and Service State\"]\n    activity_3[\"Revalidation (Service Qualification)\"]\n    activity_4[\"Apply Reconfiguration\"]\n    activity_5[\"Repricing and impact handling (Billing / Rating)\"]\n    activity_6[\"User messaging (Notification Service)\"]\n    decision_1{\"Validation of change request payload\"}\n    decision_2{\"Impact assessment outcome (eligible/not eligible)\"}\n    decision_3{\"Reconfiguration outcome (success/failure)\"}\n    exception_1([\"Order locked (concurrent processing)\"])\n    exception_2([\"Impact failure (change not feasible)\"])\n    exception_3([\"Partial update (one leg failed)\"])\n    exception_4([\"Billing mismatch (price cannot be recalculated)\"])\n    exception_5([\"Inventory conflict (resource not available)\"])\n    compensation_1[\"Compensate (for partial update)\"]\n    compensation_2[\"Compensate (for OMS-MO-504)\"]\n    event_1([\"Change requested (oms.order.change.requested)\"])\n    event_2([\"Change validated (oms.order.change.validated)\"])\n    event_3([\"Change rejected (oms.order.change.rejected)\"])\n    event_4([\"Change planned (oms.order.change.planned)\"])\n    event_5([\"Reconfigure requested (oms.service.reconfigure.requested)\"])\n    event_6([\"Reconfigure completed (oms.service.reconfigure.completed)\"])\n    event_7([\"Change completed (oms.order.change.completed)\"])\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> decision_2\n    decision_2 -->|yes| activity_3\n    decision_2 -->|no| exception_2\n    activity_3 --> decision_3\n    decision_3 -->|yes| activity_4\n    decision_3 -->|no| exception_3\n    activity_4 --> activity_5\n    activity_5 --> activity_6\n    activity_6 --> end_node\n    activity_1 -.->|on error| exception_1\n    exception_1 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    activity_2 -.->|on error| exception_2\n    exception_2 -.->|compensate| compensation_2\n    compensation_2 --> end_node\n    activity_3 -.->|on error| exception_3\n    exception_3 -.->|compensate| compensation_1\n    activity_4 -.->|on error| exception_4\n    exception_4 -.->|compensate| compensation_1\n    activity_5 -.->|on error| exception_5\n    exception_5 -.->|compensate| compensation_1\n    exception_1 -.->|retry| activity_1\n    exception_2 -.->|retry| activity_2\n    exception_3 -.->|retry| activity_3\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_6 -.->|emits| event_2\n    activity_6 -.->|emits| event_3\n    activity_6 -.->|emits| event_4\n    start -.->|event| event_5\n    event_5 -.->|triggers| activity_1\n    activity_6 -.->|emits| event_6\n    activity_6 -.->|emits| event_7\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,activity_1,event_1,event_5 capture;\n    class activity_3,decision_1,decision_2,decision_3,exception_1,exception_2,exception_5 validate;\n    class activity_2,activity_4,activity_5,exception_3,exception_4,compensation_1,compensation_2 process;\n    class end_node,activity_6,event_2,event_3,event_4,event_6,event_7 activate;",
+    "title": "Modify Telecom Order Workflow"
+  },
+  "confidence_scores": {
+    "metadata": 0.95,
+    "facts": 0.8481,
+    "graph": 0.9,
+    "cvpa": 0.941,
+    "temporal": 0.9,
+    "overall": null,
+    "notes": {
+      "facts": "53 facts across 11 categories; 0 duplicate(s) removed.",
+      "cvpa": "25 nodes classified; 25 from model, 0 by fallback.",
+      "temporal": "6 activities, 7 signals, 0 child workflows, 2 compensations."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-06-25T16:45:17.348564Z",
+  "updated_at": "2026-06-25T16:52:55.411101Z"
+}

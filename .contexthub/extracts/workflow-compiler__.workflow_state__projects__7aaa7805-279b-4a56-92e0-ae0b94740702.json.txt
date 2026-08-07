@@ -1,0 +1,266 @@
+{
+  "project_id": "7aaa7805-279b-4a56-92e0-ae0b94740702",
+  "document_text": "# Order Fulfillment Workflow\n\n## Purpose\n\nThis workflow describes how the company fulfills a customer order from the moment it is submitted through delivery, including payment, inventory, shipping, and the handling of failures.\n\n## Trigger\n\nThe workflow starts when a customer submits an order through the online store.\n\n## Process\n\nWhen the order is received, the system validates the order details and the\npayment via the Payment Gateway.\nIf the payment is declined, the order is cancelled and the customer is\nnotified by email.\nIf the payment is valid, the Warehouse Management System reserves inventory.\nIn parallel, the system sends an order confirmation to the customer and\nnotifies the warehouse to begin picking.\nThe warehouse picks and packs the items.\nThe carrier API is called to create a shipment and the order is shipped.\nIf shipment creation fails, the system retries up to 3 times. If it still\nfails, the reserved inventory is released (compensation) and the order is marked as failed.\n\n## Rules\n\nOrders above $1,000 require manager approval before fulfillment.\nOrders must be shipped within 24 hours of payment confirmation, otherwise an\nSLA-breach alert is raised.\n\n## States\n\nStart states: Order received.\nEnd states: Order delivered, Order cancelled, Order failed.\n\n## Systems\n\nOnline Store, Payment Gateway, Warehouse Management System, Carrier API, Email Service.",
+  "segments": [
+    {
+      "id": "w1",
+      "slug": "demo-order-workflow",
+      "name": "Demo Order Workflow",
+      "purpose": "Validate, reserve, and ship a customer order",
+      "section_titles": [],
+      "text": "# Order Fulfillment Workflow\n\n## Purpose\n\nThis workflow describes how the company fulfills a customer order from the moment it is submitted through delivery, including payment, inventory, shipping, and the handling of failures.\n\n## Trigger\n\nThe workflow starts when a customer submits an order through the online store.\n\n## Process\n\nWhen the order is received, the system validates the order details and the\npayment via the Payment Gateway.\nIf the payment is declined, the order is cancelled and the customer is\nnotified by email.\nIf the payment is valid, the Warehouse Management System reserves inventory.\nIn parallel, the system sends an order confirmation to the customer and\nnotifies the warehouse to begin picking.\nThe warehouse picks and packs the items.\nThe carrier API is called to create a shipment and the order is shipped.\nIf shipment creation fails, the system retries up to 3 times. If it still\nfails, the reserved inventory is released (compensation) and the order is marked as failed.\n\n## Rules\n\nOrders above $1,000 require manager approval before fulfillment.\nOrders must be shipped within 24 hours of payment confirmation, otherwise an\nSLA-breach alert is raised.\n\n## States\n\nStart states: Order received.\nEnd states: Order delivered, Order cancelled, Order failed.\n\n## Systems\n\nOnline Store, Payment Gateway, Warehouse Management System, Carrier API, Email Service.",
+      "sliced": true
+    }
+  ],
+  "specs": [
+    {
+      "slug": "demo-order-workflow",
+      "metadata": {
+        "name": "Demo Order Workflow",
+        "description": "Validate, reserve, and ship a customer order.",
+        "purpose": "Validate, reserve, and ship a customer order.",
+        "actors": [
+          "Customer",
+          "Warehouse"
+        ],
+        "systems": [
+          "Order Service",
+          "Inventory Service"
+        ],
+        "trigger_events": [
+          "order submitted"
+        ],
+        "start_states": [
+          "received"
+        ],
+        "end_states": [
+          "shipped",
+          "rejected"
+        ],
+        "version": "0.1.1",
+        "domain": null,
+        "owner": null,
+        "source_format": null,
+        "tags": [],
+        "extra": {
+          "self_reported_confidence": "0.900"
+        },
+        "created_at": null
+      },
+      "facts": {
+        "facts": [
+          {
+            "id": "input-1",
+            "statement": "order_id",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "input-2",
+            "statement": "customer_id",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-1",
+            "statement": "confirmation_id",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-1",
+            "statement": "Validate order",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-2",
+            "statement": "Reserve inventory",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-3",
+            "statement": "Ship order",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-1",
+            "statement": "Is the order valid?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-1",
+            "statement": "Mock-edited: refunds require manager approval",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-1",
+            "statement": "order shipped",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-1",
+            "statement": "OrderInvalid",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "retry-1",
+            "statement": "Reserve inventory: retry up to 3 times with backoff",
+            "category": "retry",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "compensation-1",
+            "statement": "Release inventory compensates Reserve inventory",
+            "category": "compensation",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          }
+        ],
+        "structure": {
+          "activities": [
+            {
+              "id": "a1",
+              "name": "Validate order",
+              "parallel_group": null
+            },
+            {
+              "id": "a2",
+              "name": "Reserve inventory",
+              "parallel_group": null
+            },
+            {
+              "id": "a3",
+              "name": "Ship order",
+              "parallel_group": null
+            }
+          ],
+          "decisions": [
+            {
+              "id": "d1",
+              "question": "Is the order valid?",
+              "after": "a1",
+              "yes_target": "a2",
+              "no_target": "e1"
+            }
+          ],
+          "exceptions": [
+            {
+              "id": "e1",
+              "reason": "OrderInvalid",
+              "raised_by": "a1"
+            }
+          ],
+          "compensations": [
+            {
+              "id": "c1",
+              "name": "Release inventory",
+              "compensates": "a2"
+            }
+          ],
+          "events": [
+            {
+              "id": "v1",
+              "name": "order shipped",
+              "emitted_by": "a3",
+              "kind": "output_emit"
+            }
+          ],
+          "triggers": [],
+          "transitions": []
+        }
+      },
+      "assumptions": [],
+      "ambiguities": [],
+      "open_questions": [
+        {
+          "text": "What deadline bounds each wait (e.g. 24 hours)?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R6-bounded-waits"
+        }
+      ],
+      "suggested_edits": [],
+      "provenance": {
+        "rule:mock-edited: refunds require manager approval": "human_provided"
+      }
+    }
+  ],
+  "cross_references": [],
+  "triggers": [],
+  "spec_approval_status": "pending",
+  "workflow_ids": {},
+  "warnings": [],
+  "validation_findings": {},
+  "edit_log": [
+    {
+      "edit_id": "16231d50-07ec-47d9-8d84-2f42a5dd7f0f",
+      "document": "# Edit Request\n\n## Workflow: demo-order-workflow\n\n### Add\n\n- A business rule: refunds require manager approval.\n\n## Reason\n\nSmoke test.",
+      "author": "devansh",
+      "created_at": "2026-07-16T21:27:52.857438Z",
+      "resolved_patches": {
+        "demo-order-workflow": [
+          {
+            "action": "add",
+            "target": "rule",
+            "payload": {
+              "value": "Mock-edited: refunds require manager approval"
+            },
+            "evidence": {
+              "source_section": null,
+              "heading": null,
+              "workflow_step": null,
+              "quote": "mock edit request entry",
+              "char_start": null,
+              "char_end": null
+            }
+          }
+        ]
+      },
+      "trigger_ops": [],
+      "xref_ops": [],
+      "workflows_added": [],
+      "workflows_removed": [],
+      "summary": {
+        "demo-order-workflow": [
+          "add rule",
+          "facts: 1 applied, 0 dropped, 0 flagged",
+          "version bumped to 0.1.1"
+        ]
+      }
+    }
+  ],
+  "stage": "spec_drafted",
+  "created_at": "2026-07-16T21:27:43.883630Z",
+  "updated_at": "2026-07-16T21:27:52.857438Z"
+}

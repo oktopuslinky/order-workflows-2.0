@@ -1,0 +1,227 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - link "workflow·compiler" [ref=e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e4]: document → spec → validate → approve → code
+    - navigation [ref=e5]:
+      - link "Projects" [ref=e6] [cursor=pointer]:
+        - /url: /
+      - link "Guide" [ref=e7] [cursor=pointer]:
+        - /url: /guide
+      - button "Switch to dark theme" [ref=e8]: ☾ Dark
+      - 'button "Account: smoke-test" [ref=e36] [cursor=pointer]': S
+  - main [ref=e9]:
+    - generic [ref=e202]:
+      - generic [ref=e203]:
+        - link "Back to projects" [ref=e204] [cursor=pointer]:
+          - /url: /
+          - text: ←
+        - generic [ref=e402]:
+          - generic "Completed Workflow 1" [ref=e403]
+          - button "Rename Completed Workflow 1" [ref=e404]
+          - generic "Project id" [ref=e407]: b9b301bf-83a7-4f67-bce0-9a646905852d
+        - generic [ref=e211]: Completed
+        - generic [ref=e212]:
+          - button "Spec" [ref=e213] [cursor=pointer]
+          - button "Results" [ref=e214] [cursor=pointer]
+        - generic [ref=e215]:
+          - button "Edit request" [ref=e216] [cursor=pointer]
+          - button "Save" [ref=e217] [cursor=pointer]
+          - button "Validate" [ref=e218] [cursor=pointer]
+          - button "Approve" [ref=e219] [cursor=pointer]
+      - generic [ref=e220]:
+        - complementary [ref=e221]:
+          - paragraph [ref=e222]: Workflows
+          - button "order-placement" [ref=e223] [cursor=pointer]
+          - button "order-fulfilment" [ref=e225] [cursor=pointer]
+          - button "payment-reconciliation" [ref=e227] [cursor=pointer]
+        - generic [ref=e229]:
+          - generic [ref=e230]:
+            - button "editor" [ref=e231] [cursor=pointer]
+            - button "preview" [ref=e232] [cursor=pointer]
+            - button "diagram" [ref=e233] [cursor=pointer]
+          - generic [ref=e281]:
+            - generic [ref=e408]:
+              - generic [ref=e409]: '1'
+              - generic [ref=e410]: '2'
+              - generic [ref=e411]: '3'
+              - generic [ref=e412]: '4'
+              - generic [ref=e413]: '5'
+              - generic [ref=e414]: '6'
+              - generic [ref=e415]: '7'
+              - generic [ref=e416]: '8'
+              - generic [ref=e417]: '9'
+              - generic [ref=e418]: '10'
+              - generic [ref=e419]: '11'
+              - generic [ref=e420]: '12'
+              - generic [ref=e421]: '13'
+              - generic [ref=e422]: '14'
+              - generic [ref=e423]: '15'
+              - generic [ref=e424]: '16'
+              - generic [ref=e425]: '17'
+              - generic [ref=e426]: '18'
+              - generic [ref=e427]: '19'
+              - generic [ref=e428]: '20'
+              - generic [ref=e429]: '21'
+              - generic [ref=e430]: '22'
+              - generic [ref=e431]: '23'
+              - generic [ref=e432]: '24'
+              - generic [ref=e433]: '25'
+              - generic [ref=e434]: '26'
+              - generic [ref=e435]: '27'
+              - generic [ref=e436]: '28'
+              - generic [ref=e437]: '29'
+              - generic [ref=e438]: '30'
+              - generic [ref=e439]: '31'
+              - generic [ref=e440]: '32'
+              - generic [ref=e441]: '33'
+              - generic [ref=e442]: '34'
+              - generic [ref=e443]: '35'
+              - generic [ref=e444]: '36'
+              - generic [ref=e445]: '37'
+              - generic [ref=e446]: '38'
+              - generic [ref=e447]: '39'
+              - generic [ref=e448]: '40'
+              - generic [ref=e449]: '41'
+              - generic [ref=e450]: '42'
+              - generic [ref=e451]: '43'
+              - generic [ref=e452]: '44'
+              - generic [ref=e453]: '45'
+              - generic [ref=e454]: '46'
+              - generic [ref=e455]: '47'
+              - generic [ref=e456]: '48'
+              - generic [ref=e457]: '49'
+              - generic [ref=e458]: '50'
+              - generic [ref=e459]: '51'
+              - generic [ref=e460]: '52'
+              - generic [ref=e461]: '53'
+              - generic [ref=e462]: '54'
+              - generic [ref=e463]: '55'
+            - textbox [ref=e339]:
+              - generic [ref=e340]: '# Order Placement Workflow'
+              - generic [ref=e342]: <!--
+              - generic [ref=e343]: 'workflow-compiler specification (v1) — slug:
+                  order-placement'
+              - generic [ref=e344]: This file is a projection of the structured spec.
+                  Edit it freely, then run
+              - generic [ref=e345]: '`workflow-compiler validate <project-id>` to
+                  fold your edits back in.'
+              - generic [ref=e346]: Lines you add are recorded as human-provided.
+                  Keep the `[id]` markers on
+              - generic [ref=e347]: existing entries so your edits update the right
+                  element.
+              - generic [ref=e348]: -->
+              - generic [ref=e350]: '## Purpose'
+              - generic [ref=e351]: The Order Placement workflow turns a submitted
+                  shopping cart into a confirmed order by validating the cart, reserving
+                  inventory, authorizing payment, and creating the order record.
+              - generic [ref=e353]: '## Metadata'
+              - generic [ref=e354]: '- domain:'
+              - generic [ref=e355]: '- owner: Order Operations Team'
+              - generic [ref=e356]: '- version: 0.1.1'
+              - generic [ref=e357]: '- actors: Shopper, Order Operations'
+              - generic [ref=e358]: '- systems: Order Service, Catalogue Service,
+                  Inventory Service, Payment Gateway'
+              - generic [ref=e359]: '- triggers: checkout.submitted request received
+                  by Order Service'
+              - generic [ref=e360]: '- start states:'
+              - generic [ref=e361]: '- end states: order placed (order_id generated),
+                  order rejected (CartNotEligible or PaymentDeclined), inventory reservation
+                  released (PaymentDeclined)'
+              - generic [ref=e362]: '- tags:'
+              - generic [ref=e364]: '## Inputs'
+              - generic [ref=e365]: '- cart_id'
+              - generic [ref=e366]: '- customer_id'
+              - generic [ref=e367]: '- amount'
+              - generic [ref=e368]: '- currency'
+              - generic [ref=e370]: '## Outputs'
+              - generic [ref=e371]: '- order_id'
+              - generic [ref=e372]: '- authorization_id'
+              - generic [ref=e373]: '- placement_status'
+              - generic [ref=e375]: '## Business Rules'
+              - generic [ref=e376]: '- BR-2: Inventory must be reserved before payment
+                  is authorised'
+              - generic [ref=e377]: '- BR-3: Payment must be authorised before the
+                  order is created'
+              - generic [ref=e378]:
+                - text: '- Orders above $5,000 require a fraud review before payment
+                    authorisation'
+                - generic [ref=e379]: '[human]'
+              - generic [ref=e381]: '## API Interfaces'
+              - generic [ref=e382]: '- Order Service /orders/validate-cart'
+              - generic [ref=e383]: '- Inventory Service /inventory/reserve'
+              - generic [ref=e384]: '- Payment Gateway /payments/authorize'
+              - generic [ref=e385]: '- Order Service /orders/create'
+              - generic [ref=e387]: '## Systems Involved'
+              - generic [ref=e388]: '- Order Service'
+              - generic [ref=e389]: '- Catalogue Service'
+              - generic [ref=e390]: '- Inventory Service'
+              - generic [ref=e391]: '- Payment Gateway'
+              - generic [ref=e392]:
+                - text: '- Notification Service'
+                - generic [ref=e393]: '[human]'
+              - generic [ref=e395]: '## Timers and SLAs'
+              - generic [ref=e396]: '- Validate cart: 5 seconds'
+        - complementary [ref=e237]:
+          - generic [ref=e238]:
+            - heading "Findings" [level=3] [ref=e239]
+            - paragraph [ref=e240]: No findings — spec looks clean.
+          - generic [ref=e241]:
+            - heading "Triggers 1" [level=3] [ref=e242]:
+              - text: Triggers
+              - generic [ref=e243]: '1'
+            - list [ref=e244]:
+              - listitem [ref=e245]:
+                - generic [ref=e246]:
+                  - generic [ref=e247]:
+                    - checkbox "triggers order-fulfilment (fire-and-forget)" [checked]
+                      [ref=e248]
+                    - generic [ref=e249]:
+                      - text: triggers order-fulfilment
+                      - generic [ref=e250]: (fire-and-forget)
+                  - button "Delete" [ref=e251] [cursor=pointer]
+            - paragraph [ref=e252]: Delete a trigger that should not fire (e.g. a
+                customer-initiated flow).
+          - generic [ref=e253]:
+            - heading "Events 4" [level=3] [ref=e254]:
+              - text: Events
+              - generic [ref=e255]: '4'
+            - list [ref=e256]:
+              - listitem [ref=e257]:
+                - generic [ref=e258]: ev1 checkout.submitted
+                - combobox [ref=e259] [cursor=pointer]:
+                  - option "trigger (starts workflow)" [selected]
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)"
+              - listitem [ref=e260]:
+                - generic [ref=e261]: ev2 order_id
+                - combobox [ref=e262] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e263]:
+                - generic [ref=e264]: ev3 authorization_id
+                - combobox [ref=e265] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e266]:
+                - generic [ref=e267]: ev4 placement_status
+                - combobox [ref=e268] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+            - paragraph [ref=e269]:
+              - code [ref=e270]: signal_wait
+              - text: makes a wait a bounded condition instead of a hang.
+          - generic [ref=e271]:
+            - heading "Edit history" [level=3] [ref=e272]
+            - group [ref=e274]:
+              - generic "7/17/2026, 11:17:30 AM — devansh 33 changes across 5 workflows" [ref=e275] [cursor=pointer]:
+                - text: 7/17/2026, 11:17:30 AM
+                - generic [ref=e276]: — devansh
+                - generic [ref=e277]: 33 changes across 5 workflows
+          - paragraph [ref=e278]: The Diagramview shows this workflow's graph as of
+              the last validate; run Classify phases (CVPA) there to color it. Generated
+              code appears in Results after approval.
+  - alert [ref=e29]

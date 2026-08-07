@@ -1,0 +1,698 @@
+{
+  "workflow_id": "feb032bb-7a41-4365-9ad0-df0909acf996",
+  "document_text": "# Demo Order Workflow\n\n<!--\n  workflow-compiler specification (v1) — slug: demo-order-workflow\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nValidate, reserve, and ship a customer order.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Customer, Warehouse\n- systems: Order Service, Inventory Service\n- triggers: order submitted\n- start states: received\n- end states: shipped, rejected\n- tags: \n\n## Inputs\n- order_id\n- customer_id\n\n## Outputs\n- confirmation_id\n\n## Business Rules\n<!-- none -->\n\n## API Interfaces\n<!-- none -->\n\n## Systems Involved\n<!-- none -->\n\n## Timers and SLAs\n<!-- none -->\n\n## Retries\n- Reserve inventory: retry up to 3 times with backoff\n\n## Activities\n- [a1] Validate order\n- [a2] Reserve inventory\n- [a3] Ship order\n\n## Decisions\n- [d1] Is the order valid? — after: a1; yes: a2; no: e1\n\n## Exceptions\n- [e1] OrderInvalid — raised by: a1\n\n## Compensations\n- [c1] Release inventory — compensates: a2\n\n## Events\n- [v1] order shipped — kind: output_emit; emitted by: a3\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n<!-- none -->\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n- [ ] (R6-bounded-waits) What deadline bounds each wait (e.g. 24 hours)?\n  Answer: \n\n## Cross-Workflow Dependencies\n<!-- none -->\n\n## Triggers\n<!-- none -->",
+  "project_id": "262239bc-b6cf-4b04-8b06-5535709b6851",
+  "workflow_metadata": {
+    "name": "Demo Order Workflow",
+    "description": "Validate, reserve, and ship a customer order.",
+    "purpose": "Validate, reserve, and ship a customer order.",
+    "actors": [
+      "Customer",
+      "Warehouse"
+    ],
+    "systems": [
+      "Order Service",
+      "Inventory Service"
+    ],
+    "trigger_events": [
+      "order submitted"
+    ],
+    "start_states": [
+      "received"
+    ],
+    "end_states": [
+      "shipped",
+      "rejected"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "order_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "customer_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "confirmation_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Validate order",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Reserve inventory",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Ship order",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Is the order valid?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "order shipped",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "OrderInvalid",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Reserve inventory: retry up to 3 times with backoff",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Release inventory compensates Reserve inventory",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Validate order",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Reserve inventory",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Ship order",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Is the order valid?",
+          "after": "a1",
+          "yes_target": "a2",
+          "no_target": "e1"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "OrderInvalid",
+          "raised_by": "a1"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Release inventory",
+          "compensates": "a2"
+        }
+      ],
+      "events": [
+        {
+          "id": "v1",
+          "name": "order shipped",
+          "emitted_by": "a3",
+          "kind": "output_emit"
+        }
+      ],
+      "triggers": [],
+      "transitions": []
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): order submitted.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "2 input(s): order_id, customer_id.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "1 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 decision(s) have both branches.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "accepted",
+        "evidence": "Waits exist but no timer/deadline was declared; a signal could block forever.",
+        "question": "What deadline bounds each wait (e.g. 24 hours)?",
+        "answer": null
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "1 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "1 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "No free-form state transitions.",
+        "question": null,
+        "answer": null
+      }
+    ]
+  },
+  "outgoing_triggers": [],
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Validate order",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Reserve inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Ship order",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Is the order valid?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "OrderInvalid",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Release inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "order shipped",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "activity_3",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e7",
+        "source": "activity_1",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e8",
+        "source": "activity_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "activity_3",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 1.0: 0 error(s), 0 warning(s).",
+    "issues": [],
+    "score": 1.0,
+    "health_score": 1.0,
+    "confidence": 1.0,
+    "reviewer": "auto-threshold",
+    "reviewed_at": "2026-07-11T00:03:16.504934Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Fallback by node type (start).",
+        "confidence": 0.3
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Fallback by node type (end).",
+        "confidence": 0.3
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "process",
+        "rationale": "Fallback by node type (task).",
+        "confidence": 0.3
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "process",
+        "rationale": "Fallback by node type (task).",
+        "confidence": 0.3
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "process",
+        "rationale": "Fallback by node type (task).",
+        "confidence": 0.3
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Fallback by node type (decision).",
+        "confidence": 0.3
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "capture",
+        "rationale": "Fallback by node type (event).",
+        "confidence": 0.3
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "process",
+        "rationale": "Fallback by node type (task).",
+        "confidence": 0.3
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "Fallback by node type (event).",
+        "confidence": 0.3
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "exception_1",
+          "event_1"
+        ],
+        "summary": "3 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "decision_1"
+        ],
+        "summary": "1 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_1",
+          "activity_2",
+          "activity_3",
+          "compensation_1"
+        ],
+        "summary": "4 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end"
+        ],
+        "summary": "1 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "DemoOrderWorkflow",
+    "task_queue": "demo-orders",
+    "description": "Validate, reserve, and ship a customer order.",
+    "workflow_inputs": [],
+    "result_type": "str",
+    "activities": [
+      {
+        "name": "ValidateOrder",
+        "source_node_id": null,
+        "description": null,
+        "inputs": [],
+        "params": [],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": 10.0,
+        "retry_policy": null
+      },
+      {
+        "name": "ReserveInventory",
+        "source_node_id": null,
+        "description": null,
+        "inputs": [],
+        "params": [],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      },
+      {
+        "name": "ShipOrder",
+        "source_node_id": null,
+        "description": null,
+        "inputs": [],
+        "params": [],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      }
+    ],
+    "signals": [],
+    "queries": [],
+    "child_workflows": [],
+    "timers": [],
+    "triggers": [],
+    "compensation_activities": [
+      {
+        "name": "ReleaseInventory",
+        "compensates": "ReserveInventory",
+        "source_node_id": null,
+        "description": null,
+        "inputs": [],
+        "params": [],
+        "bindings": [],
+        "retry_policy": null
+      }
+    ],
+    "default_retry_policy": {
+      "maximum_attempts": 3,
+      "initial_interval_seconds": 1.0,
+      "backoff_coefficient": 2.0,
+      "maximum_interval_seconds": null,
+      "non_retryable_error_types": []
+    },
+    "plan": []
+  },
+  "temporal_code": {
+    "target": "python",
+    "package_name": "demo_order_workflow",
+    "files": [
+      {
+        "path": "shared.py",
+        "language": "python",
+        "content": "\"\"\"Shared dataclasses for the DemoOrderWorkflow workflow.\n\nTemporal passes a single dataclass argument to workflows and activities so that\ninputs evolve compatibly. Refine the field types to match your real domain types.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom typing import Any\n\n\n@dataclass\nclass WorkflowInput:\n    \"\"\"Input to the DemoOrderWorkflow workflow.\"\"\"\n\n    payload: dict[str, Any] = field(default_factory=dict)  # TODO: define real fields\n\n\n@dataclass\nclass ValidateOrderInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass ReserveInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass ShipOrderInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass ReleaseInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass"
+      },
+      {
+        "path": "activities.py",
+        "language": "python",
+        "content": "\"\"\"Activities for the DemoOrderWorkflow workflow.\n\nEach activity is a thin, retryable unit of work. Replace the ``NotImplementedError``\nwith real logic; activities may use I/O, SDKs, and blocking calls freely.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom temporalio import activity\n\nfrom shared import (\n    ValidateOrderInput,\n    ReserveInventoryInput,\n    ShipOrderInput,\n    ReleaseInventoryInput,\n)\n\n\n@activity.defn(name=\"ValidateOrder\")\nasync def validate_order(arg: ValidateOrderInput) -> str:\n    \"\"\"TODO: implement this activity.\"\"\"\n    activity.logger.info(\"Running validate_order\", extra={\"input\": arg})\n    # TODO: implement validate_order. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"ReserveInventory\")\nasync def reserve_inventory(arg: ReserveInventoryInput) -> str:\n    \"\"\"TODO: implement this activity.\"\"\"\n    activity.logger.info(\"Running reserve_inventory\", extra={\"input\": arg})\n    # TODO: implement reserve_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"ShipOrder\")\nasync def ship_order(arg: ShipOrderInput) -> str:\n    \"\"\"TODO: implement this activity.\"\"\"\n    activity.logger.info(\"Running ship_order\", extra={\"input\": arg})\n    # TODO: implement ship_order. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"ReleaseInventory\")\nasync def release_inventory(arg: ReleaseInventoryInput) -> str:\n    \"\"\"Compensates ReserveInventory.\"\"\"\n    activity.logger.info(\"Running release_inventory\", extra={\"input\": arg})\n    # TODO: implement release_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\""
+      },
+      {
+        "path": "workflow.py",
+        "language": "python",
+        "content": "\"\"\"The DemoOrderWorkflow Temporal workflow.\n\nWorkflow code must be deterministic: do all I/O inside activities, and use\n``workflow.*`` helpers (``execute_activity``, ``execute_child_workflow``,\n``sleep``, signals, queries) rather than calling the outside world directly.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Callable\nfrom datetime import timedelta\nfrom typing import Any\n\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\n\nwith workflow.unsafe.imports_passed_through():\n    from activities import (\n        validate_order,\n        reserve_inventory,\n        ship_order,\n        release_inventory,\n    )\n    from shared import (\n        WorkflowInput,\n        ValidateOrderInput,\n        ReserveInventoryInput,\n        ShipOrderInput,\n        ReleaseInventoryInput,\n    )\n\n\n\n@workflow.defn\nclass DemoOrderWorkflow:\n    \"\"\"Validate, reserve, and ship a customer order.\"\"\"\n\n    def __init__(self) -> None:\n        self._status: str = \"pending\"\n        # Read-only debug surface (safe in production: no I/O, no wall-clock).\n        self._current_step: str = \"\"\n        self._decisions_taken: list[dict[str, object]] = []\n        self._triggers_fired: list[str] = []\n\n    @workflow.run\n    async def run(self, arg: WorkflowInput) -> str:\n        self._status = \"running\"\n        compensations: list[tuple[Callable[..., Any], Any]] = []\n        try:\n            self._current_step = 'validate_order'\n            workflow.logger.info(\"Running step: ValidateOrder\")\n            validate_order_result = await workflow.execute_activity(\n                validate_order,\n                ValidateOrderInput(),\n                start_to_close_timeout=timedelta(seconds=10),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n            self._current_step = 'reserve_inventory'\n            workflow.logger.info(\"Running step: ReserveInventory\")\n            reserve_inventory_result = await workflow.execute_activity(\n                reserve_inventory,\n                ReserveInventoryInput(),\n                start_to_close_timeout=timedelta(seconds=60),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n            compensations.append((release_inventory, ReleaseInventoryInput()))\n            self._current_step = 'ship_order'\n            workflow.logger.info(\"Running step: ShipOrder\")\n            ship_order_result = await workflow.execute_activity(\n                ship_order,\n                ShipOrderInput(),\n                start_to_close_timeout=timedelta(seconds=60),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n            )\n        except Exception:\n            for _comp_fn, _comp_arg in reversed(compensations):\n                await workflow.execute_activity(\n                    _comp_fn,\n                    _comp_arg,\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                )\n            self._status = \"compensated\"\n            raise\n        self._status = \"completed\"\n        return self._status\n\n    @workflow.query\n    def current_step(self) -> str:\n        \"\"\"The plan step currently executing (read-only debug surface).\"\"\"\n        return self._current_step\n\n    @workflow.query\n    def decisions_taken(self) -> list[dict[str, object]]:\n        \"\"\"Every branch decision so far: branch id, predicate, and path taken.\"\"\"\n        return self._decisions_taken\n\n    @workflow.query\n    def triggers_fired(self) -> list[str]:\n        \"\"\"Cross-workflow triggers fired so far.\"\"\"\n        return self._triggers_fired"
+      },
+      {
+        "path": "worker.py",
+        "language": "python",
+        "content": "\"\"\"Worker process for the DemoOrderWorkflow workflow.\n\nStart a local Temporal dev server in one terminal::\n\n    temporal server start-dev\n\nThen, from inside this package directory, run the worker::\n\n    python worker.py\n\nKeep it running, then start a workflow with ``python starter.py``.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\n\nfrom temporalio import workflow\nfrom temporalio.client import Client\nfrom temporalio.worker import Worker\n\nwith workflow.unsafe.imports_passed_through():\n    from workflow import DemoOrderWorkflow\n    from activities import (\n        validate_order,\n        reserve_inventory,\n        ship_order,\n        release_inventory,\n    )\n\nTASK_QUEUE = \"demo-orders\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and run the worker until cancelled.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n    worker = Worker(\n        client,\n        task_queue=TASK_QUEUE,\n        workflows=[DemoOrderWorkflow],\n        activities=[validate_order, reserve_inventory, ship_order, release_inventory],\n    )\n    print(f\"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.\")\n    await worker.run()\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "starter.py",
+        "language": "python",
+        "content": "\"\"\"Start a DemoOrderWorkflow workflow execution.\n\nStart the Temporal dev server and the worker first::\n\n    temporal server start-dev      # terminal 1\n    python worker.py               # terminal 2\n\nThen, from inside this package directory::\n\n    python starter.py              # terminal 3\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport uuid\n\nfrom temporalio.client import Client\n\nfrom workflow import DemoOrderWorkflow\nfrom shared import WorkflowInput\n\nTASK_QUEUE = \"demo-orders\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and start a single workflow execution.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n\n    handle = await client.start_workflow(\n        DemoOrderWorkflow.run,\n        WorkflowInput(),  # TODO: populate the workflow input fields.\n        id=f\"demo_order_workflow-{uuid.uuid4()}\",\n        task_queue=TASK_QUEUE,\n    )\n    print(f\"Started workflow {handle.id}\")\n\n    # NOTE: workflows that pause on a signal gate block here until signalled\n    # (e.g. via `temporal workflow signal` or a client `handle.signal(...)`).\n    result = await handle.result()\n    print(\"Workflow result:\", result)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "test_stepthrough.py",
+        "language": "python",
+        "content": "\"\"\"Local step-through harness for the DemoOrderWorkflow workflow.\n\nRuns this bundle under a time-skipping Temporal test environment with the\ngenerated stub activities (they return placeholders, no I/O) and **mocked\ntrigger activities** (the real ones call the Temporal client), then inspects\nthe read-only debug queries — proving which steps ran, which branch each\ndecision took, and which cross-workflow triggers fired.\n\nRun from inside this bundle directory::\n\n    pytest test_stepthrough.py -s\n\nRequires: temporalio, pytest, pytest-asyncio (asyncio_mode=auto or the marker).\n\"\"\"\n\nfrom __future__ import annotations\n\nimport uuid\n\nimport pytest\nfrom temporalio import activity\nfrom temporalio.testing import WorkflowEnvironment\nfrom temporalio.worker import UnsandboxedWorkflowRunner, Worker\n\nfrom activities import (\n    validate_order,\n    reserve_inventory,\n    ship_order,\n    release_inventory,\n)\nfrom shared import WorkflowInput\nfrom workflow import DemoOrderWorkflow\nTRIGGERS_CALLED: list[str] = []\n\n\n@pytest.mark.asyncio\nasync def test_stepthrough() -> None:\n    \"\"\"Run the workflow end to end and inspect the debug queries.\"\"\"\n    env = await WorkflowEnvironment.start_time_skipping()\n    try:\n        async with Worker(\n            env.client,\n            task_queue=\"demo-orders\",\n            workflows=[DemoOrderWorkflow],\n            activities=[validate_order, reserve_inventory, ship_order, release_inventory, ],\n            workflow_runner=UnsandboxedWorkflowRunner(),\n        ):\n            handle = await env.client.start_workflow(\n                DemoOrderWorkflow.run,\n                WorkflowInput(),\n                id=f\"stepthrough-{uuid.uuid4()}\",\n                task_queue=\"demo-orders\",\n            )\n            result = await handle.result()\n            assert result == \"completed\"\n            print(\"last step:\", await handle.query(\"current_step\"))\n            print(\"decisions:\", await handle.query(\"decisions_taken\"))\n            print(\"triggers fired:\", await handle.query(\"triggers_fired\"))\n    finally:\n        await env.shutdown()"
+      },
+      {
+        "path": "README.md",
+        "language": "markdown",
+        "content": "# DemoOrderWorkflow (generated Temporal workflow)\n\nValidate, reserve, and ship a customer order.\n\nThis package was generated **deterministically** from a reviewed\n`TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,\nqueries, timers, child workflows, retry policies, and saga compensation are\nwired up, but each activity body raises `NotImplementedError` for you to fill in.\n\nThe files use **flat, absolute imports** (`from activities import ...`), matching\nthe layout in the Temporal Python docs, so each script is run directly from\ninside this directory — no package installation or `PYTHONPATH` needed.\n\n## Files\n\n| File | Purpose |\n|------|---------|\n| `shared.py` | Dataclasses for workflow / activity inputs |\n| `activities.py` | `@activity.defn` units of work (implement these) |\n| `workflow.py` | `@workflow.defn` orchestration: `DemoOrderWorkflow` |\n| `worker.py` | Worker registering the workflow + activities on `demo-orders` |\n| `starter.py` | Client that starts one workflow execution |\n\n## Run it\n\nInstall the SDK and start a local Temporal server:\n\n```bash\npip install temporalio\ntemporal server start-dev          # terminal 1, leave running\n```\n\nFrom **inside this directory**, run the worker and then the starter:\n\n```bash\npython worker.py                   # terminal 2, leave running\npython starter.py                  # terminal 3\n```\n\nThe worker polls the `demo-orders` task queue; the starter submits a single\n`DemoOrderWorkflow` execution and prints its result. Open the Web UI at\nhttp://localhost:8233 to watch the execution.\n\n## Next steps\n\n- Implement each activity in `activities.py`.\n- Populate the `WorkflowInput()` fields in `starter.py`.\n- Replace the default `str` input fields in `shared.py` with real types.\n- Review the generated retry policies and timeouts against your SLAs."
+      }
+    ]
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Validate order\"]\n    activity_2[\"Reserve inventory\"]\n    activity_3[\"Ship order\"]\n    decision_1{\"Is the order valid?\"}\n    exception_1([\"OrderInvalid\"])\n    compensation_1[\"Release inventory\"]\n    event_1([\"order shipped\"])\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> activity_3\n    activity_3 --> end_node\n    activity_1 -.->|on error| exception_1\n    activity_2 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    activity_3 -.->|emits| event_1\n    exception_1 -->|terminates| end_node\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,exception_1,event_1 capture;\n    class decision_1 validate;\n    class activity_1,activity_2,activity_3,compensation_1 process;\n    class end_node activate;",
+    "title": "Demo Order Workflow"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 0.9,
+    "cvpa": 0.15,
+    "temporal": 0.75,
+    "overall": null,
+    "notes": {
+      "cvpa": "9 nodes classified; 0 from model, 9 by fallback.",
+      "temporal": "3 activities, 0 signals, 0 child workflows, 1 compensations.",
+      "temporal_code": "7 files for package 'demo_order_workflow'."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-07-11T00:03:16.501075Z",
+  "updated_at": "2026-07-11T00:03:16.534350Z"
+}

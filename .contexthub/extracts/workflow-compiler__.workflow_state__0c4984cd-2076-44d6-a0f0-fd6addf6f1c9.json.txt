@@ -1,0 +1,1189 @@
+{
+  "workflow_id": "0c4984cd-2076-44d6-a0f0-fd6addf6f1c9",
+  "document_text": "# Order Placement Workflow\n\n<!--\n  workflow-compiler specification (v1) — slug: order-placement\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nTurns a submitted shopping cart into a confirmed order by validating the cart, reserving inventory, authorising payment, and creating the order record.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Shopper, Order Operations\n- systems: Order Service, Catalogue Service, Inventory Service, Payment Gateway\n- triggers: checkout.submitted request to Order Service\n- start states: open\n- end states: rejected, placed\n- tags: \n\n## Inputs\n- cart_id\n- customer_id\n- amount\n- currency\n\n## Outputs\n- order_id\n- authorization_id\n- placement_status\n\n## Business Rules\n- BR-1: A cart may only be placed when it is in the open state\n- BR-2: Inventory must be reserved before payment is authorised\n- BR-3: Payment must be authorised before the order is created\n\n## API Interfaces\n- Order Service: POST /orders/validate-cart\n- Inventory Service: POST /inventory/reserve\n- Payment Gateway: POST /payments/authorize\n- Order Service: POST /orders/create\n\n## Systems Involved\n- Order Service\n- Catalogue Service\n- Inventory Service\n- Payment Gateway\n\n## Timers and SLAs\n- Validate cart must complete within 5 seconds\n- Authorise payment must complete within 30 seconds\n\n## Retries\n- Reserve inventory: retry up to 3 times with exponential backoff starting at 2 seconds\n- Authorise payment: retry up to 2 times with a fixed 5-second delay; do not retry on a PaymentDeclined error\n\n## Activities\n- [a1] Validate cart\n- [a2] Reserve inventory\n- [a3] Authorise payment\n- [a4] Create the order\n\n## Decisions\n- [d1] Is cart eligible? — after: a1; yes: a2; no: e1\n- [d2] Is payment authorised? — after: a3; yes: a4; no: e2\n\n## Exceptions\n- [e1] CartNotEligible\n- [e2] PaymentDeclined\n\n## Compensations\n- [c1] Release inventory — compensates: a2\n\n## Events\n- [v1] [ev1] order_id emitted — emitted by: a4 [human]\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n<!-- none -->\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n- [x] (R4-decisions) For each flagged decision, what happens on the 'no' branch (name the exception or next step)?\n  Answer: d1 (Is cart eligible?) no -> e1 CartNotEligible: reject the checkout and end the workflow. d2 (Is payment authorised?) no -> e2 PaymentDeclined: run c1 Release inventory and end the workflow\n\n## Cross-Workflow Dependencies\n- [x] provides output `order_id` to `order-fulfilment` input `order_id` — Order Fulfilment consumes the order_id produced by Order Placement\n- [x] provides output `order_id` to `order-return` input `order_id` — Order Return consumes the order_id produced by Order Placement",
+  "project_id": "b2a1637b-9006-40a9-96e7-e2fedd58df02",
+  "workflow_metadata": {
+    "name": "Order Placement Workflow",
+    "description": "Turns a submitted shopping cart into a confirmed order by validating the cart, reserving inventory, authorising payment, and creating the order record.",
+    "purpose": "Turns a submitted shopping cart into a confirmed order by validating the cart, reserving inventory, authorising payment, and creating the order record.",
+    "actors": [
+      "Shopper",
+      "Order Operations"
+    ],
+    "systems": [
+      "Order Service",
+      "Catalogue Service",
+      "Inventory Service",
+      "Payment Gateway"
+    ],
+    "trigger_events": [
+      "checkout.submitted request to Order Service"
+    ],
+    "start_states": [
+      "open"
+    ],
+    "end_states": [
+      "rejected",
+      "placed"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "cart_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "customer_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-3",
+        "statement": "amount",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-4",
+        "statement": "currency",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "order_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "authorization_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-3",
+        "statement": "placement_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Validate cart",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Reserve inventory",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Authorise payment",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-4",
+        "statement": "Create the order",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Is cart eligible?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-2",
+        "statement": "Is payment authorised?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-1: A cart may only be placed when it is in the open state",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-2: Inventory must be reserved before payment is authorised",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-3: Payment must be authorised before the order is created",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "[ev1] order_id emitted",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "Order Service: POST /orders/validate-cart",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "Inventory Service: POST /inventory/reserve",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-3",
+        "statement": "Payment Gateway: POST /payments/authorize",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-4",
+        "statement": "Order Service: POST /orders/create",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Order Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Catalogue Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Inventory Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-4",
+        "statement": "Payment Gateway",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "CartNotEligible",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-2",
+        "statement": "PaymentDeclined",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-1",
+        "statement": "Validate cart must complete within 5 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "timer-2",
+        "statement": "Authorise payment must complete within 30 seconds",
+        "category": "timer",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Reserve inventory: retry up to 3 times with exponential backoff starting at 2 seconds",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "Authorise payment: retry up to 2 times with a fixed 5-second delay; do not retry on a PaymentDeclined error",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Release inventory compensates Reserve inventory",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Validate cart",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Reserve inventory",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Authorise payment",
+          "parallel_group": null
+        },
+        {
+          "id": "a4",
+          "name": "Create the order",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Is cart eligible?",
+          "after": "a1",
+          "yes_target": "a2",
+          "no_target": "e1"
+        },
+        {
+          "id": "d2",
+          "question": "Is payment authorised?",
+          "after": "a3",
+          "yes_target": "a4",
+          "no_target": "e2"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "CartNotEligible",
+          "raised_by": null
+        },
+        {
+          "id": "e2",
+          "reason": "PaymentDeclined",
+          "raised_by": null
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Release inventory",
+          "compensates": "a2"
+        }
+      ],
+      "events": [
+        {
+          "id": "v1",
+          "name": "[ev1] order_id emitted",
+          "emitted_by": "a4"
+        }
+      ],
+      "transitions": []
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): checkout.submitted request to Order Service.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "4 input(s): cart_id, customer_id, amount, currency.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "3 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 2 decision(s) have both branches.",
+        "question": null,
+        "answer": "d1 (Is cart eligible?) no -> e1 CartNotEligible: reject the checkout and end the workflow. d2 (Is payment authorised?) no -> e2 PaymentDeclined: run c1 Release inventory and end the workflow"
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "Waits are present and at least one timer/deadline was declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "No free-form state transitions.",
+        "question": null,
+        "answer": null
+      }
+    ]
+  },
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Validate cart",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Reserve inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Authorise payment",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Create the order",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Is cart eligible?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_2",
+        "label": "Is payment authorised?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "CartNotEligible",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "PaymentDeclined",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Release inventory",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "[ev1] order_id emitted",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "activity_3",
+        "target": "decision_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e7",
+        "source": "decision_2",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e8",
+        "source": "decision_2",
+        "target": "exception_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e9",
+        "source": "activity_4",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "activity_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "activity_4",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      },
+      {
+        "id": "e14",
+        "source": "exception_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.95: 0 error(s), 1 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Dead-end node '[ev1] order_id emitted' has no outgoing edges.",
+        "location": "event_1",
+        "suggestion": "Add a transition toward an END node."
+      }
+    ],
+    "score": 0.95,
+    "health_score": 0.95,
+    "confidence": 1.0,
+    "reviewer": "auto-threshold",
+    "reviewed_at": "2026-07-08T17:51:42.208199Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Represents the workflow's initiation point, where the process is triggered.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Represents the workflow's conclusion, with potential for final notifications or fulfillments.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "validate",
+        "rationale": "Involves validating the cart, which is a checking/verification activity.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "process",
+        "rationale": "Performs a core operational task of reserving inventory, transforming the workflow's state.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "validate",
+        "rationale": "Authorizes payment, which involves verification and approval.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "process",
+        "rationale": "Creates the order, a central transformation/task in the workflow.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Acts as a decision gate based on the validation outcome of the cart.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "decision_2",
+        "phase": "validate",
+        "rationale": "Evaluates the outcome of the payment authorization.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "capture",
+        "rationale": "Captures an exceptional event (CartNotEligible) that alters the workflow.",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "exception_2",
+        "phase": "capture",
+        "rationale": "Captures another exceptional event (PaymentDeclined).",
+        "confidence": 0.7
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "process",
+        "rationale": "Undoes a previous action (releasing inventory) as part of error handling.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "event_1",
+        "phase": "activate",
+        "rationale": "Emits a signal (order_id) that could trigger downstream processes or notifications.",
+        "confidence": 0.9
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "exception_1",
+          "exception_2"
+        ],
+        "summary": "3 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "activity_1",
+          "activity_3",
+          "decision_1",
+          "decision_2"
+        ],
+        "summary": "4 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_2",
+          "activity_4",
+          "compensation_1"
+        ],
+        "summary": "3 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "event_1"
+        ],
+        "summary": "2 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "OrderProcessingWorkflow",
+    "task_queue": "order-processing-queue",
+    "description": "Manages the processing of orders from cart validation to payment authorization and order creation.",
+    "workflow_inputs": [
+      {
+        "name": "cart_id",
+        "type": "int"
+      },
+      {
+        "name": "customer_id",
+        "type": "int"
+      },
+      {
+        "name": "amount",
+        "type": "float"
+      },
+      {
+        "name": "currency",
+        "type": "str"
+      }
+    ],
+    "result_type": "str",
+    "activities": [
+      {
+        "name": "ValidateCart",
+        "source_node_id": "activity_1",
+        "description": "Validate the cart contents and eligibility.",
+        "inputs": [],
+        "params": [],
+        "outputs": [
+          "eligibility_status"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 5.0,
+        "retry_policy": null
+      },
+      {
+        "name": "ReserveInventory",
+        "source_node_id": "activity_2",
+        "description": "Reserve inventory for the cart items.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "cart_id",
+            "type": "int"
+          }
+        ],
+        "outputs": [
+          "inventory_reservation_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "AuthorisePayment",
+        "source_node_id": "activity_3",
+        "description": "Authorise payment for the order.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "amount",
+            "type": "float"
+          },
+          {
+            "name": "currency",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "payment_authorisation_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 2,
+          "initial_interval_seconds": 5.0,
+          "backoff_coefficient": 1.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": [
+            "PaymentDeclined"
+          ]
+        }
+      },
+      {
+        "name": "CreateOrder",
+        "source_node_id": "activity_4",
+        "description": "Create the order in the system.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "cart_id",
+            "type": "int"
+          },
+          {
+            "name": "payment_authorisation_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "order_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      }
+    ],
+    "signals": [
+      {
+        "name": "order_id_emitted",
+        "description": "Signal emitted when the order ID is generated.",
+        "payload": [
+          "order_id"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetOrderStatus",
+        "description": "Query to get the current status of the order.",
+        "returns": "str",
+        "state_field": "placement_status"
+      }
+    ],
+    "child_workflows": [],
+    "timers": [],
+    "compensation_activities": [
+      {
+        "name": "ReleaseInventory",
+        "compensates": "ReserveInventory",
+        "source_node_id": "compensation_1",
+        "description": "Release reserved inventory if payment fails.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "inventory_reservation_id",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "inventory_reservation_id",
+            "source": "step_output",
+            "ref": "ReserveInventory"
+          }
+        ],
+        "retry_policy": null
+      }
+    ],
+    "default_retry_policy": null,
+    "plan": [
+      {
+        "id": "S1",
+        "kind": "activity",
+        "description": null,
+        "ref": "ValidateCart",
+        "bindings": [],
+        "result_name": "eligibility",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "D1",
+        "kind": "branch",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": "eligibility.eligible",
+        "lanes": [
+          [
+            {
+              "id": "S2",
+              "kind": "activity",
+              "description": null,
+              "ref": "ReserveInventory",
+              "bindings": [
+                {
+                  "param": "cart_id",
+                  "source": "workflow_input",
+                  "ref": "cart_id"
+                }
+              ],
+              "result_name": "inventory_reservation",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S3",
+              "kind": "activity",
+              "description": null,
+              "ref": "AuthorisePayment",
+              "bindings": [
+                {
+                  "param": "amount",
+                  "source": "workflow_input",
+                  "ref": "amount"
+                },
+                {
+                  "param": "currency",
+                  "source": "workflow_input",
+                  "ref": "currency"
+                }
+              ],
+              "result_name": "payment_authorisation",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S4",
+              "kind": "activity",
+              "description": null,
+              "ref": "CreateOrder",
+              "bindings": [
+                {
+                  "param": "cart_id",
+                  "source": "workflow_input",
+                  "ref": "cart_id"
+                },
+                {
+                  "param": "payment_authorisation_id",
+                  "source": "step_output",
+                  "ref": "S3"
+                }
+              ],
+              "result_name": "order",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "SIG1",
+              "kind": "signal_gate",
+              "description": null,
+              "ref": null,
+              "bindings": [],
+              "result_name": null,
+              "signal": "order_id_emitted",
+              "condition": "order.status == 'created'",
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ],
+          [
+            {
+              "id": "EX1",
+              "kind": "signal_gate",
+              "description": null,
+              "ref": null,
+              "bindings": [],
+              "result_name": null,
+              "signal": "CartNotEligible",
+              "condition": "true",
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ]
+        ]
+      },
+      {
+        "id": "EX2",
+        "kind": "signal_gate",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": "PaymentDeclined",
+        "condition": "true",
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      }
+    ]
+  },
+  "temporal_code": {
+    "target": "python",
+    "package_name": "order_processing_workflow",
+    "files": [
+      {
+        "path": "shared.py",
+        "language": "python",
+        "content": "\"\"\"Shared dataclasses for the OrderProcessingWorkflow workflow.\n\nTemporal passes a single dataclass argument to workflows and activities so that\ninputs evolve compatibly. Refine the field types to match your real domain types.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom typing import Any\n\n\n@dataclass\nclass WorkflowInput:\n    \"\"\"Input to the OrderProcessingWorkflow workflow.\"\"\"\n\n    cart_id: int = 0\n    customer_id: int = 0\n    amount: float = 0.0\n    currency: str = \"\"\n\n\n@dataclass\nclass ValidateCartInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    pass\n\n\n@dataclass\nclass ReserveInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    cart_id: int = 0\n\n\n@dataclass\nclass AuthorisePaymentInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    amount: float = 0.0\n    currency: str = \"\"\n\n\n@dataclass\nclass CreateOrderInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    cart_id: int = 0\n    payment_authorisation_id: str = \"\"\n\n\n@dataclass\nclass ReleaseInventoryInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    inventory_reservation_id: str = \"\""
+      },
+      {
+        "path": "activities.py",
+        "language": "python",
+        "content": "\"\"\"Activities for the OrderProcessingWorkflow workflow.\n\nEach activity is a thin, retryable unit of work. Replace the ``NotImplementedError``\nwith real logic; activities may use I/O, SDKs, and blocking calls freely.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom temporalio import activity\n\nfrom shared import (\n    ValidateCartInput,\n    ReserveInventoryInput,\n    AuthorisePaymentInput,\n    CreateOrderInput,\n    ReleaseInventoryInput,\n)\n\n\n@activity.defn(name=\"ValidateCart\")\nasync def validate_cart(arg: ValidateCartInput) -> str:\n    \"\"\"Validate the cart contents and eligibility.\"\"\"\n    activity.logger.info(\"Running validate_cart\", extra={\"input\": arg})\n    # TODO: implement validate_cart. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"ReserveInventory\")\nasync def reserve_inventory(arg: ReserveInventoryInput) -> str:\n    \"\"\"Reserve inventory for the cart items.\"\"\"\n    activity.logger.info(\"Running reserve_inventory\", extra={\"input\": arg})\n    # TODO: implement reserve_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"AuthorisePayment\")\nasync def authorise_payment(arg: AuthorisePaymentInput) -> str:\n    \"\"\"Authorise payment for the order.\"\"\"\n    activity.logger.info(\"Running authorise_payment\", extra={\"input\": arg})\n    # TODO: implement authorise_payment. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"CreateOrder\")\nasync def create_order(arg: CreateOrderInput) -> str:\n    \"\"\"Create the order in the system.\"\"\"\n    activity.logger.info(\"Running create_order\", extra={\"input\": arg})\n    # TODO: implement create_order. Returns a placeholder so the bundle runs as-is.\n    return \"\"\n\n@activity.defn(name=\"ReleaseInventory\")\nasync def release_inventory(arg: ReleaseInventoryInput) -> str:\n    \"\"\"Release reserved inventory if payment fails.\"\"\"\n    activity.logger.info(\"Running release_inventory\", extra={\"input\": arg})\n    # TODO: implement release_inventory. Returns a placeholder so the bundle runs as-is.\n    return \"\""
+      },
+      {
+        "path": "workflow.py",
+        "language": "python",
+        "content": "\"\"\"The OrderProcessingWorkflow Temporal workflow.\n\nWorkflow code must be deterministic: do all I/O inside activities, and use\n``workflow.*`` helpers (``execute_activity``, ``execute_child_workflow``,\n``sleep``, signals, queries) rather than calling the outside world directly.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Callable\nfrom datetime import timedelta\nfrom typing import Any\n\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\n\nwith workflow.unsafe.imports_passed_through():\n    from activities import (\n        validate_cart,\n        reserve_inventory,\n        authorise_payment,\n        create_order,\n        release_inventory,\n    )\n    from shared import (\n        WorkflowInput,\n        ValidateCartInput,\n        ReserveInventoryInput,\n        AuthorisePaymentInput,\n        CreateOrderInput,\n        ReleaseInventoryInput,\n    )\n\n\n\n@workflow.defn\nclass OrderProcessingWorkflow:\n    \"\"\"Manages the processing of orders from cart validation to payment authorization and order creation.\"\"\"\n\n    def __init__(self) -> None:\n        self._status: str = \"pending\"\n        self._order_id_emitted_received: bool = False\n\n    @workflow.run\n    async def run(self, arg: WorkflowInput) -> str:\n        self._status = \"running\"\n        compensations: list[tuple[Callable[..., Any], Any]] = []\n        try:\n            workflow.logger.info(\"Running step: ValidateCart\")\n            eligibility = await workflow.execute_activity(\n                validate_cart,\n                ValidateCartInput(),\n                start_to_close_timeout=timedelta(seconds=5),\n            )\n            should_eligibility_eligible = True  # TODO: set from a real condition: eligibility.eligible\n            if should_eligibility_eligible:\n                workflow.logger.info(\"Running step: ReserveInventory\")\n                inventory_reservation = await workflow.execute_activity(\n                    reserve_inventory,\n                    ReserveInventoryInput(cart_id=arg.cart_id),\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2, maximum_attempts=3),\n                )\n                compensations.append((release_inventory, ReleaseInventoryInput(inventory_reservation_id=inventory_reservation)))\n                workflow.logger.info(\"Running step: AuthorisePayment\")\n                payment_authorisation = await workflow.execute_activity(\n                    authorise_payment,\n                    AuthorisePaymentInput(amount=arg.amount, currency=arg.currency),\n                    start_to_close_timeout=timedelta(seconds=30),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), backoff_coefficient=1, maximum_attempts=2, non_retryable_error_types=['PaymentDeclined']),\n                )\n                workflow.logger.info(\"Running step: CreateOrder\")\n                order = await workflow.execute_activity(\n                    create_order,\n                    CreateOrderInput(cart_id=arg.cart_id, payment_authorisation_id=payment_authorisation),\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n                # Wait until: order.status == 'created'\n                workflow.logger.info(\"Waiting for signal: order_id_emitted\")\n                # TODO: pass timeout= to wait_condition so a signal that never arrives can't block the workflow forever.\n                await workflow.wait_condition(lambda: self._order_id_emitted_received)\n            else:\n                # Wait until: true\n                await workflow.wait_condition(lambda: True)  # TODO: real condition\n            # Wait until: true\n            await workflow.wait_condition(lambda: True)  # TODO: real condition\n        except Exception:\n            for _comp_fn, _comp_arg in reversed(compensations):\n                await workflow.execute_activity(\n                    _comp_fn,\n                    _comp_arg,\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n            self._status = \"compensated\"\n            raise\n        self._status = \"completed\"\n        return self._status\n\n    @workflow.signal\n    def order_id_emitted(self, order_id: str) -> None:\n        \"\"\"Handle the 'order_id_emitted' signal.\"\"\"\n        self._order_id_emitted_received = True\n\n    @workflow.query\n    def get_order_status(self) -> str:\n        \"\"\"Query to get the current status of the order.\"\"\"\n        return self._status"
+      },
+      {
+        "path": "worker.py",
+        "language": "python",
+        "content": "\"\"\"Worker process for the OrderProcessingWorkflow workflow.\n\nStart a local Temporal dev server in one terminal::\n\n    temporal server start-dev\n\nThen, from inside this package directory, run the worker::\n\n    python worker.py\n\nKeep it running, then start a workflow with ``python starter.py``.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\n\nfrom temporalio import workflow\nfrom temporalio.client import Client\nfrom temporalio.worker import Worker\n\nwith workflow.unsafe.imports_passed_through():\n    from workflow import OrderProcessingWorkflow\n    from activities import (\n        validate_cart,\n        reserve_inventory,\n        authorise_payment,\n        create_order,\n        release_inventory,\n    )\n\nTASK_QUEUE = \"order-processing-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and run the worker until cancelled.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n    worker = Worker(\n        client,\n        task_queue=TASK_QUEUE,\n        workflows=[OrderProcessingWorkflow],\n        activities=[validate_cart, reserve_inventory, authorise_payment, create_order, release_inventory],\n    )\n    print(f\"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.\")\n    await worker.run()\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "starter.py",
+        "language": "python",
+        "content": "\"\"\"Start a OrderProcessingWorkflow workflow execution.\n\nStart the Temporal dev server and the worker first::\n\n    temporal server start-dev      # terminal 1\n    python worker.py               # terminal 2\n\nThen, from inside this package directory::\n\n    python starter.py              # terminal 3\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport uuid\n\nfrom temporalio.client import Client\n\nfrom workflow import OrderProcessingWorkflow\nfrom shared import WorkflowInput\n\nTASK_QUEUE = \"order-processing-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and start a single workflow execution.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n\n    handle = await client.start_workflow(\n        OrderProcessingWorkflow.run,\n        WorkflowInput(),  # TODO: populate the workflow input fields.\n        id=f\"order_processing_workflow-{uuid.uuid4()}\",\n        task_queue=TASK_QUEUE,\n    )\n    print(f\"Started workflow {handle.id}\")\n\n    # NOTE: workflows that pause on a signal gate block here until signalled\n    # (e.g. via `temporal workflow signal` or a client `handle.signal(...)`).\n    result = await handle.result()\n    print(\"Workflow result:\", result)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "README.md",
+        "language": "markdown",
+        "content": "# OrderProcessingWorkflow (generated Temporal workflow)\n\nManages the processing of orders from cart validation to payment authorization and order creation.\n\nThis package was generated **deterministically** from a reviewed\n`TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,\nqueries, timers, child workflows, retry policies, and saga compensation are\nwired up, but each activity body raises `NotImplementedError` for you to fill in.\n\nThe files use **flat, absolute imports** (`from activities import ...`), matching\nthe layout in the Temporal Python docs, so each script is run directly from\ninside this directory — no package installation or `PYTHONPATH` needed.\n\n## Files\n\n| File | Purpose |\n|------|---------|\n| `shared.py` | Dataclasses for workflow / activity inputs |\n| `activities.py` | `@activity.defn` units of work (implement these) |\n| `workflow.py` | `@workflow.defn` orchestration: `OrderProcessingWorkflow` |\n| `worker.py` | Worker registering the workflow + activities on `order-processing-queue` |\n| `starter.py` | Client that starts one workflow execution |\n\n## Run it\n\nInstall the SDK and start a local Temporal server:\n\n```bash\npip install temporalio\ntemporal server start-dev          # terminal 1, leave running\n```\n\nFrom **inside this directory**, run the worker and then the starter:\n\n```bash\npython worker.py                   # terminal 2, leave running\npython starter.py                  # terminal 3\n```\n\nThe worker polls the `order-processing-queue` task queue; the starter submits a single\n`OrderProcessingWorkflow` execution and prints its result. Open the Web UI at\nhttp://localhost:8233 to watch the execution.\n\n## Next steps\n\n- Implement each activity in `activities.py`.\n- Populate the `WorkflowInput()` fields in `starter.py`.\n- Replace the default `str` input fields in `shared.py` with real types.\n- Review the generated retry policies and timeouts against your SLAs.\n- Send the workflow's signal(s) (order_id_emitted) to release any wait gates."
+      }
+    ]
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Validate cart\"]\n    activity_2[\"Reserve inventory\"]\n    activity_3[\"Authorise payment\"]\n    activity_4[\"Create the order\"]\n    decision_1{\"Is cart eligible?\"}\n    decision_2{\"Is payment authorised?\"}\n    exception_1([\"CartNotEligible\"])\n    exception_2([\"PaymentDeclined\"])\n    compensation_1[\"Release inventory\"]\n    event_1([\"[ev1] order_id emitted\"])\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> activity_3\n    activity_3 --> decision_2\n    decision_2 -->|yes| activity_4\n    decision_2 -->|no| exception_2\n    activity_4 --> end_node\n    activity_2 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    activity_4 -.->|emits| event_1\n    exception_1 -->|terminates| end_node\n    exception_2 -->|terminates| end_node\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,exception_1,exception_2 capture;\n    class activity_1,activity_3,decision_1,decision_2 validate;\n    class activity_2,activity_4,compensation_1 process;\n    class end_node,event_1 activate;",
+    "title": "Order Placement Workflow"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 0.9,
+    "cvpa": 0.9292,
+    "temporal": 0.75,
+    "overall": null,
+    "notes": {
+      "cvpa": "12 nodes classified; 12 from model, 0 by fallback.",
+      "temporal": "4 activities, 1 signals, 0 child workflows, 1 compensations.",
+      "temporal_code": "6 files for package 'order_processing_workflow'."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-07-08T17:51:42.190039Z",
+  "updated_at": "2026-07-08T17:55:25.097758Z"
+}

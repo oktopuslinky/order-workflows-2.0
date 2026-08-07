@@ -1,0 +1,616 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - link "workflow·compiler" [ref=e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e4]: document → spec → validate → approve → code
+    - navigation [ref=e5]:
+      - link "Projects" [ref=e6] [cursor=pointer]:
+        - /url: /
+      - link "Guide" [ref=e7] [cursor=pointer]:
+        - /url: /guide
+      - button "Switch to dark theme" [ref=e8]: ☾ Dark
+  - main [ref=e9]:
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - link "Back to projects" [ref=e14] [cursor=pointer]:
+          - /url: /
+          - text: ←
+        - generic [ref=e15]: Needs attention
+        - generic [ref=e16]: 1 blocking
+        - generic [ref=e17]:
+          - button "Spec" [ref=e18] [cursor=pointer]
+          - button "Results" [ref=e19] [cursor=pointer]
+        - generic [ref=e20]:
+          - button "Edit request" [disabled] [ref=e21]
+          - button "Save" [disabled] [ref=e22]
+          - button "Validate" [disabled] [ref=e23]
+          - button "Approve" [disabled] [ref=e24]
+      - paragraph [ref=e25]: Edited since last validate — Validate must run before
+          Approve.
+      - generic [ref=e289]:
+        - generic [ref=e290]:
+          - heading "Edit request" [level=3] [ref=e291]
+          - button "Close" [disabled] [ref=e292]
+        - paragraph [ref=e293]:
+          - text: Describe changes per workflow (see
+          - code [ref=e294]: docs/EDIT_FORMAT_GUIDE.md
+          - text: '). Applying an edit re-arms the gate: Validate and Approve must
+              run again.'
+        - textbox [ref=e295]: '# Edit Request ## Workflow: order-fulfillment-workflow
+            ### Add - A business rule: gift wrapping is available on request for orders
+            under 10 kg. ## Reason Frontend smoke test (scenario 6).'
+        - generic [ref=e296]:
+          - button "Upload .md" [disabled] [ref=e297]
+          - textbox "Author (optional)" [ref=e298]: devansh
+          - button "Applying…" [disabled] [ref=e374]
+        - generic [ref=e300]:
+          - paragraph [ref=e301]: Edit history
+          - generic [ref=e302]:
+            - paragraph [ref=e303]: 7/17/2026, 10:30:21 AM — devansh
+            - paragraph [ref=e304]: 'order-fulfillment-workflow: add activity; add
+                rule; modify retry; modify owner; remove rule; metadata: 1 applied,
+                0 dropped, 0 flagged; facts: 4 applied, 0 dropped, 0 flagged; version
+                bumped to 0.1.1'
+      - generic [ref=e26]:
+        - complementary [ref=e27]:
+          - paragraph [ref=e28]: Workflows
+          - button "order-fulfillment-workflow 1" [ref=e29] [cursor=pointer]:
+            - generic [ref=e30]: order-fulfillment-workflow
+            - generic [ref=e31]: '1'
+        - generic [ref=e32]:
+          - generic [ref=e33]:
+            - button "editor" [ref=e34] [cursor=pointer]
+            - button "preview" [ref=e35] [cursor=pointer]
+            - button "diagram" [ref=e36] [cursor=pointer]
+          - generic [ref=e41]:
+            - generic [ref=e375]:
+              - generic [ref=e376]: '1'
+              - generic [ref=e377]: '2'
+              - generic [ref=e378]: '3'
+              - generic [ref=e379]: '4'
+              - generic [ref=e380]: '5'
+              - generic [ref=e381]: '6'
+              - generic [ref=e382]: '7'
+              - generic [ref=e383]: '8'
+              - generic [ref=e384]: '9'
+              - generic [ref=e385]: '10'
+              - generic [ref=e386]: '11'
+              - generic [ref=e387]: '12'
+              - generic [ref=e388]: '13'
+              - generic [ref=e389]: '14'
+              - generic [ref=e390]: '15'
+              - generic [ref=e391]: '16'
+              - generic [ref=e392]: '17'
+              - generic [ref=e393]: '18'
+              - generic [ref=e394]: '19'
+              - generic [ref=e395]: '20'
+              - generic [ref=e396]: '21'
+              - generic [ref=e397]: '22'
+              - generic [ref=e398]: '23'
+              - generic [ref=e399]: '24'
+              - generic [ref=e400]: '25'
+              - generic [ref=e401]: '26'
+              - generic [ref=e402]: '27'
+              - generic [ref=e403]: '28'
+              - generic [ref=e404]: '29'
+              - generic [ref=e405]: '30'
+              - generic [ref=e406]: '31'
+              - generic [ref=e407]: '32'
+              - generic [ref=e408]: '33'
+              - generic [ref=e409]: '34'
+              - generic [ref=e410]: '35'
+              - generic [ref=e411]: '36'
+              - generic [ref=e412]: '37'
+              - generic [ref=e413]: '38'
+              - generic [ref=e414]: '39'
+              - generic [ref=e415]: '40'
+              - generic [ref=e416]: '41'
+              - generic [ref=e417]: '42'
+              - generic [ref=e418]: '43'
+              - generic [ref=e419]: '44'
+              - generic [ref=e420]: '45'
+              - generic [ref=e421]: '46'
+              - generic [ref=e422]: '47'
+              - generic [ref=e423]: '48'
+              - generic [ref=e424]: '49'
+              - generic [ref=e425]: '50'
+              - generic [ref=e426]: '51'
+              - generic [ref=e427]: '52'
+              - generic [ref=e428]: '53'
+              - generic [ref=e429]: '54'
+              - generic [ref=e430]: '55'
+              - generic [ref=e431]: '56'
+              - generic [ref=e432]: '57'
+              - generic [ref=e433]: '58'
+              - generic [ref=e434]: '59'
+              - generic [ref=e435]: '60'
+              - generic [ref=e436]: '61'
+              - generic [ref=e437]: '62'
+              - generic [ref=e438]: '63'
+              - generic [ref=e439]: '64'
+              - generic [ref=e440]: '65'
+              - generic [ref=e441]: '66'
+              - generic [ref=e442]: '67'
+              - generic [ref=e443]: '68'
+            - textbox [ref=e112]:
+              - generic [ref=e113]: '# Order Fulfillment Workflow'
+              - generic [ref=e115]: <!--
+              - generic [ref=e116]: 'workflow-compiler specification (v1) — slug:
+                  order-fulfillment-workflow'
+              - generic [ref=e117]: This file is a projection of the structured spec.
+                  Edit it freely, then run
+              - generic [ref=e118]: '`workflow-compiler validate <project-id>` to
+                  fold your edits back in.'
+              - generic [ref=e119]: Lines you add are recorded as human-provided.
+                  Keep the `[id]` markers on
+              - generic [ref=e120]: existing entries so your edits update the right
+                  element.
+              - generic [ref=e121]: -->
+              - generic [ref=e123]: '## Purpose'
+              - generic [ref=e124]: This workflow describes how the company fulfills
+                  a customer order from submission through delivery, including payment,
+                  inventory, shipping, and failure handling.
+              - generic [ref=e126]: '## Metadata'
+              - generic [ref=e127]: '- domain:'
+              - generic [ref=e128]: '- owner: Fulfillment Operations Team'
+              - generic [ref=e129]: '- version: 0.1.1'
+              - generic [ref=e130]: '- actors: Customer, Warehouse'
+              - generic [ref=e131]: '- systems: Online Store, Payment Gateway, Warehouse
+                  Management System, Carrier API, Email Service'
+              - generic [ref=e132]: '- triggers: Customer submits an order through
+                  the online store'
+              - generic [ref=e133]: '- start states: Order received'
+              - generic [ref=e134]: '- end states: Order delivered, Order cancelled,
+                  Order failed'
+              - generic [ref=e135]: '- tags:'
+              - generic [ref=e137]: '## Inputs'
+              - generic [ref=e138]: '- Order submission through online store'
+              - generic [ref=e140]: '## Outputs'
+              - generic [ref=e141]: '- Order confirmation to customer'
+              - generic [ref=e142]: '- Inventory reservation status'
+              - generic [ref=e143]: '- Shipment creation status'
+              - generic [ref=e144]: '- Order delivery status'
+              - generic [ref=e145]: '- Cancellation notification to customer'
+              - generic [ref=e146]: '- Failure notification to customer'
+              - generic [ref=e148]: '## Business Rules'
+              - generic [ref=e149]: '- Orders must be shipped within 24 hours of payment
+                  confirmation'
+              - generic [ref=e150]:
+                - text: '- Partial shipments are not allowed — an order ships only
+                    when every item is available'
+                - generic [ref=e151]: '[human]'
+              - generic [ref=e153]: '## API Interfaces'
+              - generic [ref=e154]: '- Payment Gateway (validate payment)'
+              - generic [ref=e155]: '- Warehouse Management System (reserve inventory,
+                  pick and pack)'
+              - generic [ref=e156]: '- Carrier API (create shipment)'
+              - generic [ref=e158]: '## Systems Involved'
+              - generic [ref=e159]: '- Online Store'
+              - generic [ref=e160]: '- Payment Gateway'
+              - generic [ref=e161]: '- Warehouse Management System'
+              - generic [ref=e162]: '- Carrier API'
+              - generic [ref=e163]: '- Email Service'
+              - generic [ref=e165]: '## Timers and SLAs'
+              - generic [ref=e166]: '- 24 hours for shipment after payment confirmation'
+              - generic [ref=e168]: '## Retries'
+              - generic [ref=e169]:
+                - text: '- Up to 5 retries for shipment creation failure'
+                - generic [ref=e170]: '[human]'
+              - generic [ref=e171]: '- up to 3 times'
+              - generic [ref=e173]: '## Activities'
+              - generic [ref=e174]:
+                - text: '-'
+                - generic [ref=e175]: '[a1]'
+                - text: Validate order and payment
+              - generic [ref=e176]:
+                - text: '-'
+                - generic [ref=e177]: '[a2]'
+                - text: Reserve inventory
+                - generic [ref=e178]: '— parallel: g1'
+              - generic [ref=e179]:
+                - text: '-'
+                - generic [ref=e180]: '[a3]'
+                - text: Send order confirmation
+                - generic [ref=e181]: '— parallel: g1'
+              - generic [ref=e182]:
+                - text: '-'
+                - generic [ref=e183]: '[a4]'
+                - text: Notify warehouse to begin picking
+                - generic [ref=e184]: '— parallel: g1'
+              - generic [ref=e185]:
+                - text: '-'
+                - generic [ref=e186]: '[a5]'
+                - text: Pick and pack items
+              - generic [ref=e187]:
+                - text: '-'
+                - generic [ref=e188]: '[a6]'
+                - text: Create shipment via Carrier API
+              - generic [ref=e189]:
+                - text: '-'
+                - generic [ref=e190]: '[a7]'
+                - text: Ship order
+              - generic [ref=e191]:
+                - text: '-'
+                - generic [ref=e192]: '[a8]'
+                - text: Release reserved inventory
+              - generic [ref=e193]:
+                - text: '-'
+                - generic [ref=e194]: '[a9]'
+                - text: Obtain manager approval for orders above $1,000
+        - complementary [ref=e196]:
+          - generic [ref=e197]:
+            - heading "Findings" [level=3] [ref=e198]
+            - list [ref=e199]:
+              - listitem [ref=e200]:
+                - ? button "BLOCK Graph review graph health 0.20 below threshold 0.90
+                    — left pending for manual review → review and approve the graph
+                    manually" [ref=e201] [cursor=pointer]
+                  : - generic [ref=e202]:
+                      - generic [ref=e203]: BLOCK
+                      - generic [ref=e204]: Graph review
+                    - paragraph [ref=e205]: graph health 0.20 below threshold 0.90
+                        — left pending for manual review
+                    - paragraph [ref=e206]: → review and approve the graph manually
+              - listitem [ref=e207]:
+                - ? 'button "WARN grounding: activity:a9: No explicit evidence in
+                    the source document for manager approval for orders above $1,000
+                    being an activity" [ref=e208] [cursor=pointer]'
+                  : - generic [ref=e209]: WARN
+                    - paragraph [ref=e211]: 'grounding: activity:a9: No explicit evidence
+                        in the source document for manager approval for orders above
+                        $1,000 being an activity'
+              - listitem [ref=e212]:
+                - ? 'button "WARN grounding: activity:a10: No evidence in the source
+                    document for notifying the finance team as an activity" [ref=e213]
+                    [cursor=pointer]'
+                  : - generic [ref=e214]: WARN
+                    - paragraph [ref=e216]: 'grounding: activity:a10: No evidence
+                        in the source document for notifying the finance team as an
+                        activity'
+              - listitem [ref=e217]:
+                - ? 'button "WARN grounding: human-provided element ''rule'' is not
+                    supported by the document — please confirm or remove it yourself"
+                    [ref=e218] [cursor=pointer]'
+                  : - generic [ref=e219]: WARN
+                    - paragraph [ref=e221]: 'grounding: human-provided element ''rule''
+                        is not supported by the document — please confirm or remove
+                        it yourself'
+              - listitem [ref=e222]:
+                - 'button "WARN grounding: retries: Up to 5 retries for shipment creation failure" [ref=e223] [cursor=pointer]':
+                  - generic [ref=e224]: WARN
+                  - paragraph [ref=e226]: 'grounding: retries: Up to 5 retries for
+                      shipment creation failure'
+              - listitem [ref=e227]:
+                - 'button "WARN grounding: retries: Up to 3 retries for shipment creation failure" [ref=e228] [cursor=pointer]':
+                  - generic [ref=e229]: WARN
+                  - paragraph [ref=e231]: 'grounding: retries: Up to 3 retries for
+                      shipment creation failure'
+              - listitem [ref=e232]:
+                - ? 'button "WARN grounding: exceptions:e3: SLA-breach alert is mentioned
+                    in rules but not explicitly as an exception in the source document"
+                    [ref=e233] [cursor=pointer]'
+                  : - generic [ref=e234]: WARN
+                    - paragraph [ref=e236]: 'grounding: exceptions:e3: SLA-breach
+                        alert is mentioned in rules but not explicitly as an exception
+                        in the source document'
+          - generic [ref=e237]:
+            - heading "Open questions 3" [level=3] [ref=e238]:
+              - text: Open questions
+              - generic [ref=e239]: '3'
+            - list [ref=e240]:
+              - listitem [ref=e241]:
+                - generic [ref=e242]:
+                  - checkbox [checked] [ref=e243]
+                  - generic [ref=e244]: R2b-input-namesProvide snake_case names for
+                      these inputs (e.g. customerId -> customer_id).
+                - textbox "Answer…" [ref=e245]: Order submission through online store
+                    -> order_submission
+              - listitem [ref=e246]:
+                - generic [ref=e247]:
+                  - checkbox [checked] [ref=e248]
+                  - generic [ref=e249]: 'R4-decisionsRoute the ''no'' branch of d3
+                      in this spec''s Decisions section, e.g. `- [d3] Is order value
+                      above $1,000? — after: a1; no: e1`. Declared exceptions: e1
+                      (Payment Declined), e2 (Shipment Creation Failed), e3 (SLA-breach
+                      alert). A ''no'' branch may target an exception id, an activity
+                      id, or a terminal token (end, rejected, failed, completed).
+                      You can also answer here, one pair per line, as `d3 -> e1` —
+                      prose is not applied.'
+                - textbox "Answer…" [ref=e250]: 'Routed in the Decisions section:
+                    d3 yes -> a9, no -> a2'
+              - listitem [ref=e251]:
+                - generic [ref=e252]:
+                  - checkbox [checked] [ref=e253]
+                  - generic [ref=e254]: R9-state-transitionsConfirm these state transitions
+                      are descriptive only (they will be ignored by code generation).
+                - textbox "Answer…" [ref=e255]: Confirmed — descriptive only
+          - generic [ref=e256]:
+            - heading "Events 6" [level=3] [ref=e257]:
+              - text: Events
+              - generic [ref=e258]: '6'
+            - list [ref=e259]:
+              - listitem [ref=e260]:
+                - generic [ref=e261]: ev1 Order Submitted
+                - combobox [ref=e262] [cursor=pointer]:
+                  - option "trigger (starts workflow)" [selected]
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)"
+              - listitem [ref=e263]:
+                - generic [ref=e264]: ev2 Order Confirmed
+                - combobox [ref=e265] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e266]:
+                - generic [ref=e267]: ev3 Shipment Created
+                - combobox [ref=e268] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e269]:
+                - generic [ref=e270]: ev4 Order Delivered
+                - combobox [ref=e271] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e272]:
+                - generic [ref=e273]: ev5 Order Cancelled
+                - combobox [ref=e274] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e275]:
+                - generic [ref=e276]: ev6 Order Failed
+                - combobox [ref=e277] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+            - paragraph [ref=e278]:
+              - code [ref=e279]: signal_wait
+              - text: makes a wait a bounded condition instead of a hang.
+          - generic [ref=e444]:
+            - heading "Removed by validate 63" [level=3] [ref=e445]:
+              - text: Removed by validate
+              - generic [ref=e446]: '63'
+            - paragraph [ref=e447]: The validate pass removed these lines. If one
+                was correct, re-add it — a re-added line is recorded as human-provided
+                and sticks.
+            - list [ref=e448]:
+              - listitem [ref=e449]:
+                - code [ref=e450]: '- domain:'
+                - button "Re-add" [ref=e451] [cursor=pointer]
+              - listitem [ref=e452]:
+                - code [ref=e453]: '- owner: Fulfillment Operations Team'
+                - button "Re-add" [ref=e454] [cursor=pointer]
+              - listitem [ref=e455]:
+                - code [ref=e456]: '- version: 0.1.1'
+                - button "Re-add" [ref=e457] [cursor=pointer]
+              - listitem [ref=e458]:
+                - code [ref=e459]: '- actors: Customer, Warehouse'
+                - button "Re-add" [ref=e460] [cursor=pointer]
+              - listitem [ref=e461]:
+                - code [ref=e462]: '- systems: Online Store, Payment Gateway, Warehouse
+                    Management System, Carrier API, Email Service'
+                - button "Re-add" [ref=e463] [cursor=pointer]
+              - listitem [ref=e464]:
+                - code [ref=e465]: '- triggers: Customer submits an order through
+                    the online store'
+                - button "Re-add" [ref=e466] [cursor=pointer]
+              - listitem [ref=e467]:
+                - code [ref=e468]: '- start states: Order received'
+                - button "Re-add" [ref=e469] [cursor=pointer]
+              - listitem [ref=e470]:
+                - code [ref=e471]: '- end states: Order delivered, Order cancelled,
+                    Order failed'
+                - button "Re-add" [ref=e472] [cursor=pointer]
+              - listitem [ref=e473]:
+                - code [ref=e474]: '- tags:'
+                - button "Re-add" [ref=e475] [cursor=pointer]
+              - listitem [ref=e476]:
+                - code [ref=e477]: '- Order submission through online store'
+                - button "Re-add" [ref=e478] [cursor=pointer]
+              - listitem [ref=e479]:
+                - code [ref=e480]: '- Order confirmation to customer'
+                - button "Re-add" [ref=e481] [cursor=pointer]
+              - listitem [ref=e482]:
+                - code [ref=e483]: '- Inventory reservation status'
+                - button "Re-add" [ref=e484] [cursor=pointer]
+              - listitem [ref=e485]:
+                - code [ref=e486]: '- Shipment creation status'
+                - button "Re-add" [ref=e487] [cursor=pointer]
+              - listitem [ref=e488]:
+                - code [ref=e489]: '- Order delivery status'
+                - button "Re-add" [ref=e490] [cursor=pointer]
+              - listitem [ref=e491]:
+                - code [ref=e492]: '- Cancellation notification to customer'
+                - button "Re-add" [ref=e493] [cursor=pointer]
+              - listitem [ref=e494]:
+                - code [ref=e495]: '- Failure notification to customer'
+                - button "Re-add" [ref=e496] [cursor=pointer]
+              - listitem [ref=e497]:
+                - code [ref=e498]: '- Orders must be shipped within 24 hours of payment
+                    confirmation'
+                - button "Re-add" [ref=e499] [cursor=pointer]
+              - listitem [ref=e500]:
+                - code [ref=e501]: '- Partial shipments are not allowed — an order
+                    ships only when every item is available [human]'
+                - button "Re-add" [ref=e502] [cursor=pointer]
+              - listitem [ref=e503]:
+                - code [ref=e504]: '- Payment Gateway (validate payment)'
+                - button "Re-add" [ref=e505] [cursor=pointer]
+              - listitem [ref=e506]:
+                - code [ref=e507]: '- Warehouse Management System (reserve inventory,
+                    pick and pack)'
+                - button "Re-add" [ref=e508] [cursor=pointer]
+              - listitem [ref=e509]:
+                - code [ref=e510]: '- Carrier API (create shipment)'
+                - button "Re-add" [ref=e511] [cursor=pointer]
+              - listitem [ref=e512]:
+                - code [ref=e513]: '- Online Store'
+                - button "Re-add" [ref=e514] [cursor=pointer]
+              - listitem [ref=e515]:
+                - code [ref=e516]: '- Payment Gateway'
+                - button "Re-add" [ref=e517] [cursor=pointer]
+              - listitem [ref=e518]:
+                - code [ref=e519]: '- Warehouse Management System'
+                - button "Re-add" [ref=e520] [cursor=pointer]
+              - listitem [ref=e521]:
+                - code [ref=e522]: '- Carrier API'
+                - button "Re-add" [ref=e523] [cursor=pointer]
+              - listitem [ref=e524]:
+                - code [ref=e525]: '- Email Service'
+                - button "Re-add" [ref=e526] [cursor=pointer]
+              - listitem [ref=e527]:
+                - code [ref=e528]: '- 24 hours for shipment after payment confirmation'
+                - button "Re-add" [ref=e529] [cursor=pointer]
+              - listitem [ref=e530]:
+                - code [ref=e531]: '- Up to 5 retries for shipment creation failure
+                    [human]'
+                - button "Re-add" [ref=e532] [cursor=pointer]
+              - listitem [ref=e533]:
+                - code [ref=e534]: '- up to 3 times'
+                - button "Re-add" [ref=e535] [cursor=pointer]
+              - listitem [ref=e536]:
+                - code [ref=e537]: '- [a1] Validate order and payment'
+                - button "Re-add" [ref=e538] [cursor=pointer]
+              - listitem [ref=e539]:
+                - code [ref=e540]: '- [a2] Reserve inventory — parallel: g1'
+                - button "Re-add" [ref=e541] [cursor=pointer]
+              - listitem [ref=e542]:
+                - code [ref=e543]: '- [a3] Send order confirmation — parallel: g1'
+                - button "Re-add" [ref=e544] [cursor=pointer]
+              - listitem [ref=e545]:
+                - code [ref=e546]: '- [a4] Notify warehouse to begin picking — parallel:
+                    g1'
+                - button "Re-add" [ref=e547] [cursor=pointer]
+              - listitem [ref=e548]:
+                - code [ref=e549]: '- [a5] Pick and pack items'
+                - button "Re-add" [ref=e550] [cursor=pointer]
+              - listitem [ref=e551]:
+                - code [ref=e552]: '- [a6] Create shipment via Carrier API'
+                - button "Re-add" [ref=e553] [cursor=pointer]
+              - listitem [ref=e554]:
+                - code [ref=e555]: '- [a7] Ship order'
+                - button "Re-add" [ref=e556] [cursor=pointer]
+              - listitem [ref=e557]:
+                - code [ref=e558]: '- [a8] Release reserved inventory'
+                - button "Re-add" [ref=e559] [cursor=pointer]
+              - listitem [ref=e560]:
+                - code [ref=e561]: '- [a9] Obtain manager approval for orders above
+                    $1,000'
+                - button "Re-add" [ref=e562] [cursor=pointer]
+              - listitem [ref=e563]:
+                - code [ref=e564]: '- [a10] Notify finance team for orders above $1,000
+                    [human]'
+                - button "Re-add" [ref=e565] [cursor=pointer]
+              - listitem [ref=e566]:
+                - code [ref=e567]: '- [d1] Is payment valid? — after: a1; yes: a2;
+                    no: e1'
+                - button "Re-add" [ref=e568] [cursor=pointer]
+              - listitem [ref=e569]:
+                - code [ref=e570]: '- [d2] Did shipment creation fail after retries?
+                    — after: a6; yes: a8; no: a7'
+                - button "Re-add" [ref=e571] [cursor=pointer]
+              - listitem [ref=e572]:
+                - code [ref=e573]: '- [d3] Is order value above $1,000? — after: a1;
+                    yes: a9; no: a2'
+                - button "Re-add" [ref=e574] [cursor=pointer]
+              - listitem [ref=e575]:
+                - code [ref=e576]: '- [e1] Payment Declined — raised by: a1'
+                - button "Re-add" [ref=e577] [cursor=pointer]
+              - listitem [ref=e578]:
+                - code [ref=e579]: '- [e2] Shipment Creation Failed — raised by: a6'
+                - button "Re-add" [ref=e580] [cursor=pointer]
+              - listitem [ref=e581]:
+                - code [ref=e582]: '- [e3] SLA-breach alert — raised by: a6'
+                - button "Re-add" [ref=e583] [cursor=pointer]
+              - listitem [ref=e584]:
+                - code [ref=e585]: '- [c1] Release Inventory — compensates: a2'
+                - button "Re-add" [ref=e586] [cursor=pointer]
+              - listitem [ref=e587]:
+                - code [ref=e588]: '- [ev1] Order Submitted — kind: trigger; emitted
+                    by: start'
+                - button "Re-add" [ref=e589] [cursor=pointer]
+              - listitem [ref=e590]:
+                - code [ref=e591]: '- [ev2] Order Confirmed — kind: output_emit; emitted
+                    by: a3'
+                - button "Re-add" [ref=e592] [cursor=pointer]
+              - listitem [ref=e593]:
+                - code [ref=e594]: '- [ev3] Shipment Created — kind: output_emit;
+                    emitted by: a6'
+                - button "Re-add" [ref=e595] [cursor=pointer]
+              - listitem [ref=e596]:
+                - code [ref=e597]: '- [ev4] Order Delivered — kind: output_emit; emitted
+                    by: a7'
+                - button "Re-add" [ref=e598] [cursor=pointer]
+              - listitem [ref=e599]:
+                - code [ref=e600]: '- [ev5] Order Cancelled — kind: output_emit; emitted
+                    by: e1'
+                - button "Re-add" [ref=e601] [cursor=pointer]
+              - listitem [ref=e602]:
+                - code [ref=e603]: '- [ev6] Order Failed — kind: output_emit; emitted
+                    by: e2'
+                - button "Re-add" [ref=e604] [cursor=pointer]
+              - listitem [ref=e605]:
+                - code [ref=e606]: '- Order received -> Payment Validation (trigger:
+                    Order submitted)'
+                - button "Re-add" [ref=e607] [cursor=pointer]
+              - listitem [ref=e608]:
+                - code [ref=e609]: '- Payment Validation -> Inventory Reservation
+                    (trigger: Payment valid)'
+                - button "Re-add" [ref=e610] [cursor=pointer]
+              - listitem [ref=e611]:
+                - code [ref=e612]: '- Payment Validation -> Order Cancelled (trigger:
+                    Payment declined)'
+                - button "Re-add" [ref=e613] [cursor=pointer]
+              - listitem [ref=e614]:
+                - code [ref=e615]: '- Inventory Reservation -> Picking and Packing
+                    (trigger: Inventory reserved)'
+                - button "Re-add" [ref=e616] [cursor=pointer]
+              - listitem [ref=e617]:
+                - code [ref=e618]: '- Picking and Packing -> Shipment Creation (trigger:
+                    Items packed)'
+                - button "Re-add" [ref=e619] [cursor=pointer]
+              - listitem [ref=e620]:
+                - code [ref=e621]: '- Shipment Creation -> Order Shipped (trigger:
+                    Shipment created)'
+                - button "Re-add" [ref=e622] [cursor=pointer]
+              - listitem [ref=e623]:
+                - code [ref=e624]: '- Shipment Creation -> Order Failed (trigger:
+                    Shipment creation failed)'
+                - button "Re-add" [ref=e625] [cursor=pointer]
+              - listitem [ref=e626]:
+                - code [ref=e627]: '- The specification mentions ''up to 5 retries''
+                    for shipment creation, but the source document states ''up to
+                    3 times''. This contradiction needs resolution [inferred]'
+                - button "Re-add" [ref=e628] [cursor=pointer]
+              - listitem [ref=e629]:
+                - code [ref=e630]: '- [x] (R2b-input-names) Provide snake_case names
+                    for these inputs (e.g. customerId -> customer_id).'
+                - button "Re-add" [ref=e631] [cursor=pointer]
+              - listitem [ref=e632]:
+                - code [ref=e633]: '- [x] (R4-decisions) Route the ''no'' branch of
+                    d3 in this spec''s Decisions section, e.g. `- [d3] Is order value
+                    above $1,000? — after: a1; no: e1`. Declared exceptions: e1 (Payment
+                    Declined), e2 (Shipment Creation Failed), e3 (SLA-breach alert).
+                    A ''no'' branch may target an exception id, an activity id, or
+                    a terminal token (end, rejected, failed, completed). You can also
+                    answer here, one pair per line, as `d3 -> e1` — prose is not applied.'
+                - button "Re-add" [ref=e634] [cursor=pointer]
+              - listitem [ref=e635]:
+                - code [ref=e636]: '- [x] (R9-state-transitions) Confirm these state
+                    transitions are descriptive only (they will be ignored by code
+                    generation).'
+                - button "Re-add" [ref=e637] [cursor=pointer]
+          - generic [ref=e280]:
+            - paragraph [ref=e281]: Approve overrides
+            - generic [ref=e282]:
+              - checkbox "Accept unanswered required questions" [ref=e283]
+              - text: Accept unanswered required questions
+            - generic [ref=e284]:
+              - checkbox "Allow unconfirmed dependencies" [ref=e285]
+              - text: Allow unconfirmed dependencies
+          - paragraph [ref=e286]: The Diagramview shows this workflow's graph as of
+              the last validate; run Classify phases (CVPA) there to color it. Generated
+              code appears in Results after approval.
+  - alert [ref=e287]

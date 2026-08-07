@@ -1,0 +1,970 @@
+{
+  "workflow_id": "46636b4d-9361-40b8-b160-5cb571255e0b",
+  "document_text": "# Payment Reconciliation\n\n<!--\n  workflow-compiler specification (v1) — slug: payment-reconciliation\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nThe Payment Reconciliation workflow verifies that every captured payment matches the order total and the payment gateway settlement record, and files a discrepancy report when they disagree.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Finance Analyst, Finance Operations\n- systems: Finance Service, Payment Gateway, Order Service\n- triggers: payment.captured event received by the Finance Service\n- start states: payment.captured event received\n- end states: reconciled, discrepancy_reported\n- tags: \n\n## Inputs\n- payment_id\n- order_id\n\n## Outputs\n- reconciliation_status\n- discrepancy_report_id\n\n## Business Rules\n<!-- none -->\n\n## API Interfaces\n- Fetch settlement record from Payment Gateway\n- Fetch order total from Order Service\n\n## Systems Involved\n- Finance Service\n- Payment Gateway\n- Order Service\n\n## Timers and SLAs\n<!-- none -->\n\n## Retries\n- Fetch settlement record: up to 3 times with exponential backoff starting at 5 seconds\n- Fetch order total: up to 3 times with exponential backoff starting at 5 seconds\n\n## Activities\n- [a1] Fetch settlement record\n- [a2] Fetch order total\n- [a3] Compare amounts\n- [a4] Mark reconciled\n- [a5] File discrepancy report and notify\n\n## Decisions\n- [d1] Do amounts match? — after: a3; yes: a4; no: a5\n\n## Exceptions\n<!-- none -->\n\n## Compensations\n<!-- none -->\n\n## Events\n- [e1] payment.captured — kind: trigger; emitted by: start\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n<!-- none -->\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n- [x] (R6-bounded-waits) What deadline bounds each wait (e.g. 24 hours)?\n  Answer: Settlement and order-total fetches are bounded by their retry policies; no long waits — the whole reconciliation must finish within 1 hour\n- [x] (R7-exceptions) Which failures should the workflow handle, and what are they named?\n  Answer: SettlementUnavailable (settlement record fetch exhausts retries); OrderTotalUnavailable (order total fetch exhausts retries)\n- [x] What is the deadline for waiting on carrier pickup confirmation in the Order Fulfilment workflow?\n  Answer: Not applicable to this workflow — pickup confirmation is now synchronous at dispatch in order-fulfilment (24-hour window recorded there)\n- [x] Which failures should the Payment Reconciliation workflow handle and what are they named?\n  Answer: SettlementUnavailable and OrderTotalUnavailable, as above\n\n## Cross-Workflow Dependencies\n- [x] uses output `payment_id` of `order-fulfilment` as input `payment_id` — payment_id from order-fulfilment to payment-reconciliation\n\n## Triggers\n<!-- none -->",
+  "project_id": "b9b301bf-83a7-4f67-bce0-9a646905852d",
+  "workflow_metadata": {
+    "name": "Payment Reconciliation",
+    "description": "The Payment Reconciliation workflow verifies that every captured payment matches the order total and the payment gateway settlement record, and files a discrepancy report when they disagree.",
+    "purpose": "The Payment Reconciliation workflow verifies that every captured payment matches the order total and the payment gateway settlement record, and files a discrepancy report when they disagree.",
+    "actors": [
+      "Finance Analyst",
+      "Finance Operations"
+    ],
+    "systems": [
+      "Finance Service",
+      "Payment Gateway",
+      "Order Service"
+    ],
+    "trigger_events": [
+      "payment.captured event received by the Finance Service"
+    ],
+    "start_states": [
+      "payment.captured event received"
+    ],
+    "end_states": [
+      "reconciled",
+      "discrepancy_reported"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.900"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "payment_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "order_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "reconciliation_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "discrepancy_report_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Fetch settlement record",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Fetch order total",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Compare amounts",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-4",
+        "statement": "Mark reconciled",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-5",
+        "statement": "File discrepancy report and notify",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Do amounts match?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "payment.captured",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "Fetch settlement record from Payment Gateway",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "Fetch order total from Order Service",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Finance Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Payment Gateway",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Order Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Fetch settlement record: up to 3 times with exponential backoff starting at 5 seconds",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "Fetch order total: up to 3 times with exponential backoff starting at 5 seconds",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Fetch settlement record",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Fetch order total",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Compare amounts",
+          "parallel_group": null
+        },
+        {
+          "id": "a4",
+          "name": "Mark reconciled",
+          "parallel_group": null
+        },
+        {
+          "id": "a5",
+          "name": "File discrepancy report and notify",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Do amounts match?",
+          "after": "a3",
+          "yes_target": "a4",
+          "no_target": "a5"
+        }
+      ],
+      "exceptions": [],
+      "compensations": [],
+      "events": [
+        {
+          "id": "e1",
+          "name": "payment.captured",
+          "emitted_by": "start",
+          "kind": "trigger"
+        }
+      ],
+      "triggers": [],
+      "transitions": []
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): payment.captured event received by the Finance Service.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "2 input(s): payment_id, order_id.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 decision(s) have both branches.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "No compensations to validate.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "accepted",
+        "evidence": "Waits exist but no timer/deadline was declared; a signal could block forever.",
+        "question": "What deadline bounds each wait (e.g. 24 hours)?",
+        "answer": "Settlement and order-total fetches are bounded by their retry policies; no long waits — the whole reconciliation must finish within 1 hour"
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "accepted",
+        "evidence": "No named exceptions for any failure path.",
+        "question": "Which failures should the workflow handle, and what are they named?",
+        "answer": "SettlementUnavailable (settlement record fetch exhausts retries); OrderTotalUnavailable (order total fetch exhausts retries)"
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "No free-form state transitions.",
+        "question": null,
+        "answer": null
+      }
+    ]
+  },
+  "outgoing_triggers": [],
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Fetch settlement record",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Fetch order total",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Compare amounts",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Mark reconciled",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_5",
+        "label": "File discrepancy report and notify",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Do amounts match?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_1",
+        "label": "payment.captured",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "activity_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e4",
+        "source": "activity_3",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e5",
+        "source": "decision_1",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e6",
+        "source": "decision_1",
+        "target": "activity_5",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e7",
+        "source": "activity_4",
+        "target": "activity_5",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e8",
+        "source": "activity_5",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 1.0: 0 error(s), 0 warning(s).",
+    "issues": [],
+    "score": 1.0,
+    "health_score": 1.0,
+    "confidence": 1.0,
+    "reviewer": "auto-threshold",
+    "reviewed_at": "2026-07-17T16:43:35.856974Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Initiates the workflow, indicating intake of the process.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Represents the workflow's conclusion, triggering no further actions.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "capture",
+        "rationale": "Fetches initial data (settlement record), an intake activity.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "capture",
+        "rationale": "Retrieves additional data (order total), further intake.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "process",
+        "rationale": "Performs a comparison, a core computational task.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "process",
+        "rationale": "Executes a core task (marking as reconciled) based on validation.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_5",
+        "phase": "activate",
+        "rationale": "Triggers a downstream effect (filing a report and notification).",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Evaluates if amounts match, a decision gate.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "Represents an incoming event (payment captured) that triggers the workflow.",
+        "confidence": 1.0
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "activity_1",
+          "activity_2",
+          "event_1"
+        ],
+        "summary": "4 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "decision_1"
+        ],
+        "summary": "1 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_3",
+          "activity_4"
+        ],
+        "summary": "2 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "activity_5"
+        ],
+        "summary": "2 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "PaymentReconciliationWorkflow",
+    "task_queue": "reconciliation-queue",
+    "description": "Reconciles payment and order totals, reporting discrepancies.",
+    "workflow_inputs": [
+      {
+        "name": "payment_id",
+        "type": "str"
+      },
+      {
+        "name": "order_id",
+        "type": "str"
+      }
+    ],
+    "result_type": "str",
+    "activities": [
+      {
+        "name": "FetchSettlementRecord",
+        "source_node_id": "activity_1",
+        "description": "Retrieve settlement record from Payment Gateway",
+        "inputs": [],
+        "params": [
+          {
+            "name": "payment_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "settlement_amount"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 5.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "FetchOrderTotal",
+        "source_node_id": "activity_2",
+        "description": "Retrieve order total from Order Service",
+        "inputs": [],
+        "params": [
+          {
+            "name": "order_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "order_total"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 5.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "CompareAmounts",
+        "source_node_id": "activity_3",
+        "description": "Compare settlement and order amounts",
+        "inputs": [],
+        "params": [
+          {
+            "name": "settlement_amount",
+            "type": "float"
+          },
+          {
+            "name": "order_total",
+            "type": "float"
+          }
+        ],
+        "outputs": [
+          "is_match"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      },
+      {
+        "name": "MarkReconciled",
+        "source_node_id": "activity_4",
+        "description": "Mark payment as reconciled in the system",
+        "inputs": [],
+        "params": [
+          {
+            "name": "payment_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [],
+        "result_type": "str",
+        "timeout_seconds": 15.0,
+        "retry_policy": null
+      },
+      {
+        "name": "FileDiscrepancyReport",
+        "source_node_id": "activity_5",
+        "description": "File report and notify on discrepancy",
+        "inputs": [],
+        "params": [
+          {
+            "name": "payment_id",
+            "type": "str"
+          },
+          {
+            "name": "order_id",
+            "type": "str"
+          },
+          {
+            "name": "discrepancy_details",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "discrepancy_report_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": 60.0,
+        "retry_policy": null
+      }
+    ],
+    "signals": [],
+    "queries": [
+      {
+        "name": "getReconciliationStatus",
+        "description": "Query current reconciliation status",
+        "returns": "str",
+        "state_field": "reconciliation_status"
+      }
+    ],
+    "child_workflows": [],
+    "timers": [],
+    "triggers": [],
+    "compensation_activities": [
+      {
+        "name": "UnmarkReconciled",
+        "compensates": "MarkReconciled",
+        "source_node_id": null,
+        "description": "Undo mark reconciled in case of failure",
+        "inputs": [],
+        "params": [
+          {
+            "name": "payment_id",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "payment_id",
+            "source": "workflow_input",
+            "ref": "payment_id"
+          }
+        ],
+        "retry_policy": null
+      }
+    ],
+    "default_retry_policy": null,
+    "plan": [
+      {
+        "id": "A1",
+        "kind": "activity",
+        "description": "Fetch settlement record",
+        "ref": "FetchSettlementRecord",
+        "bindings": [
+          {
+            "param": "payment_id",
+            "source": "workflow_input",
+            "ref": "payment_id"
+          }
+        ],
+        "result_name": "settlement",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "A2",
+        "kind": "activity",
+        "description": "Fetch order total",
+        "ref": "FetchOrderTotal",
+        "bindings": [
+          {
+            "param": "order_id",
+            "source": "workflow_input",
+            "ref": "order_id"
+          }
+        ],
+        "result_name": "order_total_result",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "A3",
+        "kind": "activity",
+        "description": "Compare amounts",
+        "ref": "CompareAmounts",
+        "bindings": [
+          {
+            "param": "settlement_amount",
+            "source": "step_output",
+            "ref": "A1"
+          },
+          {
+            "param": "order_total",
+            "source": "step_output",
+            "ref": "A2"
+          }
+        ],
+        "result_name": "comparison_result",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "D1",
+        "kind": "branch",
+        "description": "Branch on amount match",
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": "comparison_result.is_match",
+        "lanes": [
+          [
+            {
+              "id": "A4",
+              "kind": "activity",
+              "description": "Mark reconciled",
+              "ref": "MarkReconciled",
+              "bindings": [
+                {
+                  "param": "payment_id",
+                  "source": "workflow_input",
+                  "ref": "payment_id"
+                }
+              ],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ],
+          [
+            {
+              "id": "A5",
+              "kind": "activity",
+              "description": "File discrepancy report",
+              "ref": "FileDiscrepancyReport",
+              "bindings": [
+                {
+                  "param": "payment_id",
+                  "source": "workflow_input",
+                  "ref": "payment_id"
+                },
+                {
+                  "param": "order_id",
+                  "source": "workflow_input",
+                  "ref": "order_id"
+                },
+                {
+                  "param": "discrepancy_details",
+                  "source": "constant",
+                  "ref": "Amounts do not match"
+                }
+              ],
+              "result_name": "discrepancy_report",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ]
+        ]
+      }
+    ]
+  },
+  "temporal_code": {
+    "target": "python",
+    "package_name": "payment_reconciliation_workflow",
+    "files": [
+      {
+        "path": "shared.py",
+        "language": "python",
+        "content": "\"\"\"Shared dataclasses for the PaymentReconciliationWorkflow workflow.\n\nTemporal passes a single dataclass argument to workflows and activities so that\ninputs evolve compatibly. Refine the field types to match your real domain types.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom typing import Any\n\n\n@dataclass\nclass WorkflowInput:\n    \"\"\"Input to the PaymentReconciliationWorkflow workflow.\"\"\"\n\n    payment_id: str = \"\"\n    order_id: str = \"\"\n\n\n@dataclass\nclass FetchSettlementRecordInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    payment_id: str = \"\"\n\n\n@dataclass\nclass FetchOrderTotalInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    order_id: str = \"\"\n\n\n@dataclass\nclass CompareAmountsInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    settlement_amount: float = 0.0\n    order_total: float = 0.0\n\n\n@dataclass\nclass MarkReconciledInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    payment_id: str = \"\"\n\n\n@dataclass\nclass FileDiscrepancyReportInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    payment_id: str = \"\"\n    order_id: str = \"\"\n    discrepancy_details: str = \"\"\n\n\n@dataclass\nclass UnmarkReconciledInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    payment_id: str = \"\""
+      },
+      {
+        "path": "activities.py",
+        "language": "python",
+        "content": "\"\"\"Activities for the PaymentReconciliationWorkflow workflow.\n\nEach activity is a thin, retryable unit of work. Replace the ``NotImplementedError``\nwith real logic; activities may use I/O, SDKs, and blocking calls freely.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom temporalio import activity\n\nfrom shared import (\n    FetchSettlementRecordInput,\n    FetchOrderTotalInput,\n    CompareAmountsInput,\n    MarkReconciledInput,\n    FileDiscrepancyReportInput,\n    UnmarkReconciledInput,\n)\n\n\n@activity.defn(name=\"FetchSettlementRecord\")\nasync def fetch_settlement_record(arg: FetchSettlementRecordInput) -> str:\n    \"\"\"Retrieve settlement record from Payment Gateway\"\"\"\n    activity.logger.info(\"Running fetch_settlement_record\", extra={\"input\": arg})\n    # TODO: implement fetch_settlement_record. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"FetchOrderTotal\")\nasync def fetch_order_total(arg: FetchOrderTotalInput) -> str:\n    \"\"\"Retrieve order total from Order Service\"\"\"\n    activity.logger.info(\"Running fetch_order_total\", extra={\"input\": arg})\n    # TODO: implement fetch_order_total. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"CompareAmounts\")\nasync def compare_amounts(arg: CompareAmountsInput) -> str:\n    \"\"\"Compare settlement and order amounts\"\"\"\n    activity.logger.info(\"Running compare_amounts\", extra={\"input\": arg})\n    # TODO: implement compare_amounts. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"MarkReconciled\")\nasync def mark_reconciled(arg: MarkReconciledInput) -> str:\n    \"\"\"Mark payment as reconciled in the system\"\"\"\n    activity.logger.info(\"Running mark_reconciled\", extra={\"input\": arg})\n    # TODO: implement mark_reconciled. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"FileDiscrepancyReport\")\nasync def file_discrepancy_report(arg: FileDiscrepancyReportInput) -> str:\n    \"\"\"File report and notify on discrepancy\"\"\"\n    activity.logger.info(\"Running file_discrepancy_report\", extra={\"input\": arg})\n    # TODO: implement file_discrepancy_report. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"UnmarkReconciled\")\nasync def unmark_reconciled(arg: UnmarkReconciledInput) -> str:\n    \"\"\"Undo mark reconciled in case of failure\"\"\"\n    activity.logger.info(\"Running unmark_reconciled\", extra={\"input\": arg})\n    # TODO: implement unmark_reconciled. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\""
+      },
+      {
+        "path": "workflow.py",
+        "language": "python",
+        "content": "\"\"\"The PaymentReconciliationWorkflow Temporal workflow.\n\nWorkflow code must be deterministic: do all I/O inside activities, and use\n``workflow.*`` helpers (``execute_activity``, ``execute_child_workflow``,\n``sleep``, signals, queries) rather than calling the outside world directly.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Callable\nfrom datetime import timedelta\nfrom typing import Any\n\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\n\nwith workflow.unsafe.imports_passed_through():\n    from activities import (\n        fetch_settlement_record,\n        fetch_order_total,\n        compare_amounts,\n        mark_reconciled,\n        file_discrepancy_report,\n        unmark_reconciled,\n    )\n    from shared import (\n        WorkflowInput,\n        FetchSettlementRecordInput,\n        FetchOrderTotalInput,\n        CompareAmountsInput,\n        MarkReconciledInput,\n        FileDiscrepancyReportInput,\n        UnmarkReconciledInput,\n    )\n\n\n\n@workflow.defn\nclass PaymentReconciliationWorkflow:\n    \"\"\"Reconciles payment and order totals, reporting discrepancies.\"\"\"\n\n    def __init__(self) -> None:\n        self._status: str = \"pending\"\n        # Read-only debug surface (safe in production: no I/O, no wall-clock).\n        self._current_step: str = \"\"\n        self._decisions_taken: list[dict[str, object]] = []\n        self._triggers_fired: list[str] = []\n\n    @workflow.run\n    async def run(self, arg: WorkflowInput) -> str:\n        self._status = \"running\"\n        compensations: list[tuple[Callable[..., Any], Any]] = []\n        try:\n            self._current_step = 'A1'\n            workflow.logger.info(\"Running step: FetchSettlementRecord\")\n            settlement = await workflow.execute_activity(\n                fetch_settlement_record,\n                FetchSettlementRecordInput(payment_id=arg.payment_id),\n                start_to_close_timeout=timedelta(seconds=30),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), backoff_coefficient=2, maximum_attempts=3),\n            )\n            self._current_step = 'A2'\n            workflow.logger.info(\"Running step: FetchOrderTotal\")\n            order_total_result = await workflow.execute_activity(\n                fetch_order_total,\n                FetchOrderTotalInput(order_id=arg.order_id),\n                start_to_close_timeout=timedelta(seconds=30),\n                retry_policy=RetryPolicy(initial_interval=timedelta(seconds=5), backoff_coefficient=2, maximum_attempts=3),\n            )\n            self._current_step = 'A3'\n            workflow.logger.info(\"Running step: CompareAmounts\")\n            comparison_result = await workflow.execute_activity(\n                compare_amounts,\n                CompareAmountsInput(settlement_amount=settlement, order_total=order_total_result),\n                start_to_close_timeout=timedelta(seconds=60),\n            )\n            self._current_step = 'D1'\n            should_comparison_result_is_match = True  # TODO: set from a real condition: comparison_result.is_match\n            if should_comparison_result_is_match:\n                self._decisions_taken.append({'branch': 'D1', 'predicate': 'comparison_result.is_match', 'taken': True})\n                self._current_step = 'A4'\n                workflow.logger.info(\"Running step: MarkReconciled\")\n                a4_result = await workflow.execute_activity(\n                    mark_reconciled,\n                    MarkReconciledInput(payment_id=arg.payment_id),\n                    start_to_close_timeout=timedelta(seconds=15),\n                )\n                compensations.append((unmark_reconciled, UnmarkReconciledInput(payment_id=arg.payment_id)))\n            else:\n                self._decisions_taken.append({'branch': 'D1', 'predicate': 'comparison_result.is_match', 'taken': False})\n                self._current_step = 'A5'\n                workflow.logger.info(\"Running step: FileDiscrepancyReport\")\n                discrepancy_report = await workflow.execute_activity(\n                    file_discrepancy_report,\n                    FileDiscrepancyReportInput(payment_id=arg.payment_id, order_id=arg.order_id),\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n        except Exception:\n            for _comp_fn, _comp_arg in reversed(compensations):\n                await workflow.execute_activity(\n                    _comp_fn,\n                    _comp_arg,\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n            self._status = \"compensated\"\n            raise\n        self._status = \"completed\"\n        return self._status\n\n    @workflow.query\n    def get_reconciliation_status(self) -> str:\n        \"\"\"Query current reconciliation status\"\"\"\n        return self._status\n\n    @workflow.query\n    def current_step(self) -> str:\n        \"\"\"The plan step currently executing (read-only debug surface).\"\"\"\n        return self._current_step\n\n    @workflow.query\n    def decisions_taken(self) -> list[dict[str, object]]:\n        \"\"\"Every branch decision so far: branch id, predicate, and path taken.\"\"\"\n        return self._decisions_taken\n\n    @workflow.query\n    def triggers_fired(self) -> list[str]:\n        \"\"\"Cross-workflow triggers fired so far.\"\"\"\n        return self._triggers_fired"
+      },
+      {
+        "path": "worker.py",
+        "language": "python",
+        "content": "\"\"\"Worker process for the PaymentReconciliationWorkflow workflow.\n\nStart a local Temporal dev server in one terminal::\n\n    temporal server start-dev\n\nThen, from inside this package directory, run the worker::\n\n    python worker.py\n\nKeep it running, then start a workflow with ``python starter.py``.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\n\nfrom temporalio import workflow\nfrom temporalio.client import Client\nfrom temporalio.worker import Worker\n\nwith workflow.unsafe.imports_passed_through():\n    from workflow import PaymentReconciliationWorkflow\n    from activities import (\n        fetch_settlement_record,\n        fetch_order_total,\n        compare_amounts,\n        mark_reconciled,\n        file_discrepancy_report,\n        unmark_reconciled,\n    )\n\nTASK_QUEUE = \"reconciliation-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and run the worker until cancelled.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n    worker = Worker(\n        client,\n        task_queue=TASK_QUEUE,\n        workflows=[PaymentReconciliationWorkflow],\n        activities=[fetch_settlement_record, fetch_order_total, compare_amounts, mark_reconciled, file_discrepancy_report, unmark_reconciled],\n    )\n    print(f\"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.\")\n    await worker.run()\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "starter.py",
+        "language": "python",
+        "content": "\"\"\"Start a PaymentReconciliationWorkflow workflow execution.\n\nStart the Temporal dev server and the worker first::\n\n    temporal server start-dev      # terminal 1\n    python worker.py               # terminal 2\n\nThen, from inside this package directory::\n\n    python starter.py              # terminal 3\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport uuid\n\nfrom temporalio.client import Client\n\nfrom workflow import PaymentReconciliationWorkflow\nfrom shared import WorkflowInput\n\nTASK_QUEUE = \"reconciliation-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and start a single workflow execution.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n\n    handle = await client.start_workflow(\n        PaymentReconciliationWorkflow.run,\n        WorkflowInput(),  # TODO: populate the workflow input fields.\n        id=f\"payment_reconciliation_workflow-{uuid.uuid4()}\",\n        task_queue=TASK_QUEUE,\n    )\n    print(f\"Started workflow {handle.id}\")\n\n    # NOTE: workflows that pause on a signal gate block here until signalled\n    # (e.g. via `temporal workflow signal` or a client `handle.signal(...)`).\n    result = await handle.result()\n    print(\"Workflow result:\", result)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "test_stepthrough.py",
+        "language": "python",
+        "content": "\"\"\"Local step-through harness for the PaymentReconciliationWorkflow workflow.\n\nRuns this bundle under a time-skipping Temporal test environment with the\ngenerated stub activities (they return placeholders, no I/O) and **mocked\ntrigger activities** (the real ones call the Temporal client), then inspects\nthe read-only debug queries — proving which steps ran, which branch each\ndecision took, and which cross-workflow triggers fired.\n\nRun from inside this bundle directory::\n\n    pytest test_stepthrough.py -s\n\nRequires: temporalio, pytest, pytest-asyncio (asyncio_mode=auto or the marker).\n\"\"\"\n\nfrom __future__ import annotations\n\nimport uuid\n\nimport pytest\nfrom temporalio import activity\nfrom temporalio.testing import WorkflowEnvironment\nfrom temporalio.worker import UnsandboxedWorkflowRunner, Worker\n\nfrom activities import (\n    fetch_settlement_record,\n    fetch_order_total,\n    compare_amounts,\n    mark_reconciled,\n    file_discrepancy_report,\n    unmark_reconciled,\n)\nfrom shared import WorkflowInput\nfrom workflow import PaymentReconciliationWorkflow\nTRIGGERS_CALLED: list[str] = []\n\n\n@pytest.mark.asyncio\nasync def test_stepthrough() -> None:\n    \"\"\"Run the workflow end to end and inspect the debug queries.\"\"\"\n    env = await WorkflowEnvironment.start_time_skipping()\n    try:\n        async with Worker(\n            env.client,\n            task_queue=\"reconciliation-queue\",\n            workflows=[PaymentReconciliationWorkflow],\n            activities=[fetch_settlement_record, fetch_order_total, compare_amounts, mark_reconciled, file_discrepancy_report, unmark_reconciled, ],\n            workflow_runner=UnsandboxedWorkflowRunner(),\n        ):\n            handle = await env.client.start_workflow(\n                PaymentReconciliationWorkflow.run,\n                WorkflowInput(),\n                id=f\"stepthrough-{uuid.uuid4()}\",\n                task_queue=\"reconciliation-queue\",\n            )\n            result = await handle.result()\n            assert result == \"completed\"\n            print(\"last step:\", await handle.query(\"current_step\"))\n            print(\"decisions:\", await handle.query(\"decisions_taken\"))\n            print(\"triggers fired:\", await handle.query(\"triggers_fired\"))\n    finally:\n        await env.shutdown()"
+      },
+      {
+        "path": "README.md",
+        "language": "markdown",
+        "content": "# PaymentReconciliationWorkflow (generated Temporal workflow)\n\nReconciles payment and order totals, reporting discrepancies.\n\nThis package was generated **deterministically** from a reviewed\n`TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,\nqueries, timers, child workflows, retry policies, and saga compensation are\nwired up, but each activity body raises `NotImplementedError` for you to fill in.\n\nThe files use **flat, absolute imports** (`from activities import ...`), matching\nthe layout in the Temporal Python docs, so each script is run directly from\ninside this directory — no package installation or `PYTHONPATH` needed.\n\n## Files\n\n| File | Purpose |\n|------|---------|\n| `shared.py` | Dataclasses for workflow / activity inputs |\n| `activities.py` | `@activity.defn` units of work (implement these) |\n| `workflow.py` | `@workflow.defn` orchestration: `PaymentReconciliationWorkflow` |\n| `worker.py` | Worker registering the workflow + activities on `reconciliation-queue` |\n| `starter.py` | Client that starts one workflow execution |\n\n## Run it\n\nInstall the SDK and start a local Temporal server:\n\n```bash\npip install temporalio\ntemporal server start-dev          # terminal 1, leave running\n```\n\nFrom **inside this directory**, run the worker and then the starter:\n\n```bash\npython worker.py                   # terminal 2, leave running\npython starter.py                  # terminal 3\n```\n\nThe worker polls the `reconciliation-queue` task queue; the starter submits a single\n`PaymentReconciliationWorkflow` execution and prints its result. Open the Web UI at\nhttp://localhost:8233 to watch the execution.\n\n## Next steps\n\n- Implement each activity in `activities.py`.\n- Populate the `WorkflowInput()` fields in `starter.py`.\n- Replace the default `str` input fields in `shared.py` with real types.\n- Review the generated retry policies and timeouts against your SLAs."
+      }
+    ]
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Fetch settlement record\"]\n    activity_2[\"Fetch order total\"]\n    activity_3[\"Compare amounts\"]\n    activity_4[\"Mark reconciled\"]\n    activity_5[\"File discrepancy report and notify\"]\n    decision_1{\"Do amounts match?\"}\n    event_1([\"payment.captured\"])\n    start --> activity_1\n    activity_1 --> activity_2\n    activity_2 --> activity_3\n    activity_3 --> decision_1\n    decision_1 -->|yes| activity_4\n    decision_1 -->|no| activity_5\n    activity_4 --> activity_5\n    activity_5 --> end_node\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,activity_1,activity_2,event_1 capture;\n    class decision_1 validate;\n    class activity_3,activity_4 process;\n    class end_node,activity_5 activate;",
+    "title": "Payment Reconciliation"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 0.8,
+    "cvpa": 0.9861,
+    "temporal": 0.75,
+    "overall": null,
+    "notes": {
+      "cvpa": "9 nodes classified; 9 from model, 0 by fallback.",
+      "temporal": "5 activities, 0 signals, 0 child workflows, 1 compensations.",
+      "temporal_code": "7 files for package 'payment_reconciliation_workflow'."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-07-17T16:43:35.851437Z",
+  "updated_at": "2026-07-17T16:45:48.189528Z"
+}

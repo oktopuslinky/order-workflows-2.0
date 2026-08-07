@@ -1,0 +1,842 @@
+{
+  "project_id": "3f6be187-d4d7-4f0d-9f90-3eb84a43d70f",
+  "document_text": "# Order Fulfillment Workflow\n\n## Purpose\n\nThis workflow describes how the company fulfills a customer order from the moment it is submitted through delivery, including payment, inventory, shipping, and the handling of failures.\n\n## Trigger\n\nThe workflow starts when a customer submits an order through the online store.\n\n## Process\n\nWhen the order is received, the system validates the order details and the\npayment via the Payment Gateway.\nIf the payment is declined, the order is cancelled and the customer is\nnotified by email.\nIf the payment is valid, the Warehouse Management System reserves inventory.\nIn parallel, the system sends an order confirmation to the customer and\nnotifies the warehouse to begin picking.\nThe warehouse picks and packs the items.\nThe carrier API is called to create a shipment and the order is shipped.\nIf shipment creation fails, the system retries up to 3 times. If it still\nfails, the reserved inventory is released (compensation) and the order is marked as failed.\n\n## Rules\n\nOrders above $1,000 require manager approval before fulfillment.\nOrders must be shipped within 24 hours of payment confirmation, otherwise an\nSLA-breach alert is raised.\n\n## States\n\nStart states: Order received.\nEnd states: Order delivered, Order cancelled, Order failed.\n\n## Systems\n\nOnline Store, Payment Gateway, Warehouse Management System, Carrier API, Email Service.",
+  "segments": [
+    {
+      "id": "w1",
+      "slug": "order-fulfillment-workflow",
+      "name": "Order Fulfillment Workflow",
+      "purpose": "This workflow describes how the company fulfills a customer order from submission through delivery, including payment, inventory, shipping, and failure handling",
+      "section_titles": [
+        "Purpose",
+        "Trigger",
+        "Process",
+        "Rules",
+        "States",
+        "Systems"
+      ],
+      "text": "# Order Fulfillment Workflow\n\n## Purpose\n\nThis workflow describes how the company fulfills a customer order from the moment it is submitted through delivery, including payment, inventory, shipping, and the handling of failures.\n\n## Trigger\n\nThe workflow starts when a customer submits an order through the online store.\n\n## Process\n\nWhen the order is received, the system validates the order details and the\npayment via the Payment Gateway.\nIf the payment is declined, the order is cancelled and the customer is\nnotified by email.\nIf the payment is valid, the Warehouse Management System reserves inventory.\nIn parallel, the system sends an order confirmation to the customer and\nnotifies the warehouse to begin picking.\nThe warehouse picks and packs the items.\nThe carrier API is called to create a shipment and the order is shipped.\nIf shipment creation fails, the system retries up to 3 times. If it still\nfails, the reserved inventory is released (compensation) and the order is marked as failed.\n\n## Rules\n\nOrders above $1,000 require manager approval before fulfillment.\nOrders must be shipped within 24 hours of payment confirmation, otherwise an\nSLA-breach alert is raised.\n\n## States\n\nStart states: Order received.\nEnd states: Order delivered, Order cancelled, Order failed.\n\n## Systems\n\nOnline Store, Payment Gateway, Warehouse Management System, Carrier API, Email Service.",
+      "sliced": true
+    }
+  ],
+  "specs": [
+    {
+      "slug": "order-fulfillment-workflow",
+      "metadata": {
+        "name": "Order Fulfillment Workflow",
+        "description": "This workflow describes how the company fulfills a customer order from submission through delivery, including payment, inventory, shipping, and failure handling.",
+        "purpose": "This workflow describes how the company fulfills a customer order from submission through delivery, including payment, inventory, shipping, and failure handling.",
+        "actors": [
+          "Customer",
+          "Warehouse"
+        ],
+        "systems": [
+          "Online Store",
+          "Payment Gateway",
+          "Warehouse Management System",
+          "Carrier API",
+          "Email Service"
+        ],
+        "trigger_events": [
+          "Customer submits an order through the online store"
+        ],
+        "start_states": [
+          "Order received"
+        ],
+        "end_states": [
+          "Order delivered",
+          "Order cancelled",
+          "Order failed"
+        ],
+        "version": "0.1.2",
+        "domain": null,
+        "owner": "Fulfillment Operations Team",
+        "source_format": null,
+        "tags": [],
+        "extra": {
+          "self_reported_confidence": "0.900"
+        },
+        "created_at": null
+      },
+      "facts": {
+        "facts": [
+          {
+            "id": "input-1",
+            "statement": "Order submission through online store",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-1",
+            "statement": "Order confirmation to customer",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-2",
+            "statement": "Inventory reservation status",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-3",
+            "statement": "Shipment creation status",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-4",
+            "statement": "Order delivery status",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-5",
+            "statement": "Cancellation notification to customer",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-6",
+            "statement": "Failure notification to customer",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-1",
+            "statement": "Validate order and payment",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-2",
+            "statement": "Reserve inventory",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-3",
+            "statement": "Send order confirmation",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-4",
+            "statement": "Notify warehouse to begin picking",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-5",
+            "statement": "Pick and pack items",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-6",
+            "statement": "Create shipment via Carrier API",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-7",
+            "statement": "Ship order",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-8",
+            "statement": "Release reserved inventory",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-9",
+            "statement": "Obtain manager approval for orders above $1,000",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-10",
+            "statement": "Notify finance team for orders above $1,000",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-1",
+            "statement": "Is payment valid?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-2",
+            "statement": "Did shipment creation fail after retries?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-3",
+            "statement": "Is order value above $1,000?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-1",
+            "statement": "Orders must be shipped within 24 hours of payment confirmation",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-2",
+            "statement": "Partial shipments are not allowed — an order ships only when every item is available",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "rule-3",
+            "statement": "Gift wrapping is available on request for orders under 10 kg",
+            "category": "rule",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-1",
+            "statement": "Order Submitted",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-2",
+            "statement": "Order Confirmed",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-3",
+            "statement": "Shipment Created",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-4",
+            "statement": "Order Delivered",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-5",
+            "statement": "Order Cancelled",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-6",
+            "statement": "Order Failed",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-1",
+            "statement": "Payment Gateway (validate payment)",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-2",
+            "statement": "Warehouse Management System (reserve inventory, pick and pack)",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "api-3",
+            "statement": "Carrier API (create shipment)",
+            "category": "api",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-1",
+            "statement": "Online Store",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-2",
+            "statement": "Payment Gateway",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-3",
+            "statement": "Warehouse Management System",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-4",
+            "statement": "Carrier API",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "system-5",
+            "statement": "Email Service",
+            "category": "system",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-1",
+            "statement": "Payment Declined",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-2",
+            "statement": "Shipment Creation Failed",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-3",
+            "statement": "SLA-breach alert",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "state_transition-1",
+            "statement": "Order received -> Payment Validation",
+            "category": "state_transition",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "state_transition-2",
+            "statement": "Payment Validation -> Inventory Reservation",
+            "category": "state_transition",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "state_transition-3",
+            "statement": "Payment Validation -> Order Cancelled",
+            "category": "state_transition",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "state_transition-4",
+            "statement": "Inventory Reservation -> Picking and Packing",
+            "category": "state_transition",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "state_transition-5",
+            "statement": "Picking and Packing -> Shipment Creation",
+            "category": "state_transition",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "state_transition-6",
+            "statement": "Shipment Creation -> Order Shipped",
+            "category": "state_transition",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "state_transition-7",
+            "statement": "Shipment Creation -> Order Failed",
+            "category": "state_transition",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "timer-1",
+            "statement": "24 hours for shipment after payment confirmation",
+            "category": "timer",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "retry-1",
+            "statement": "Up to 5 retries for shipment creation failure",
+            "category": "retry",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "retry-2",
+            "statement": "up to 3 times",
+            "category": "retry",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "compensation-1",
+            "statement": "Release Inventory compensates Reserve inventory",
+            "category": "compensation",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          }
+        ],
+        "structure": {
+          "activities": [
+            {
+              "id": "a1",
+              "name": "Validate order and payment",
+              "parallel_group": null
+            },
+            {
+              "id": "a2",
+              "name": "Reserve inventory",
+              "parallel_group": "g1"
+            },
+            {
+              "id": "a3",
+              "name": "Send order confirmation",
+              "parallel_group": "g1"
+            },
+            {
+              "id": "a4",
+              "name": "Notify warehouse to begin picking",
+              "parallel_group": "g1"
+            },
+            {
+              "id": "a5",
+              "name": "Pick and pack items",
+              "parallel_group": null
+            },
+            {
+              "id": "a6",
+              "name": "Create shipment via Carrier API",
+              "parallel_group": null
+            },
+            {
+              "id": "a7",
+              "name": "Ship order",
+              "parallel_group": null
+            },
+            {
+              "id": "a8",
+              "name": "Release reserved inventory",
+              "parallel_group": null
+            },
+            {
+              "id": "a9",
+              "name": "Obtain manager approval for orders above $1,000",
+              "parallel_group": null
+            },
+            {
+              "id": "a10",
+              "name": "Notify finance team for orders above $1,000",
+              "parallel_group": null
+            }
+          ],
+          "decisions": [
+            {
+              "id": "d1",
+              "question": "Is payment valid?",
+              "after": "a1",
+              "yes_target": "a2",
+              "no_target": "e1"
+            },
+            {
+              "id": "d2",
+              "question": "Did shipment creation fail after retries?",
+              "after": "a6",
+              "yes_target": "a8",
+              "no_target": "a7"
+            },
+            {
+              "id": "d3",
+              "question": "Is order value above $1,000?",
+              "after": "a1",
+              "yes_target": "a9",
+              "no_target": "a2"
+            }
+          ],
+          "exceptions": [
+            {
+              "id": "e1",
+              "reason": "Payment Declined",
+              "raised_by": "a1"
+            },
+            {
+              "id": "e2",
+              "reason": "Shipment Creation Failed",
+              "raised_by": "a6"
+            },
+            {
+              "id": "e3",
+              "reason": "SLA-breach alert",
+              "raised_by": "a6"
+            }
+          ],
+          "compensations": [
+            {
+              "id": "c1",
+              "name": "Release Inventory",
+              "compensates": "a2"
+            }
+          ],
+          "events": [
+            {
+              "id": "ev1",
+              "name": "Order Submitted",
+              "emitted_by": "start",
+              "kind": "trigger"
+            },
+            {
+              "id": "ev2",
+              "name": "Order Confirmed",
+              "emitted_by": "a3",
+              "kind": "output_emit"
+            },
+            {
+              "id": "ev3",
+              "name": "Shipment Created",
+              "emitted_by": "a6",
+              "kind": "output_emit"
+            },
+            {
+              "id": "ev4",
+              "name": "Order Delivered",
+              "emitted_by": "a7",
+              "kind": "output_emit"
+            },
+            {
+              "id": "ev5",
+              "name": "Order Cancelled",
+              "emitted_by": "e1",
+              "kind": "output_emit"
+            },
+            {
+              "id": "ev6",
+              "name": "Order Failed",
+              "emitted_by": "e2",
+              "kind": "output_emit"
+            }
+          ],
+          "triggers": [],
+          "transitions": [
+            {
+              "source": "Order received",
+              "target": "Payment Validation",
+              "trigger": "Order submitted"
+            },
+            {
+              "source": "Payment Validation",
+              "target": "Inventory Reservation",
+              "trigger": "Payment valid"
+            },
+            {
+              "source": "Payment Validation",
+              "target": "Order Cancelled",
+              "trigger": "Payment declined"
+            },
+            {
+              "source": "Inventory Reservation",
+              "target": "Picking and Packing",
+              "trigger": "Inventory reserved"
+            },
+            {
+              "source": "Picking and Packing",
+              "target": "Shipment Creation",
+              "trigger": "Items packed"
+            },
+            {
+              "source": "Shipment Creation",
+              "target": "Order Shipped",
+              "trigger": "Shipment created"
+            },
+            {
+              "source": "Shipment Creation",
+              "target": "Order Failed",
+              "trigger": "Shipment creation failed"
+            }
+          ]
+        }
+      },
+      "assumptions": [],
+      "ambiguities": [
+        {
+          "text": "The specification mentions 'up to 5 retries' for shipment creation, but the source document states 'up to 3 times'. This contradiction needs resolution",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": null
+        }
+      ],
+      "open_questions": [
+        {
+          "text": "Provide snake_case names for these inputs (e.g. customerId -> customer_id).",
+          "provenance": "llm_inferred",
+          "resolved": true,
+          "answer": "Order submission through online store -> order_submission",
+          "ref": "R2b-input-names"
+        },
+        {
+          "text": "Route the 'no' branch of d3 in this spec's Decisions section, e.g. `- [d3] Is order value above $1,000? — after: a1; no: e1`. Declared exceptions: e1 (Payment Declined), e2 (Shipment Creation Failed), e3 (SLA-breach alert). A 'no' branch may target an exception id, an activity id, or a terminal token (end, rejected, failed, completed). You can also answer here, one pair per line, as `d3 -> e1` — prose is not applied.",
+          "provenance": "llm_inferred",
+          "resolved": true,
+          "answer": "Routed in the Decisions section: d3 yes -> a9, no -> a2",
+          "ref": "R4-decisions"
+        },
+        {
+          "text": "Confirm these state transitions are descriptive only (they will be ignored by code generation).",
+          "provenance": "llm_inferred",
+          "resolved": true,
+          "answer": "Confirmed — descriptive only",
+          "ref": "R9-state-transitions"
+        }
+      ],
+      "suggested_edits": [],
+      "provenance": {
+        "rule:partial shipments are not allowed — an order ships only when every item is available": "human_provided",
+        "retry:up to 5 retries for shipment creation failure": "human_provided",
+        "activity:a10": "human_provided",
+        "rule:gift wrapping is available on request for orders under 10 kg": "human_provided"
+      }
+    }
+  ],
+  "cross_references": [],
+  "triggers": [],
+  "spec_approval_status": "pending",
+  "workflow_ids": {
+    "order-fulfillment-workflow": "c333479b-238b-4c80-b04c-f61c9139aaf5"
+  },
+  "warnings": [],
+  "validation_findings": {},
+  "edit_log": [
+    {
+      "edit_id": "f2255cea-d723-4a22-b704-06164334f144",
+      "document": "# Edit Request\n\n<!--\nExample edit request against examples/order_workflow.md.\nThe slug below must match the spec file name your compile produced\n(see the <slug>.md files in your --spec-dir); adjust it if it differs.\n-->\n\n## Workflow: order-fulfillment-workflow\n\n### Add\n\n- After the items are picked and packed, the system **notifies the finance team**\n  via the Email Service that the order is ready to invoice.\n- A business rule: partial shipments are not allowed — an order ships only when\n  every item is available.\n\n### Modify\n\n- Shipment creation retries change from 3 attempts to 5 attempts.\n- The workflow owner is the Fulfillment Operations Team.\n\n### Remove\n\n- The manager-approval rule for orders above $1,000 (the policy was retired).\n\n## Reason\n\nJune 2026 fulfillment policy update (OPS-142): approval threshold retired,\nfinance wants an invoice-ready notification, and carrier flakiness justifies\ntwo extra shipment retries.",
+      "author": "devansh",
+      "created_at": "2026-07-17T15:30:21.847935Z",
+      "resolved_patches": {
+        "order-fulfillment-workflow": [
+          {
+            "action": "add",
+            "target": "activity",
+            "payload": {
+              "name": "Notify finance team"
+            },
+            "evidence": {
+              "source_section": null,
+              "heading": null,
+              "workflow_step": null,
+              "quote": "After the items are picked and packed, the system notifies the finance team via the Email Service that the order is ready to invoice.",
+              "char_start": null,
+              "char_end": null
+            }
+          },
+          {
+            "action": "add",
+            "target": "rule",
+            "payload": {
+              "value": "Partial shipments are not allowed — an order ships only when every item is available."
+            },
+            "evidence": {
+              "source_section": null,
+              "heading": null,
+              "workflow_step": null,
+              "quote": "A business rule: partial shipments are not allowed — an order ships only when every item is available.",
+              "char_start": null,
+              "char_end": null
+            }
+          },
+          {
+            "action": "modify",
+            "target": "retry",
+            "payload": {
+              "old": "Up to 3 retries for shipment creation failure",
+              "new": "Up to 5 retries for shipment creation failure"
+            },
+            "evidence": {
+              "source_section": null,
+              "heading": null,
+              "workflow_step": null,
+              "quote": "Shipment creation retries change from 3 attempts to 5 attempts.",
+              "char_start": null,
+              "char_end": null
+            }
+          },
+          {
+            "action": "modify",
+            "target": "owner",
+            "payload": {
+              "value": "Fulfillment Operations Team"
+            },
+            "evidence": {
+              "source_section": null,
+              "heading": null,
+              "workflow_step": null,
+              "quote": "The workflow owner is the Fulfillment Operations Team.",
+              "char_start": null,
+              "char_end": null
+            }
+          },
+          {
+            "action": "remove",
+            "target": "rule",
+            "payload": {
+              "value": "Orders above $1,000 require manager approval"
+            },
+            "evidence": {
+              "source_section": null,
+              "heading": null,
+              "workflow_step": null,
+              "quote": "Remove the manager-approval rule for orders above $1,000 (the policy was retired).",
+              "char_start": null,
+              "char_end": null
+            }
+          }
+        ]
+      },
+      "trigger_ops": [],
+      "xref_ops": [],
+      "workflows_added": [],
+      "workflows_removed": [],
+      "summary": {
+        "order-fulfillment-workflow": [
+          "add activity",
+          "add rule",
+          "modify retry",
+          "modify owner",
+          "remove rule",
+          "metadata: 1 applied, 0 dropped, 0 flagged; facts: 4 applied, 0 dropped, 0 flagged",
+          "version bumped to 0.1.1"
+        ]
+      }
+    },
+    {
+      "edit_id": "b6f826b1-2e39-45d2-a522-9a04dd1ce986",
+      "document": "# Edit Request\n\n## Workflow: order-fulfillment-workflow\n\n### Add\n\n- A business rule: gift wrapping is available on request for orders under 10 kg.\n\n## Reason\n\nFrontend smoke test (scenario 6).",
+      "author": "devansh",
+      "created_at": "2026-07-17T15:56:55.348315Z",
+      "resolved_patches": {
+        "order-fulfillment-workflow": [
+          {
+            "action": "add",
+            "target": "rule",
+            "payload": {
+              "value": "Gift wrapping is available on request for orders under 10 kg."
+            },
+            "evidence": {
+              "source_section": null,
+              "heading": null,
+              "workflow_step": null,
+              "quote": "A business rule: gift wrapping is available on request for orders under 10 kg.",
+              "char_start": null,
+              "char_end": null
+            }
+          }
+        ]
+      },
+      "trigger_ops": [],
+      "xref_ops": [],
+      "workflows_added": [],
+      "workflows_removed": [],
+      "summary": {
+        "order-fulfillment-workflow": [
+          "add rule",
+          "facts: 1 applied, 0 dropped, 0 flagged",
+          "version bumped to 0.1.2"
+        ]
+      }
+    }
+  ],
+  "stage": "spec_drafted",
+  "created_at": "2026-07-16T21:35:20.885127Z",
+  "updated_at": "2026-07-17T15:57:23.833152Z"
+}

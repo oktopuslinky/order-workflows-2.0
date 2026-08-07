@@ -1,0 +1,1321 @@
+{
+  "workflow_id": "14dc5275-e9f8-4266-868d-e1046805b968",
+  "document_text": "# Customer Onboarding Workflow\n\n<!--\n  workflow-compiler specification (v1) — slug: customer-onboarding\n  This file is a projection of the structured spec. Edit it freely, then run\n  `workflow-compiler validate <project-id>` to fold your edits back in.\n  Lines you add are recorded as human-provided. Keep the `[id]` markers on\n  existing entries so your edits update the right element.\n-->\n\n## Purpose\nRegisters a new customer by validating the application, verifying identity, creating a customer record, and notifying the customer of the outcome.\n\n## Metadata\n- domain: \n- owner: \n- version: 0.1.0\n- actors: Customer, Onboarding Service, Identity Service, Customer Service, Notification Service, Provisioning Service, Account Provisioning\n- systems: Onboarding Service, Identity Service, Customer Service, Notification Service, Provisioning Service, Account Provisioning\n- triggers: application.received\n- start states: \n- end states: rejected, registered, rejected (ApplicationIncomplete), rejected (IdentityCheckFailed), failed\n- tags: \n\n## Inputs\n- application_id\n- email\n\n## Outputs\n- customer_record_id\n- onboarding_status\n\n## Business Rules\n- Identity verification required\n- Retry policy for identity verification (up to 3 times, exponential backoff starting at 2 seconds)\n\n## API Interfaces\n- Onboarding Service.validateApplication\n- Identity Service.verifyIdentity\n- Customer Service.createCustomerRecord\n- Notification Service.notifyCustomer\n\n## Systems Involved\n- Onboarding Service\n- Identity Service\n- Customer Service\n- Notification Service\n\n## Timers and SLAs\n<!-- none -->\n\n## Retries\n- Verify customer identity (up to 3 times, exponential backoff starting at 2 seconds)\n- Notify the customer (up to 5 times)\n- Configure the account: retry up to 3 times with exponential backoff starting at 1 second\n- Configure Account\n\n## Activities\n- [a1] Validate Application\n- [a2] Verify Identity\n- [a3] Create Customer Record\n- [a4] Notify Customer\n\n## Decisions\n- [d1] Is Application Complete? — after: a1; yes: a2; no: e1\n\n## Exceptions\n- [e1] ApplicationIncomplete — raised by: a1\n\n## Compensations\n- [c1] Release Reserved Account Number — compensates: a3\n- [c2] Deconfigure Account — compensates: a4\n\n## Events\n- [ev1] application.received — kind: trigger; emitted by: start\n- [ev2] onboarding_status — kind: output_emit; emitted by: a4\n- [v1] account.provision — kind: output_emit; emitted by: a3\n\n## State Transitions\n<!-- none -->\n\n## Assumptions\n<!-- none -->\n\n## Ambiguities\n- The specification lists 'failed' as an end state without clear conditions in the provided document [inferred]\n- Contradiction in retry policies for Notify Customer: Document specifies 'non-fatal' failures without clear resolution path [inferred]\n- Contradiction in 'failed' end state conditions and document evidence [inferred]\n\n## Suggested Edits\n<!-- none -->\n\n## Open Questions\n- [x] (R6-bounded-waits) What deadline bounds each wait (e.g. 24 hours)?\n  Answer: 24 hours — identity verification must complete within 24h or the application is rejected\n- [x] What is the deadline for each wait (e.g., 24 hours)?\n  Answer: 24 hours — same bound applies to every wait in this workflow\n- [ ] What is the specific deadline for Notify Customer retries?\n  Answer: \n\n## Cross-Workflow Dependencies\n- [x] provides output `customer_record_id` to `account-provisioning` input `customer_record_id` — Account Provisioning consumes the customer_record_id produced by Customer Onboarding\n\n## Triggers\n- [x] triggers `account-provisioning` (fire-and-forget) when `when a customer record is registered`\n  input customer_record_id: step output `customer_record_id` (str)",
+  "project_id": "feadb35e-2e40-4929-b1df-663be5fd7031",
+  "workflow_metadata": {
+    "name": "Customer Onboarding Workflow",
+    "description": "Registers a new customer by validating the application, verifying identity, creating a customer record, and notifying the customer of the outcome.",
+    "purpose": "Registers a new customer by validating the application, verifying identity, creating a customer record, and notifying the customer of the outcome.",
+    "actors": [
+      "Customer",
+      "Onboarding Service",
+      "Identity Service",
+      "Customer Service",
+      "Notification Service",
+      "Provisioning Service",
+      "Account Provisioning"
+    ],
+    "systems": [
+      "Onboarding Service",
+      "Identity Service",
+      "Customer Service",
+      "Notification Service",
+      "Provisioning Service",
+      "Account Provisioning"
+    ],
+    "trigger_events": [
+      "application.received"
+    ],
+    "start_states": [],
+    "end_states": [
+      "rejected",
+      "registered",
+      "rejected (ApplicationIncomplete)",
+      "rejected (IdentityCheckFailed)",
+      "failed"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.800"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "application_id",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "input-2",
+        "statement": "email",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-1",
+        "statement": "customer_record_id",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "output-2",
+        "statement": "onboarding_status",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-1",
+        "statement": "Validate Application",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-2",
+        "statement": "Verify Identity",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-3",
+        "statement": "Create Customer Record",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "activity-4",
+        "statement": "Notify Customer",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "decision-1",
+        "statement": "Is Application Complete?",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-1",
+        "statement": "Identity verification required",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "rule-2",
+        "statement": "Retry policy for identity verification (up to 3 times, exponential backoff starting at 2 seconds)",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-1",
+        "statement": "application.received",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-2",
+        "statement": "onboarding_status",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "event-3",
+        "statement": "account.provision",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-1",
+        "statement": "Onboarding Service.validateApplication",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-2",
+        "statement": "Identity Service.verifyIdentity",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-3",
+        "statement": "Customer Service.createCustomerRecord",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "api-4",
+        "statement": "Notification Service.notifyCustomer",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-1",
+        "statement": "Onboarding Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-2",
+        "statement": "Identity Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-3",
+        "statement": "Customer Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "system-4",
+        "statement": "Notification Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "exception-1",
+        "statement": "ApplicationIncomplete",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-1",
+        "statement": "Verify customer identity (up to 3 times, exponential backoff starting at 2 seconds)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-2",
+        "statement": "Notify the customer (up to 5 times)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-3",
+        "statement": "Configure the account: retry up to 3 times with exponential backoff starting at 1 second",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "retry-4",
+        "statement": "Configure Account",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Release Reserved Account Number compensates Create Customer Record",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      },
+      {
+        "id": "compensation-2",
+        "statement": "Deconfigure Account compensates Notify Customer",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.6
+      }
+    ],
+    "structure": {
+      "activities": [
+        {
+          "id": "a1",
+          "name": "Validate Application",
+          "parallel_group": null
+        },
+        {
+          "id": "a2",
+          "name": "Verify Identity",
+          "parallel_group": null
+        },
+        {
+          "id": "a3",
+          "name": "Create Customer Record",
+          "parallel_group": null
+        },
+        {
+          "id": "a4",
+          "name": "Notify Customer",
+          "parallel_group": null
+        }
+      ],
+      "decisions": [
+        {
+          "id": "d1",
+          "question": "Is Application Complete?",
+          "after": "a1",
+          "yes_target": "a2",
+          "no_target": "e1"
+        }
+      ],
+      "exceptions": [
+        {
+          "id": "e1",
+          "reason": "ApplicationIncomplete",
+          "raised_by": "a1"
+        }
+      ],
+      "compensations": [
+        {
+          "id": "c1",
+          "name": "Release Reserved Account Number",
+          "compensates": "a3"
+        },
+        {
+          "id": "c2",
+          "name": "Deconfigure Account",
+          "compensates": "a4"
+        }
+      ],
+      "events": [
+        {
+          "id": "ev1",
+          "name": "application.received",
+          "emitted_by": "start",
+          "kind": "trigger"
+        },
+        {
+          "id": "ev2",
+          "name": "onboarding_status",
+          "emitted_by": "a4",
+          "kind": "output_emit"
+        },
+        {
+          "id": "v1",
+          "name": "account.provision",
+          "emitted_by": "a3",
+          "kind": "output_emit"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "t1",
+          "target_workflow": "account-provisioning",
+          "mode": "fire_and_forget",
+          "condition": "when a customer record is registered",
+          "after": null
+        }
+      ],
+      "transitions": []
+    }
+  },
+  "checklist": {
+    "items": [
+      {
+        "id": "R1-trigger",
+        "requirement": "The workflow has a single, explicit start trigger.",
+        "category": "trigger",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "Trigger(s): application.received.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2-inputs",
+        "requirement": "The workflow declares its top-level inputs.",
+        "category": "inputs",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "2 input(s): application_id, email.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R2b-input-names",
+        "requirement": "Input names are snake_case (map directly to dataclass fields).",
+        "category": "inputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "All input names are snake_case.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R3-outputs",
+        "requirement": "The workflow declares its outputs / result.",
+        "category": "outputs",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "2 output(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R4-decisions",
+        "requirement": "Every decision states both branches; 'no' routes to an exception.",
+        "category": "decisions",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 1 decision(s) have both branches.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R5-compensations",
+        "requirement": "Each compensation names the activity it reverses.",
+        "category": "compensations",
+        "severity": "required",
+        "status": "satisfied",
+        "evidence": "All 2 compensation(s) are bound to an activity.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R6-bounded-waits",
+        "requirement": "Every human/external wait is bounded by a timer.",
+        "category": "waits",
+        "severity": "optional",
+        "status": "accepted",
+        "evidence": "Waits exist but no timer/deadline was declared; a signal could block forever.",
+        "question": "What deadline bounds each wait (e.g. 24 hours)?",
+        "answer": "24 hours — identity verification must complete within 24h or the application is rejected"
+      },
+      {
+        "id": "R7-exceptions",
+        "requirement": "Failure paths are named as exceptions.",
+        "category": "exceptions",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "1 exception(s) declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R8-retries",
+        "requirement": "Retry policies are stated for activities that need them.",
+        "category": "retries",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "4 retry policy/policies declared.",
+        "question": null,
+        "answer": null
+      },
+      {
+        "id": "R9-state-transitions",
+        "requirement": "No free-form state transitions (they do not map to Temporal).",
+        "category": "structure",
+        "severity": "optional",
+        "status": "satisfied",
+        "evidence": "No free-form state transitions.",
+        "question": null,
+        "answer": null
+      }
+    ]
+  },
+  "outgoing_triggers": [
+    {
+      "source_workflow": "customer-onboarding",
+      "target_workflow": "account-provisioning",
+      "mode": "fire_and_forget",
+      "condition": "when a customer record is registered",
+      "input_map": [
+        {
+          "target_input": "customer_record_id",
+          "source": "step_output",
+          "source_ref": "customer_record_id",
+          "type": "str"
+        }
+      ],
+      "result_binding": null,
+      "user_confirmed": true
+    }
+  ],
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Validate Application",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Verify Identity",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Create Customer Record",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Notify Customer",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Is Application Complete?",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "ApplicationIncomplete",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Release Reserved Account Number",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "compensation_2",
+        "label": "Deconfigure Account",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "application.received",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "onboarding_status",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "account.provision",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "trigger_1",
+        "label": "Trigger account-provisioning",
+        "node_type": "trigger",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "target_workflow": "account-provisioning",
+          "mode": "fire_and_forget"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "activity_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "activity_3",
+        "target": "activity_4",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e7",
+        "source": "activity_4",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e8",
+        "source": "activity_1",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "activity_3",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e10",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e11",
+        "source": "activity_4",
+        "target": "compensation_2",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "compensation_2",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e13",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e14",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "activity_4",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "activity_3",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "activity_4",
+        "target": "trigger_1",
+        "edge_type": "conditional",
+        "label": "triggers",
+        "condition": "when a customer record is registered"
+      },
+      {
+        "id": "e18",
+        "source": "exception_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": "terminates",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.95: 0 error(s), 1 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Dead-end node 'Trigger account-provisioning' has no outgoing edges.",
+        "location": "trigger_1",
+        "suggestion": "Add a transition toward an END node."
+      }
+    ],
+    "score": 0.95,
+    "health_score": 0.95,
+    "confidence": 1.0,
+    "reviewer": "demo",
+    "reviewed_at": "2026-07-13T03:30:30.030418Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Represents the workflow's initial intake or start point.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Marks the workflow's conclusion or final outcome.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "validate",
+        "rationale": "Involves validating the application, a clear check or gate.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "validate",
+        "rationale": "Verifies identity, another form of validation or check.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "process",
+        "rationale": "Creates a customer record, indicating core transformation work.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "activate",
+        "rationale": "Notifies the customer, a downstream effect or fulfillment.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Evaluates if the application is complete, a decision gate.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "capture",
+        "rationale": "Captures an event (ApplicationIncomplete), though not typical, fits best here due to its nature as an input to the workflow's flow adjustment.",
+        "confidence": 0.6
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "activate",
+        "rationale": "Releases a reserved resource, a corrective downstream action.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "compensation_2",
+        "phase": "activate",
+        "rationale": "Deconfigures an account, another corrective action with downstream effects.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "Represents the intake of an application received event.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "event_2",
+        "phase": "activate",
+        "rationale": "Emits a status update, a notification or downstream effect.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "event_3",
+        "phase": "activate",
+        "rationale": "Signals account provisioning completion, a fulfillment indicator.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "trigger_1",
+        "phase": "activate",
+        "rationale": "Triggers an external process (account-provisioning), a clear downstream activation.",
+        "confidence": 0.95
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "exception_1",
+          "event_1"
+        ],
+        "summary": "3 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "activity_1",
+          "activity_2",
+          "decision_1"
+        ],
+        "summary": "3 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_3"
+        ],
+        "summary": "1 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "activity_4",
+          "compensation_1",
+          "compensation_2",
+          "event_2",
+          "event_3",
+          "trigger_1"
+        ],
+        "summary": "7 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "OnboardingWorkflow",
+    "task_queue": "onboarding-queue",
+    "description": "Manages the onboarding process for new customers.",
+    "workflow_inputs": [
+      {
+        "name": "application_id",
+        "type": "str"
+      },
+      {
+        "name": "email",
+        "type": "str"
+      }
+    ],
+    "result_type": "str",
+    "activities": [
+      {
+        "name": "ValidateApplication",
+        "source_node_id": "activity_1",
+        "description": "Validate the incoming application.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "application_id",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "isValid"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": null
+      },
+      {
+        "name": "VerifyIdentity",
+        "source_node_id": "activity_2",
+        "description": "Verify the applicant's identity.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "email",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "verified"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "CreateCustomerRecord",
+        "source_node_id": "activity_3",
+        "description": "Create a new customer record.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "application_id",
+            "type": "str"
+          },
+          {
+            "name": "email",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "customer_record_id"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "NotifyCustomer",
+        "source_node_id": "activity_4",
+        "description": "Notify the customer about onboarding status.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "email",
+            "type": "str"
+          }
+        ],
+        "outputs": [
+          "notified"
+        ],
+        "result_type": "str",
+        "timeout_seconds": null,
+        "retry_policy": {
+          "maximum_attempts": 5,
+          "initial_interval_seconds": 1.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      }
+    ],
+    "signals": [],
+    "queries": [
+      {
+        "name": "getOnboardingStatus",
+        "description": "Query onboarding status.",
+        "returns": "str",
+        "state_field": "onboarding_status"
+      }
+    ],
+    "child_workflows": [],
+    "timers": [],
+    "triggers": [
+      {
+        "name": "StartAccountProvisioning",
+        "target_workflow_name": "AccountProvisioning",
+        "target_slug": "account-provisioning",
+        "target_task_queue": "AccountProvisioning-task-queue",
+        "mode": "fire_and_forget",
+        "params": [
+          {
+            "name": "customer_record_id",
+            "type": "str"
+          }
+        ],
+        "result_type": "str",
+        "description": "Fires when when a customer record is registered"
+      }
+    ],
+    "compensation_activities": [
+      {
+        "name": "ReleaseReservedAccountNumber",
+        "compensates": "CreateCustomerRecord",
+        "source_node_id": "compensation_1",
+        "description": "Release the reserved account number.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "customer_record_id",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "customer_record_id",
+            "source": "step_output",
+            "ref": "CreateCustomerRecord"
+          }
+        ],
+        "retry_policy": null
+      },
+      {
+        "name": "DeconfigureAccount",
+        "compensates": "NotifyCustomer",
+        "source_node_id": "compensation_2",
+        "description": "Deconfigure the account.",
+        "inputs": [],
+        "params": [
+          {
+            "name": "email",
+            "type": "str"
+          }
+        ],
+        "bindings": [
+          {
+            "param": "email",
+            "source": "workflow_input",
+            "ref": "email"
+          }
+        ],
+        "retry_policy": null
+      }
+    ],
+    "default_retry_policy": null,
+    "plan": [
+      {
+        "id": "S1",
+        "kind": "activity",
+        "description": null,
+        "ref": "ValidateApplication",
+        "bindings": [
+          {
+            "param": "application_id",
+            "source": "workflow_input",
+            "ref": "application_id"
+          }
+        ],
+        "result_name": "isValid",
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": null,
+        "lanes": []
+      },
+      {
+        "id": "S2",
+        "kind": "branch",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": "isValid",
+        "lanes": [
+          [
+            {
+              "id": "S3",
+              "kind": "activity",
+              "description": null,
+              "ref": "VerifyIdentity",
+              "bindings": [
+                {
+                  "param": "email",
+                  "source": "workflow_input",
+                  "ref": "email"
+                }
+              ],
+              "result_name": "verified",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S4",
+              "kind": "activity",
+              "description": null,
+              "ref": "CreateCustomerRecord",
+              "bindings": [
+                {
+                  "param": "application_id",
+                  "source": "workflow_input",
+                  "ref": "application_id"
+                },
+                {
+                  "param": "email",
+                  "source": "workflow_input",
+                  "ref": "email"
+                }
+              ],
+              "result_name": "customer_record_id",
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            },
+            {
+              "id": "S5",
+              "kind": "activity",
+              "description": null,
+              "ref": "NotifyCustomer",
+              "bindings": [
+                {
+                  "param": "email",
+                  "source": "workflow_input",
+                  "ref": "email"
+                }
+              ],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ],
+          [
+            {
+              "id": "S6",
+              "kind": "raise",
+              "description": null,
+              "ref": "ApplicationIncomplete",
+              "bindings": [],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ]
+        ]
+      },
+      {
+        "id": "branch_trigger_1",
+        "kind": "branch",
+        "description": null,
+        "ref": null,
+        "bindings": [],
+        "result_name": null,
+        "signal": null,
+        "condition": null,
+        "timer": null,
+        "predicate": "when a customer record is registered",
+        "lanes": [
+          [
+            {
+              "id": "trigger_1",
+              "kind": "trigger",
+              "description": "Start the standalone 'account-provisioning' workflow",
+              "ref": "StartAccountProvisioning",
+              "bindings": [
+                {
+                  "param": "customer_record_id",
+                  "source": "step_output",
+                  "ref": "customer_record_id"
+                }
+              ],
+              "result_name": null,
+              "signal": null,
+              "condition": null,
+              "timer": null,
+              "predicate": null,
+              "lanes": []
+            }
+          ],
+          []
+        ]
+      }
+    ]
+  },
+  "temporal_code": {
+    "target": "python",
+    "package_name": "onboarding_workflow",
+    "files": [
+      {
+        "path": "shared.py",
+        "language": "python",
+        "content": "\"\"\"Shared dataclasses for the OnboardingWorkflow workflow.\n\nTemporal passes a single dataclass argument to workflows and activities so that\ninputs evolve compatibly. Refine the field types to match your real domain types.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass, field\nfrom typing import Any\n\n\n@dataclass\nclass WorkflowInput:\n    \"\"\"Input to the OnboardingWorkflow workflow.\"\"\"\n\n    application_id: str = \"\"\n    email: str = \"\"\n\n\n@dataclass\nclass ValidateApplicationInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    application_id: str = \"\"\n\n\n@dataclass\nclass VerifyIdentityInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    email: str = \"\"\n\n\n@dataclass\nclass CreateCustomerRecordInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    application_id: str = \"\"\n    email: str = \"\"\n\n\n@dataclass\nclass NotifyCustomerInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    email: str = \"\"\n\n\n@dataclass\nclass ReleaseReservedAccountNumberInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    customer_record_id: str = \"\"\n\n\n@dataclass\nclass DeconfigureAccountInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    email: str = \"\"\n\n\n@dataclass\nclass StartAccountProvisioningInput:\n    \"\"\"Input to the matching activity / child workflow.\"\"\"\n\n    customer_record_id: str = \"\""
+      },
+      {
+        "path": "activities.py",
+        "language": "python",
+        "content": "\"\"\"Activities for the OnboardingWorkflow workflow.\n\nEach activity is a thin, retryable unit of work. Replace the ``NotImplementedError``\nwith real logic; activities may use I/O, SDKs, and blocking calls freely.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom temporalio import activity\n\nfrom shared import (\n    ValidateApplicationInput,\n    VerifyIdentityInput,\n    CreateCustomerRecordInput,\n    NotifyCustomerInput,\n    ReleaseReservedAccountNumberInput,\n    DeconfigureAccountInput,\n    StartAccountProvisioningInput,\n)\n\n\n@activity.defn(name=\"ValidateApplication\")\nasync def validate_application(arg: ValidateApplicationInput) -> str:\n    \"\"\"Validate the incoming application.\"\"\"\n    activity.logger.info(\"Running validate_application\", extra={\"input\": arg})\n    # TODO: implement validate_application. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"VerifyIdentity\")\nasync def verify_identity(arg: VerifyIdentityInput) -> str:\n    \"\"\"Verify the applicant's identity.\"\"\"\n    activity.logger.info(\"Running verify_identity\", extra={\"input\": arg})\n    # TODO: implement verify_identity. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"CreateCustomerRecord\")\nasync def create_customer_record(arg: CreateCustomerRecordInput) -> str:\n    \"\"\"Create a new customer record.\"\"\"\n    activity.logger.info(\"Running create_customer_record\", extra={\"input\": arg})\n    # TODO: implement create_customer_record. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"NotifyCustomer\")\nasync def notify_customer(arg: NotifyCustomerInput) -> str:\n    \"\"\"Notify the customer about onboarding status.\"\"\"\n    activity.logger.info(\"Running notify_customer\", extra={\"input\": arg})\n    # TODO: implement notify_customer. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"ReleaseReservedAccountNumber\")\nasync def release_reserved_account_number(arg: ReleaseReservedAccountNumberInput) -> str:\n    \"\"\"Release the reserved account number.\"\"\"\n    activity.logger.info(\"Running release_reserved_account_number\", extra={\"input\": arg})\n    # TODO: implement release_reserved_account_number. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\"\n\n@activity.defn(name=\"DeconfigureAccount\")\nasync def deconfigure_account(arg: DeconfigureAccountInput) -> str:\n    \"\"\"Deconfigure the account.\"\"\"\n    activity.logger.info(\"Running deconfigure_account\", extra={\"input\": arg})\n    # TODO: implement deconfigure_account. Returns a placeholder so the bundle runs as-is.\n    return \"stub-result\""
+      },
+      {
+        "path": "triggers.py",
+        "language": "python",
+        "content": "\"\"\"Cross-workflow trigger activities for the OnboardingWorkflow workflow.\n\nTemporal workflow code may not start another workflow directly (that would be\nnon-deterministic), so each trigger below is an **activity** that talks to the\nTemporal client. The target workflows stay fully standalone: they are started\nby workflow-type name on their own task queues, and\n``id_conflict_policy=USE_EXISTING`` makes activity retries idempotent — a retry\nattaches to the already-started run instead of double-starting it.\n\nThe client address comes from ``TEMPORAL_ADDRESS`` (default ``localhost:7233``).\n\"\"\"\n\nfrom __future__ import annotations\n\nimport os\n\nfrom temporalio import activity\nfrom temporalio.client import Client\nfrom temporalio.common import WorkflowIDConflictPolicy\n\nfrom shared import (\n    StartAccountProvisioningInput,\n)\n\n_client: Client | None = None\n\n\nasync def _get_client() -> Client:\n    \"\"\"Connect (once per worker process) to the Temporal server.\"\"\"\n    global _client\n    if _client is None:\n        _client = await Client.connect(\n            os.environ.get(\"TEMPORAL_ADDRESS\", \"localhost:7233\")\n        )\n    return _client\n\n\n@activity.defn(name=\"StartAccountProvisioning\")\nasync def start_account_provisioning(arg: StartAccountProvisioningInput) -> str:\n    \"\"\"Fires when when a customer record is registered\"\"\"\n    client = await _get_client()\n    handle = await client.start_workflow(\n        \"AccountProvisioning\",\n        arg,\n        id=f\"account-provisioning-{arg.customer_record_id}\",\n        task_queue=\"AccountProvisioning-task-queue\",\n        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,\n    )\n    activity.logger.info(\"Started workflow %s\", handle.id)\n    return handle.id"
+      },
+      {
+        "path": "workflow.py",
+        "language": "python",
+        "content": "\"\"\"The OnboardingWorkflow Temporal workflow.\n\nWorkflow code must be deterministic: do all I/O inside activities, and use\n``workflow.*`` helpers (``execute_activity``, ``execute_child_workflow``,\n``sleep``, signals, queries) rather than calling the outside world directly.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom collections.abc import Callable\nfrom datetime import timedelta\nfrom typing import Any\n\nfrom temporalio import workflow\nfrom temporalio.common import RetryPolicy\nfrom temporalio.exceptions import ApplicationError\n\nwith workflow.unsafe.imports_passed_through():\n    from activities import (\n        validate_application,\n        verify_identity,\n        create_customer_record,\n        notify_customer,\n        release_reserved_account_number,\n        deconfigure_account,\n    )\n    from triggers import (\n        start_account_provisioning,\n    )\n    from shared import (\n        WorkflowInput,\n        ValidateApplicationInput,\n        VerifyIdentityInput,\n        CreateCustomerRecordInput,\n        NotifyCustomerInput,\n        ReleaseReservedAccountNumberInput,\n        DeconfigureAccountInput,\n        StartAccountProvisioningInput,\n    )\n\n\n\n@workflow.defn\nclass OnboardingWorkflow:\n    \"\"\"Manages the onboarding process for new customers.\"\"\"\n\n    def __init__(self) -> None:\n        self._status: str = \"pending\"\n        # Read-only debug surface (safe in production: no I/O, no wall-clock).\n        self._current_step: str = \"\"\n        self._decisions_taken: list[dict[str, object]] = []\n        self._triggers_fired: list[str] = []\n\n    @workflow.run\n    async def run(self, arg: WorkflowInput) -> str:\n        self._status = \"running\"\n        compensations: list[tuple[Callable[..., Any], Any]] = []\n        try:\n            self._current_step = 'S1'\n            workflow.logger.info(\"Running step: ValidateApplication\")\n            is_valid = await workflow.execute_activity(\n                validate_application,\n                ValidateApplicationInput(application_id=arg.application_id),\n                start_to_close_timeout=timedelta(seconds=60),\n            )\n            self._current_step = 'S2'\n            should_is_valid = bool(is_valid)  # branch condition: isValid\n            if should_is_valid:\n                self._decisions_taken.append({'branch': 'S2', 'predicate': 'isValid', 'taken': True})\n                self._current_step = 'S3'\n                workflow.logger.info(\"Running step: VerifyIdentity\")\n                verified = await workflow.execute_activity(\n                    verify_identity,\n                    VerifyIdentityInput(email=arg.email),\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=2), backoff_coefficient=2, maximum_attempts=3),\n                )\n                self._current_step = 'S4'\n                workflow.logger.info(\"Running step: CreateCustomerRecord\")\n                customer_record_id = await workflow.execute_activity(\n                    create_customer_record,\n                    CreateCustomerRecordInput(application_id=arg.application_id, email=arg.email),\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=3),\n                )\n                compensations.append((release_reserved_account_number, ReleaseReservedAccountNumberInput(customer_record_id=customer_record_id)))\n                self._current_step = 'S5'\n                workflow.logger.info(\"Running step: NotifyCustomer\")\n                s5_result = await workflow.execute_activity(\n                    notify_customer,\n                    NotifyCustomerInput(email=arg.email),\n                    start_to_close_timeout=timedelta(seconds=60),\n                    retry_policy=RetryPolicy(initial_interval=timedelta(seconds=1), backoff_coefficient=2, maximum_attempts=5),\n                )\n                compensations.append((deconfigure_account, DeconfigureAccountInput(email=arg.email)))\n            else:\n                self._decisions_taken.append({'branch': 'S2', 'predicate': 'isValid', 'taken': False})\n                self._current_step = 'S6'\n                workflow.logger.info(\"Raising: ApplicationIncomplete\")\n                raise ApplicationError('Workflow rejected: ApplicationIncomplete', type='ApplicationIncomplete', non_retryable=True)\n            self._current_step = 'branch_trigger_1'\n            should_when_a_customer_record_is_registered = True  # TODO: set from a real condition: when a customer record is registered\n            if should_when_a_customer_record_is_registered:\n                self._decisions_taken.append({'branch': 'branch_trigger_1', 'predicate': 'when a customer record is registered', 'taken': True})\n                self._current_step = 'trigger_1'\n                workflow.logger.info(\"Triggering workflow: AccountProvisioning\")\n                trigger_1_result = await workflow.execute_activity(\n                    start_account_provisioning,\n                    StartAccountProvisioningInput(),\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n                self._triggers_fired.append('StartAccountProvisioning')\n            else:\n                self._decisions_taken.append({'branch': 'branch_trigger_1', 'predicate': 'when a customer record is registered', 'taken': False})\n        except Exception:\n            for _comp_fn, _comp_arg in reversed(compensations):\n                await workflow.execute_activity(\n                    _comp_fn,\n                    _comp_arg,\n                    start_to_close_timeout=timedelta(seconds=60),\n                )\n            self._status = \"compensated\"\n            raise\n        self._status = \"completed\"\n        return self._status\n\n    @workflow.query\n    def get_onboarding_status(self) -> str:\n        \"\"\"Query onboarding status.\"\"\"\n        return self._status\n\n    @workflow.query\n    def current_step(self) -> str:\n        \"\"\"The plan step currently executing (read-only debug surface).\"\"\"\n        return self._current_step\n\n    @workflow.query\n    def decisions_taken(self) -> list[dict[str, object]]:\n        \"\"\"Every branch decision so far: branch id, predicate, and path taken.\"\"\"\n        return self._decisions_taken\n\n    @workflow.query\n    def triggers_fired(self) -> list[str]:\n        \"\"\"Cross-workflow triggers fired so far.\"\"\"\n        return self._triggers_fired"
+      },
+      {
+        "path": "worker.py",
+        "language": "python",
+        "content": "\"\"\"Worker process for the OnboardingWorkflow workflow.\n\nStart a local Temporal dev server in one terminal::\n\n    temporal server start-dev\n\nThen, from inside this package directory, run the worker::\n\n    python worker.py\n\nKeep it running, then start a workflow with ``python starter.py``.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\n\nfrom temporalio import workflow\nfrom temporalio.client import Client\nfrom temporalio.worker import Worker\n\nwith workflow.unsafe.imports_passed_through():\n    from workflow import OnboardingWorkflow\n    from activities import (\n        validate_application,\n        verify_identity,\n        create_customer_record,\n        notify_customer,\n        release_reserved_account_number,\n        deconfigure_account,\n    )\n    from triggers import (\n        start_account_provisioning,\n    )\n\nTASK_QUEUE = \"onboarding-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and run the worker until cancelled.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n    worker = Worker(\n        client,\n        task_queue=TASK_QUEUE,\n        workflows=[OnboardingWorkflow],\n        activities=[validate_application, verify_identity, create_customer_record, notify_customer, release_reserved_account_number, deconfigure_account, start_account_provisioning],\n    )\n    print(f\"Worker started on task queue {TASK_QUEUE!r}. Press Ctrl+C to exit.\")\n    await worker.run()\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "starter.py",
+        "language": "python",
+        "content": "\"\"\"Start a OnboardingWorkflow workflow execution.\n\nStart the Temporal dev server and the worker first::\n\n    temporal server start-dev      # terminal 1\n    python worker.py               # terminal 2\n\nThen, from inside this package directory::\n\n    python starter.py              # terminal 3\n\"\"\"\n\nfrom __future__ import annotations\n\nimport asyncio\nimport uuid\n\nfrom temporalio.client import Client\n\nfrom workflow import OnboardingWorkflow\nfrom shared import WorkflowInput\n\nTASK_QUEUE = \"onboarding-queue\"\n\n\nasync def main() -> None:\n    \"\"\"Connect to Temporal and start a single workflow execution.\"\"\"\n    client = await Client.connect(\"localhost:7233\")\n\n    handle = await client.start_workflow(\n        OnboardingWorkflow.run,\n        WorkflowInput(),  # TODO: populate the workflow input fields.\n        id=f\"onboarding_workflow-{uuid.uuid4()}\",\n        task_queue=TASK_QUEUE,\n    )\n    print(f\"Started workflow {handle.id}\")\n\n    # NOTE: workflows that pause on a signal gate block here until signalled\n    # (e.g. via `temporal workflow signal` or a client `handle.signal(...)`).\n    result = await handle.result()\n    print(\"Workflow result:\", result)\n\n\nif __name__ == \"__main__\":\n    asyncio.run(main())"
+      },
+      {
+        "path": "test_stepthrough.py",
+        "language": "python",
+        "content": "\"\"\"Local step-through harness for the OnboardingWorkflow workflow.\n\nRuns this bundle under a time-skipping Temporal test environment with the\ngenerated stub activities (they return placeholders, no I/O) and **mocked\ntrigger activities** (the real ones call the Temporal client), then inspects\nthe read-only debug queries — proving which steps ran, which branch each\ndecision took, and which cross-workflow triggers fired.\n\nRun from inside this bundle directory::\n\n    pytest test_stepthrough.py -s\n\nRequires: temporalio, pytest, pytest-asyncio (asyncio_mode=auto or the marker).\n\"\"\"\n\nfrom __future__ import annotations\n\nimport uuid\n\nimport pytest\nfrom temporalio import activity\nfrom temporalio.testing import WorkflowEnvironment\nfrom temporalio.worker import UnsandboxedWorkflowRunner, Worker\n\nfrom activities import (\n    validate_application,\n    verify_identity,\n    create_customer_record,\n    notify_customer,\n    release_reserved_account_number,\n    deconfigure_account,\n)\nfrom shared import WorkflowInput\nfrom workflow import OnboardingWorkflow\nTRIGGERS_CALLED: list[str] = []\n\n\n@activity.defn(name=\"StartAccountProvisioning\")\nasync def mock_start_account_provisioning(arg) -> str:\n    \"\"\"Mocked cross-workflow start — records the call instead of starting.\"\"\"\n    TRIGGERS_CALLED.append(\"StartAccountProvisioning\")\n    return \"\"\n\n\n@pytest.mark.asyncio\nasync def test_stepthrough() -> None:\n    \"\"\"Run the workflow end to end and inspect the debug queries.\"\"\"\n    env = await WorkflowEnvironment.start_time_skipping()\n    try:\n        async with Worker(\n            env.client,\n            task_queue=\"onboarding-queue\",\n            workflows=[OnboardingWorkflow],\n            activities=[validate_application, verify_identity, create_customer_record, notify_customer, release_reserved_account_number, deconfigure_account, mock_start_account_provisioning, ],\n            workflow_runner=UnsandboxedWorkflowRunner(),\n        ):\n            handle = await env.client.start_workflow(\n                OnboardingWorkflow.run,\n                WorkflowInput(),\n                id=f\"stepthrough-{uuid.uuid4()}\",\n                task_queue=\"onboarding-queue\",\n            )\n            result = await handle.result()\n            assert result == \"completed\"\n            print(\"last step:\", await handle.query(\"current_step\"))\n            print(\"decisions:\", await handle.query(\"decisions_taken\"))\n            print(\"triggers fired:\", await handle.query(\"triggers_fired\"))\n    finally:\n        await env.shutdown()"
+      },
+      {
+        "path": "README.md",
+        "language": "markdown",
+        "content": "# OnboardingWorkflow (generated Temporal workflow)\n\nManages the onboarding process for new customers.\n\nThis package was generated **deterministically** from a reviewed\n`TemporalWorkflowDesign`. It is a runnable scaffold: the control flow, signals,\nqueries, timers, child workflows, retry policies, and saga compensation are\nwired up, but each activity body raises `NotImplementedError` for you to fill in.\n\nThe files use **flat, absolute imports** (`from activities import ...`), matching\nthe layout in the Temporal Python docs, so each script is run directly from\ninside this directory — no package installation or `PYTHONPATH` needed.\n\n## Files\n\n| File | Purpose |\n|------|---------|\n| `shared.py` | Dataclasses for workflow / activity inputs |\n| `activities.py` | `@activity.defn` units of work (implement these) |\n| `workflow.py` | `@workflow.defn` orchestration: `OnboardingWorkflow` |\n| `worker.py` | Worker registering the workflow + activities on `onboarding-queue` |\n| `starter.py` | Client that starts one workflow execution |\n\n## Run it\n\nInstall the SDK and start a local Temporal server:\n\n```bash\npip install temporalio\ntemporal server start-dev          # terminal 1, leave running\n```\n\nFrom **inside this directory**, run the worker and then the starter:\n\n```bash\npython worker.py                   # terminal 2, leave running\npython starter.py                  # terminal 3\n```\n\nThe worker polls the `onboarding-queue` task queue; the starter submits a single\n`OnboardingWorkflow` execution and prints its result. Open the Web UI at\nhttp://localhost:8233 to watch the execution.\n\n## Next steps\n\n- Implement each activity in `activities.py`.\n- Populate the `WorkflowInput()` fields in `starter.py`.\n- Replace the default `str` input fields in `shared.py` with real types.\n- Review the generated retry policies and timeouts against your SLAs."
+      }
+    ]
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Validate Application\"]\n    activity_2[\"Verify Identity\"]\n    activity_3[\"Create Customer Record\"]\n    activity_4[\"Notify Customer\"]\n    decision_1{\"Is Application Complete?\"}\n    exception_1([\"ApplicationIncomplete\"])\n    compensation_1[\"Release Reserved Account Number\"]\n    compensation_2[\"Deconfigure Account\"]\n    event_1([\"application.received\"])\n    event_2([\"onboarding_status\"])\n    event_3([\"account.provision\"])\n    trigger_1[\"Trigger account-provisioning\"]\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> activity_3\n    activity_3 --> activity_4\n    activity_4 --> end_node\n    activity_1 -.->|on error| exception_1\n    activity_3 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    activity_4 -.->|compensate| compensation_2\n    compensation_2 --> end_node\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_4 -.->|emits| event_2\n    activity_3 -.->|emits| event_3\n    activity_4 -->|when a customer record is registered| trigger_1\n    exception_1 -->|terminates| end_node\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,exception_1,event_1 capture;\n    class activity_1,activity_2,decision_1 validate;\n    class activity_3 process;\n    class end_node,activity_4,compensation_1,compensation_2,event_2,event_3,trigger_1 activate;",
+    "title": "Customer Onboarding Workflow"
+  },
+  "confidence_scores": {
+    "metadata": null,
+    "facts": null,
+    "graph": 0.9,
+    "cvpa": 0.9482,
+    "temporal": 0.7,
+    "overall": null,
+    "notes": {
+      "cvpa": "14 nodes classified; 14 from model, 0 by fallback.",
+      "temporal": "4 activities, 0 signals, 0 child workflows, 2 compensations.",
+      "temporal_code": "8 files for package 'onboarding_workflow'."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-07-13T03:30:30.022089Z",
+  "updated_at": "2026-07-13T03:33:14.854680Z"
+}

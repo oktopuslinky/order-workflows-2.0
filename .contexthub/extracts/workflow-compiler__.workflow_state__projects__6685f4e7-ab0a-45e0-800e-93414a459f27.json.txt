@@ -1,0 +1,214 @@
+{
+  "project_id": "6685f4e7-ab0a-45e0-800e-93414a459f27",
+  "document_text": "Customer Lifecycle Operations\n\nThis document describes two related but distinct business processes operated by the Customer Platform team: customer onboarding and account provisioning. Provisioning consumes the customer record produced by onboarding.\n\nOnboarding Purpose\n\nThe customer onboarding workflow registers a new customer: it validates the application, verifies the customer's identity, creates the customer record, and notifies the customer of the outcome.\n\nOnboarding Trigger\n\nThe workflow starts when a customer application is submitted and an application.received request reaches the Onboarding Service.\n\nOnboarding Inputs and Outputs\n\nInputs\napplication_id — identifier of the submitted application\nemail — the applicant's email address\n\nOutputs\ncustomerrecordid — identifier of the created customer record\nonboarding_status — registered or rejected\n\nOnboarding Process\n\nThe Onboarding Service validates the application using application_id\nand returns whether the application is complete.\nIf the application is incomplete, the workflow raises\nApplicationIncomplete and rejects the application; if the application is complete, the workflow continues.\nThe Identity Service verifies the customer identity for email and\nreturns a verification_id.\nThe Customer Service creates the customer record and returns a\ncustomerrecordid.\nThe Notification Service notifies the customer of the registration\noutcome.\n\nOnboarding Error Handling\n\nApplicationIncomplete: the application is missing required fields →\nreject the application and end the workflow.\nIdentityCheckFailed: identity verification fails → reject the\napplication and end the workflow.\n\nOnboarding Retries\n\nVerify the customer identity: retry up to 3 times with exponential\nbackoff starting at 2 seconds.\nNotify the customer: retry up to 5 times; failure is non-fatal.\n\nProvisioning Purpose\n\nThe account provisioning workflow prepares a registered customer's account for use: it reserves an account number, configures the account, and activates it. If activation fails after configuration, the configuration is rolled back.\n\nProvisioning Trigger\n\nThe workflow starts when a customer record is registered and an account.provision request reaches the Provisioning Service. It requires the customerrecordid produced by customer onboarding.\n\nProvisioning Inputs and Outputs\n\nInputs\ncustomerrecordid — identifier of the registered customer record\nplan_code — the subscription plan to provision\n\nOutputs\naccount_id — identifier of the activated account\nprovisioning_status — active or failed\n\nProvisioning Process\n\nThe Provisioning Service reserves an account number for\ncustomerrecordid and returns an account_id.\nThe Provisioning Service configures the account for plan_code.\nIf the configuration is invalid, the workflow raises\nConfigurationInvalid; if the configuration is valid, the workflow continues.\nThe Provisioning Service activates the account and returns the final\nprovisioning_status.\n\nProvisioning Error Handling\n\nConfigurationInvalid: the plan configuration cannot be applied → roll\nback the provisioning (release the account number) and end the workflow.\nActivationFailed: activation does not complete → roll back the\nprovisioning (deconfigure the account, release the account number).\n\nProvisioning Retries\n\nConfigure the account: retry up to 3 times with exponential backoff\nstarting at 1 second.\n\nProvisioning Compensation\n\nRelease the account number compensates Reserves an account number —\nreturn the reserved number if provisioning is rolled back.\nDeconfigure the account compensates Configures the account — undo the\nplan configuration if provisioning is rolled back after configuration.",
+  "segments": [
+    {
+      "id": "w1",
+      "slug": "demo-order-workflow",
+      "name": "Demo Order Workflow",
+      "purpose": "Validate, reserve, and ship a customer order",
+      "section_titles": [],
+      "text": "Customer Lifecycle Operations\n\nThis document describes two related but distinct business processes operated by the Customer Platform team: customer onboarding and account provisioning. Provisioning consumes the customer record produced by onboarding.\n\nOnboarding Purpose\n\nThe customer onboarding workflow registers a new customer: it validates the application, verifies the customer's identity, creates the customer record, and notifies the customer of the outcome.\n\nOnboarding Trigger\n\nThe workflow starts when a customer application is submitted and an application.received request reaches the Onboarding Service.\n\nOnboarding Inputs and Outputs\n\nInputs\napplication_id — identifier of the submitted application\nemail — the applicant's email address\n\nOutputs\ncustomerrecordid — identifier of the created customer record\nonboarding_status — registered or rejected\n\nOnboarding Process\n\nThe Onboarding Service validates the application using application_id\nand returns whether the application is complete.\nIf the application is incomplete, the workflow raises\nApplicationIncomplete and rejects the application; if the application is complete, the workflow continues.\nThe Identity Service verifies the customer identity for email and\nreturns a verification_id.\nThe Customer Service creates the customer record and returns a\ncustomerrecordid.\nThe Notification Service notifies the customer of the registration\noutcome.\n\nOnboarding Error Handling\n\nApplicationIncomplete: the application is missing required fields →\nreject the application and end the workflow.\nIdentityCheckFailed: identity verification fails → reject the\napplication and end the workflow.\n\nOnboarding Retries\n\nVerify the customer identity: retry up to 3 times with exponential\nbackoff starting at 2 seconds.\nNotify the customer: retry up to 5 times; failure is non-fatal.\n\nProvisioning Purpose\n\nThe account provisioning workflow prepares a registered customer's account for use: it reserves an account number, configures the account, and activates it. If activation fails after configuration, the configuration is rolled back.\n\nProvisioning Trigger\n\nThe workflow starts when a customer record is registered and an account.provision request reaches the Provisioning Service. It requires the customerrecordid produced by customer onboarding.\n\nProvisioning Inputs and Outputs\n\nInputs\ncustomerrecordid — identifier of the registered customer record\nplan_code — the subscription plan to provision\n\nOutputs\naccount_id — identifier of the activated account\nprovisioning_status — active or failed\n\nProvisioning Process\n\nThe Provisioning Service reserves an account number for\ncustomerrecordid and returns an account_id.\nThe Provisioning Service configures the account for plan_code.\nIf the configuration is invalid, the workflow raises\nConfigurationInvalid; if the configuration is valid, the workflow continues.\nThe Provisioning Service activates the account and returns the final\nprovisioning_status.\n\nProvisioning Error Handling\n\nConfigurationInvalid: the plan configuration cannot be applied → roll\nback the provisioning (release the account number) and end the workflow.\nActivationFailed: activation does not complete → roll back the\nprovisioning (deconfigure the account, release the account number).\n\nProvisioning Retries\n\nConfigure the account: retry up to 3 times with exponential backoff\nstarting at 1 second.\n\nProvisioning Compensation\n\nRelease the account number compensates Reserves an account number —\nreturn the reserved number if provisioning is rolled back.\nDeconfigure the account compensates Configures the account — undo the\nplan configuration if provisioning is rolled back after configuration."
+    }
+  ],
+  "specs": [
+    {
+      "slug": "demo-order-workflow",
+      "metadata": {
+        "name": "Demo Order Workflow",
+        "description": "Validate, reserve, and ship a customer order.",
+        "purpose": "Validate, reserve, and ship a customer order.",
+        "actors": [
+          "Customer",
+          "Warehouse"
+        ],
+        "systems": [
+          "Order Service",
+          "Inventory Service"
+        ],
+        "trigger_events": [
+          "order submitted"
+        ],
+        "start_states": [
+          "received"
+        ],
+        "end_states": [
+          "shipped",
+          "rejected"
+        ],
+        "version": "0.1.0",
+        "domain": null,
+        "owner": null,
+        "source_format": null,
+        "tags": [],
+        "extra": {
+          "self_reported_confidence": "0.900"
+        },
+        "created_at": null
+      },
+      "facts": {
+        "facts": [
+          {
+            "id": "input-1",
+            "statement": "order_id",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "input-2",
+            "statement": "customer_id",
+            "category": "input",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "output-1",
+            "statement": "confirmation_id",
+            "category": "output",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-1",
+            "statement": "Validate order",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-2",
+            "statement": "Reserve inventory",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "activity-3",
+            "statement": "Ship order",
+            "category": "activity",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "decision-1",
+            "statement": "Is the order valid?",
+            "category": "decision",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "event-1",
+            "statement": "order shipped",
+            "category": "event",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "exception-1",
+            "statement": "OrderInvalid",
+            "category": "exception",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "retry-1",
+            "statement": "Reserve inventory: retry up to 3 times with backoff",
+            "category": "retry",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          },
+          {
+            "id": "compensation-1",
+            "statement": "Release inventory compensates Reserve inventory",
+            "category": "compensation",
+            "subject": null,
+            "source_span": null,
+            "confidence": 0.6
+          }
+        ],
+        "structure": {
+          "activities": [
+            {
+              "id": "a1",
+              "name": "Validate order",
+              "parallel_group": null
+            },
+            {
+              "id": "a2",
+              "name": "Reserve inventory",
+              "parallel_group": null
+            },
+            {
+              "id": "a3",
+              "name": "Ship order",
+              "parallel_group": null
+            }
+          ],
+          "decisions": [
+            {
+              "id": "d1",
+              "question": "Is the order valid?",
+              "after": "a1",
+              "yes_target": "a2",
+              "no_target": "e1"
+            }
+          ],
+          "exceptions": [
+            {
+              "id": "e1",
+              "reason": "OrderInvalid",
+              "raised_by": "a1"
+            }
+          ],
+          "compensations": [
+            {
+              "id": "c1",
+              "name": "Release inventory",
+              "compensates": "a2"
+            }
+          ],
+          "events": [
+            {
+              "id": "v1",
+              "name": "order shipped",
+              "emitted_by": "a3"
+            }
+          ],
+          "transitions": []
+        }
+      },
+      "assumptions": [],
+      "ambiguities": [],
+      "open_questions": [
+        {
+          "text": "What deadline bounds each wait (e.g. 24 hours)?",
+          "provenance": "llm_inferred",
+          "resolved": false,
+          "answer": null,
+          "ref": "R6-bounded-waits"
+        }
+      ],
+      "suggested_edits": [],
+      "provenance": {}
+    }
+  ],
+  "cross_references": [],
+  "spec_approval_status": "pending",
+  "workflow_ids": {},
+  "warnings": [],
+  "validation_findings": {},
+  "stage": "spec_drafted",
+  "created_at": "2026-07-02T23:24:25.977323Z",
+  "updated_at": "2026-07-02T23:24:25.990408Z"
+}

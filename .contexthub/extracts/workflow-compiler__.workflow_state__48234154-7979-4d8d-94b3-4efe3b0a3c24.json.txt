@@ -1,0 +1,1760 @@
+{
+  "workflow_id": "48234154-7979-4d8d-94b3-4efe3b0a3c24",
+  "document_text": "3. Cancel Order Workflow Interface Specification\n\n3.1 Document Control\n\nField | Value\nDocument Name | Cancel Order Workflow Interface Specification\nDomain | Telecom OMS\nWorkflow Type | Temporal.io workflow\nBusiness Flow | Cancel order\nVersion | 3.0\n\n3.2 Purpose\n\nThis document defines the Cancel Order interface for telecom OMS cancellation and disconnect flows, including input parameters, order types, request/response structures, TMF mappings, Kafka topics, HTTP status codes, deprovisioning, and exception handling.\n\n3.3 Order Type and Flow Type\n\nField | Meaning | Example\norderType | Internal OMS type | CANCEL\nflowType | Workflow classification | CANCEL_ORDER\naction | Commercial action | CANCEL\nitemAction | TMF-style action | delete or cancel\nbusinessReason | Why order exists | customer_requested\n\n3.4 Primary Calling Systems\n\nCalling System | Role\nCRM / Care Console | Capture cancellation\nSelf-Service Portal | Customer cancel request\nOMS Temporal Workflow | Orchestration\nProvisioning Platform | Deprovision service\nService Inventory | Release resources\nBilling / Mediation | Stop/reverse charges\nKafka Event Bus | Event distribution\nAudit / Compliance Archive | Trace retention\nNotification Service | Messaging\n\n3.5 API Interfaces\n\n3.5.1 Cancel Request Intake\n\nItem | Specification\nAPI | Internal OMS cancel interface\nMethod | POST\nEndpoint | /oms/order/cancelRequest\nPurpose | Accept cancellation request\nAsync Behavior | Returns 202 and workflow ID\n\nRequest Headers\n\nHeader | Required | Example\nAuthorization | Yes | Bearer <token>\nContent-Type | Yes | application/json\nX-Correlation-Id | Yes | corr-20260612-0003\nIdempotency-Key | Yes | idemp-cancel-001\n\nRequest Body Structure\n\nField | Type | Required | Example | Notes\norderId | string | Yes | PO-100245 | Existing order\norderType | string | Yes | CANCEL | OMS type\nflowType | string | Yes | CANCEL_ORDER | Flow class\ncancelScope | string | Yes | full | full or partial\ncancelReason | string | Yes | customer_requested | Reason code\nrequestedBy | string | Yes | customer_portal | Caller\neffectiveDate | datetime | No | 2026-06-12T12:00:00Z | Requested cancel time\ntargetItemIds | array | No | [\"1\"] | Partial cancel targets\n\n3.5.2 Eligibility Check\n\nCheck | Purpose\nOrder state | Determine whether cancelable\nProvisioning state | Decide if in-flight work can be stopped\nLegal hold | Block if restricted\nContract rule | Validate cancellation right\nBilling rule | Determine financial impact\n\n3.5.3 Deprovisioning\n\nItem | Specification\nAPI | TMF640 Service Activation & Configuration\nMethod | POST or DELETE\nPurpose | Remove configuration or deactivate service\nResult | Service stopped\n\n3.5.4 Inventory Release\n\nItem | Specification\nAPI | TMF638 Service Inventory\nMethod | POST/PATCH\nPurpose | Return resources to inventory pool\n\n3.6 Response Objects\n\n3.6.1 Cancel Request Response\n\nField | Type | Example | Meaning\ncancelRequestId | string | CX-20260612-008 | Cancel identifier\norderId | string | PO-100245 | Existing order\nstate | string | received | Workflow state\ncancelScope | string | full | Scope\ncorrelationId | string | corr-20260612-0003 | Trace\nworkflowId | string | wf-cancel-0001 | Temporal workflow ID\n\n3.6.2 Eligibility Response\n\nField | Type | Example | Meaning\nassessmentId | string | CA-0008 | Assessment ID\nresult | string | eligible | Allowed or not\nreasonCode | string | within_cancel_window | Decision reason\naffectedItems[] | array | item list | Affected items\n\n3.6.3 Cancel Completion Response\n\nField | Type | Example | Meaning\ncancelId | string | CX-20260612-008 | Cancel ID\nstate | string | completed | Final state\nserviceStatus | string | deprovisioned | Service result\ninventoryStatus | string | released | Resource result\n\n3.7 HTTP Status Codes and Handling\n\nHTTP Code | Domain Code | Meaning | Workflow Action\n200 | OMS-CO-200 | Success | Cancel completed\n202 | OMS-CO-202 | Accepted | Async cancel started\n400 | OMS-CO-400 | Bad request | Missing cancel reason or order ID\n401 | OMS-CO-401 | Unauthorized | Invalid token\n403 | OMS-CO-403 | Forbidden | Not allowed to cancel\n404 | OMS-CO-404 | Order not found | Invalid reference\n409 | OMS-CO-409 | Conflict | Already completed or locked\n412 | OMS-CO-412 | Precondition failed | Not cancelable state\n423 | OMS-CO-423 | Locked by compliance | Legal or regulatory hold\n429 | OMS-CO-429 | Rate limited | Downstream throttling\n500 | OMS-CO-500 | Internal error | Deprovision failure\n504 | OMS-CO-504 | Timeout | External timeout\n\n3.8 TMF API Mapping\n\nBusiness Function | TMF API | Use\nProduct order cancel | TMF622 | Cancel product order\nService order cancel | TMF641 | Cancel service order\nService teardown | TMF640 | Deactivate configuration\nResource release | TMF638 | Release inventory\n\n3.9 Kafka Topics\n\nStage | Topic | Meaning\nCancel requested | oms.order.cancel.requested | Request received\nCancel eligible | oms.order.cancel.eligible | Allowed\nCancel ineligible | oms.order.cancel.ineligible | Blocked\nIn-flight stopped | oms.order.cancel.inflight.stopped | Work halted\nDeprovision requested | oms.service.deprovision.requested | Teardown started\nDeprovision completed | oms.service.deprovision.completed | Teardown finished\nInventory released | oms.inventory.released | Resources returned\nCancel completed | oms.order.cancel.completed | Lifecycle finished\n\n3.10 Domain Error Codes\n\nDomain Code | HTTP Code | Meaning | Typical Cause | Handling\nOMS-CO-200 | 200 | Success | Valid cancel | Continue\nOMS-CO-202 | 202 | Accepted | Async workflow | Monitor\nOMS-CO-400 | 400 | Bad request | Missing cancel reason/order ID | Reject\nOMS-CO-401 | 401 | Unauthorized | Invalid token | Stop\nOMS-CO-403 | 403 | Forbidden | Not allowed | Stop\nOMS-CO-404 | 404 | Order not found | Invalid reference | Stop\nOMS-CO-409 | 409 | Conflict | Already completed or locked | Manual review\nOMS-CO-412 | 412 | Precondition failed | Not cancelable state | Reject\nOMS-CO-423 | 423 | Locked by compliance | Legal or regulatory hold | Escalate\nOMS-CO-429 | 429 | Rate limited | Downstream throttling | Retry later\nOMS-CO-500 | 500 | Internal error | Deprovision failure | Retry\nOMS-CO-504 | 504 | Timeout | External timeout | Retry or hold\n\n3.11 Business Rules\n\nRule ID | Rule\n\nRule ID | Rule\nBR-CO-01 | orderType must be CANCEL\nBR-CO-02 | Cancel can only proceed if state allows\nBR-CO-03 | In-flight tasks must be stopped where possible\nBR-CO-04 | Deprovisioning and inventory release are mandatory when service has started\nBR-CO-05 | Billing stop or reversal must be invoked if applicable\n\n3.12 Exceptions\n\nException | Trigger | Handling\nCancel window expired | Too late to cancel | Reject\nLegal hold | Compliance restriction | Block\nPartial bundle cancel | Only one leg cancels | Compensate remaining legs\nDeprovision failure | Teardown issue | Retry and escalate\nBilling reversal failure | Charge reversal issue | Escalate\n\n3.13 Embedded Shared Conventions\n\nConvention | Rule\nCorrelation ID | Required\nIdempotency | Required\nTMF calls | Activities only\nKafka publish | After state commit\nAudit trail | Mandatory\nCompensation | Required for partial cancel",
+  "workflow_metadata": {
+    "name": "Telecom Order Cancellation Workflow",
+    "description": "Defines the Cancel Order interface for telecom OMS cancellation and disconnect flows.",
+    "purpose": "Defines the Cancel Order interface for telecom OMS cancellation and disconnect flows.",
+    "actors": [
+      "Customer",
+      "CRM/Care Console User"
+    ],
+    "systems": [
+      "CRM/Care Console",
+      "Self-Service Portal",
+      "OMS Temporal Workflow",
+      "Provisioning Platform",
+      "Service Inventory",
+      "Billing/Mediation",
+      "Kafka Event Bus",
+      "Audit/Compliance Archive",
+      "Notification Service"
+    ],
+    "trigger_events": [
+      "Cancellation request via Self-Service Portal",
+      "Cancellation request via CRM/Care Console"
+    ],
+    "start_states": [
+      "Order Received (implicit from trigger)"
+    ],
+    "end_states": [
+      "completed",
+      "ineligible",
+      "locked",
+      "failed (various error states)"
+    ],
+    "version": "0.1.0",
+    "domain": null,
+    "owner": null,
+    "source_format": null,
+    "tags": [],
+    "extra": {
+      "self_reported_confidence": "0.800"
+    },
+    "created_at": null
+  },
+  "workflow_facts": {
+    "facts": [
+      {
+        "id": "input-1",
+        "statement": "orderId (string, required)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "input-2",
+        "statement": "orderType (string, required, e.g., CANCEL)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "input-3",
+        "statement": "flowType (string, required, e.g., CANCEL_ORDER)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "input-4",
+        "statement": "cancelScope (string, required, e.g., full)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "input-5",
+        "statement": "cancelReason (string, required, e.g., customer_requested)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "input-6",
+        "statement": "requestedBy (string, required, e.g., customer_portal)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "input-7",
+        "statement": "effectiveDate (datetime, optional)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "input-8",
+        "statement": "targetItemIds (array, optional)",
+        "category": "input",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "output-1",
+        "statement": "Cancel Request Response (cancelRequestId, orderId, state, cancelScope, correlationId, workflowId)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "output-2",
+        "statement": "Eligibility Response (assessmentId, result, reasonCode, affectedItems)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "output-3",
+        "statement": "Cancel Completion Response (cancelId, state, serviceStatus, inventoryStatus)",
+        "category": "output",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "activity-1",
+        "statement": "Cancel Request Intake",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "activity-2",
+        "statement": "Eligibility Check",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "activity-3",
+        "statement": "Deprovisioning",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "activity-4",
+        "statement": "Inventory Release",
+        "category": "activity",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "decision-1",
+        "statement": "Determine if order is cancelable based on state",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "decision-2",
+        "statement": "Decide if in-flight work can be stopped",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "decision-3",
+        "statement": "Validate cancellation right based on contract rule",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "decision-4",
+        "statement": "Determine financial impact based on billing rule",
+        "category": "decision",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "rule-1",
+        "statement": "BR-CO-01: orderType must be CANCEL",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "rule-2",
+        "statement": "BR-CO-02: Cancel can only proceed if state allows",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "rule-3",
+        "statement": "BR-CO-03: In-flight tasks must be stopped where possible",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "rule-4",
+        "statement": "BR-CO-04: Deprovisioning and inventory release are mandatory when service has started",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "rule-5",
+        "statement": "BR-CO-05: Billing stop or reversal must be invoked if applicable",
+        "category": "rule",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "event-1",
+        "statement": "Cancel requested (oms.order.cancel.requested)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "event-2",
+        "statement": "Cancel eligible (oms.order.cancel.eligible)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "event-3",
+        "statement": "Cancel ineligible (oms.order.cancel.ineligible)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "event-4",
+        "statement": "In-flight stopped (oms.order.cancel.inflight.stopped)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "event-5",
+        "statement": "Deprovision requested (oms.service.deprovision.requested)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "event-6",
+        "statement": "Deprovision completed (oms.service.deprovision.completed)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "event-7",
+        "statement": "Inventory released (oms.inventory.released)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "event-8",
+        "statement": "Cancel completed (oms.order.cancel.completed)",
+        "category": "event",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "api-1",
+        "statement": "Internal OMS cancel interface (POST /oms/order/cancelRequest)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "api-2",
+        "statement": "TMF640 Service Activation & Configuration (POST or DELETE)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "api-3",
+        "statement": "TMF638 Service Inventory (POST/PATCH)",
+        "category": "api",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "system-1",
+        "statement": "CRM / Care Console",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "system-2",
+        "statement": "Self-Service Portal",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "system-3",
+        "statement": "OMS Temporal Workflow",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "system-4",
+        "statement": "Provisioning Platform",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "system-5",
+        "statement": "Service Inventory",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "system-6",
+        "statement": "Billing / Mediation",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "system-7",
+        "statement": "Kafka Event Bus",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "system-8",
+        "statement": "Audit / Compliance Archive",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "system-9",
+        "statement": "Notification Service",
+        "category": "system",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "exception-1",
+        "statement": "Cancel window expired",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "exception-2",
+        "statement": "Legal hold",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "exception-3",
+        "statement": "Partial bundle cancel",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "exception-4",
+        "statement": "Deprovision failure",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "exception-5",
+        "statement": "Billing reversal failure",
+        "category": "exception",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "state_transition-1",
+        "statement": "received -> eligible (or ineligible)",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "state_transition-2",
+        "statement": "eligible -> inflight.stopped (if applicable)",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "state_transition-3",
+        "statement": "inflight.stopped -> deprovision.requested",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "state_transition-4",
+        "statement": "deprovision.requested -> deprovision.completed",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "state_transition-5",
+        "statement": "deprovision.completed -> inventory.released",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "state_transition-6",
+        "statement": "inventory.released -> cancel.completed",
+        "category": "state_transition",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "retry-1",
+        "statement": "Retry later for OMS-CO-429 (Rate limited)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "retry-2",
+        "statement": "Retry for OMS-CO-500 (Internal error)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "retry-3",
+        "statement": "Retry or hold for OMS-CO-504 (Timeout)",
+        "category": "retry",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      },
+      {
+        "id": "compensation-1",
+        "statement": "Compensate remaining legs for Partial bundle cancel",
+        "category": "compensation",
+        "subject": null,
+        "source_span": null,
+        "confidence": 0.9
+      }
+    ]
+  },
+  "workflow_graph": {
+    "nodes": [
+      {
+        "id": "start",
+        "label": "Start",
+        "node_type": "start",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "end",
+        "label": "End",
+        "node_type": "end",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_1",
+        "label": "Cancel Request Intake",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_2",
+        "label": "Eligibility Check",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_3",
+        "label": "Deprovisioning",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "activity_4",
+        "label": "Inventory Release",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_1",
+        "label": "Determine if order is cancelable based on state",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_2",
+        "label": "Decide if in-flight work can be stopped",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_3",
+        "label": "Validate cancellation right based on contract rule",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "decision_4",
+        "label": "Determine financial impact based on billing rule",
+        "node_type": "decision",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "exception_1",
+        "label": "Cancel window expired",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_2",
+        "label": "Legal hold",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_3",
+        "label": "Partial bundle cancel",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_4",
+        "label": "Deprovision failure",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "exception_5",
+        "label": "Billing reversal failure",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "exception"
+        }
+      },
+      {
+        "id": "compensation_1",
+        "label": "Compensate remaining legs for Partial bundle cancel",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "role": "compensation"
+        }
+      },
+      {
+        "id": "event_1",
+        "label": "Cancel requested (oms.order.cancel.requested)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_2",
+        "label": "Cancel eligible (oms.order.cancel.eligible)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_3",
+        "label": "Cancel ineligible (oms.order.cancel.ineligible)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_4",
+        "label": "In-flight stopped (oms.order.cancel.inflight.stopped)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_5",
+        "label": "Deprovision requested (oms.service.deprovision.requested)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_6",
+        "label": "Deprovision completed (oms.service.deprovision.completed)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_7",
+        "label": "Inventory released (oms.inventory.released)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "event_8",
+        "label": "Cancel completed (oms.order.cancel.completed)",
+        "node_type": "event",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {}
+      },
+      {
+        "id": "state_1",
+        "label": "received",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_2",
+        "label": "eligible (or ineligible)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_3",
+        "label": "eligible",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_4",
+        "label": "inflight.stopped (if applicable)",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_5",
+        "label": "inflight.stopped",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_6",
+        "label": "deprovision.requested",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_7",
+        "label": "deprovision.completed",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_8",
+        "label": "inventory.released",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      },
+      {
+        "id": "state_9",
+        "label": "cancel.completed",
+        "node_type": "task",
+        "cvpa_phase": "unclassified",
+        "description": null,
+        "fact_ids": [],
+        "attributes": {
+          "kind": "state"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1",
+        "source": "start",
+        "target": "activity_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e2",
+        "source": "activity_1",
+        "target": "decision_1",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e3",
+        "source": "decision_1",
+        "target": "activity_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e4",
+        "source": "decision_1",
+        "target": "exception_1",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e5",
+        "source": "activity_2",
+        "target": "decision_2",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e6",
+        "source": "decision_2",
+        "target": "activity_3",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e7",
+        "source": "decision_2",
+        "target": "exception_2",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e8",
+        "source": "activity_3",
+        "target": "decision_3",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e9",
+        "source": "decision_3",
+        "target": "activity_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e10",
+        "source": "decision_3",
+        "target": "exception_3",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e11",
+        "source": "activity_4",
+        "target": "decision_4",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e12",
+        "source": "decision_4",
+        "target": "end",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "yes"
+      },
+      {
+        "id": "e13",
+        "source": "decision_4",
+        "target": "exception_4",
+        "edge_type": "conditional",
+        "label": null,
+        "condition": "no"
+      },
+      {
+        "id": "e14",
+        "source": "activity_1",
+        "target": "exception_1",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e15",
+        "source": "exception_1",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e16",
+        "source": "compensation_1",
+        "target": "end",
+        "edge_type": "sequence",
+        "label": null,
+        "condition": null
+      },
+      {
+        "id": "e17",
+        "source": "activity_2",
+        "target": "exception_2",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e18",
+        "source": "exception_2",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e19",
+        "source": "activity_3",
+        "target": "exception_3",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e20",
+        "source": "exception_3",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e21",
+        "source": "activity_4",
+        "target": "exception_4",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e22",
+        "source": "exception_4",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e23",
+        "source": "activity_4",
+        "target": "exception_5",
+        "edge_type": "error",
+        "label": "on error",
+        "condition": null
+      },
+      {
+        "id": "e24",
+        "source": "exception_5",
+        "target": "compensation_1",
+        "edge_type": "compensation",
+        "label": "compensate",
+        "condition": null
+      },
+      {
+        "id": "e25",
+        "source": "exception_1",
+        "target": "activity_1",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e26",
+        "source": "exception_2",
+        "target": "activity_2",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e27",
+        "source": "exception_3",
+        "target": "activity_3",
+        "edge_type": "retry",
+        "label": "retry",
+        "condition": null
+      },
+      {
+        "id": "e28",
+        "source": "start",
+        "target": "event_1",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e29",
+        "source": "event_1",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e30",
+        "source": "activity_4",
+        "target": "event_2",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e31",
+        "source": "activity_4",
+        "target": "event_3",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e32",
+        "source": "activity_4",
+        "target": "event_4",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e33",
+        "source": "start",
+        "target": "event_5",
+        "edge_type": "signal",
+        "label": "event",
+        "condition": null
+      },
+      {
+        "id": "e34",
+        "source": "event_5",
+        "target": "activity_1",
+        "edge_type": "signal",
+        "label": "triggers",
+        "condition": null
+      },
+      {
+        "id": "e35",
+        "source": "activity_4",
+        "target": "event_6",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e36",
+        "source": "activity_4",
+        "target": "event_7",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e37",
+        "source": "activity_4",
+        "target": "event_8",
+        "edge_type": "signal",
+        "label": "emits",
+        "condition": null
+      },
+      {
+        "id": "e38",
+        "source": "state_1",
+        "target": "state_2",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e39",
+        "source": "state_3",
+        "target": "state_4",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e40",
+        "source": "state_5",
+        "target": "state_6",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e41",
+        "source": "state_6",
+        "target": "state_7",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e42",
+        "source": "state_7",
+        "target": "state_8",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      },
+      {
+        "id": "e43",
+        "source": "state_8",
+        "target": "state_9",
+        "edge_type": "sequence",
+        "label": "transition",
+        "condition": null
+      }
+    ]
+  },
+  "review_report": {
+    "summary": "Graph health 0.1: 0 error(s), 18 warning(s).",
+    "issues": [
+      {
+        "id": "issue-1",
+        "severity": "warning",
+        "message": "Orphan node 'received' has no incoming edges.",
+        "location": "state_1",
+        "suggestion": "Add a transition from a predecessor node."
+      },
+      {
+        "id": "issue-2",
+        "severity": "warning",
+        "message": "Orphan node 'eligible' has no incoming edges.",
+        "location": "state_3",
+        "suggestion": "Add a transition from a predecessor node."
+      },
+      {
+        "id": "issue-3",
+        "severity": "warning",
+        "message": "Orphan node 'inflight.stopped' has no incoming edges.",
+        "location": "state_5",
+        "suggestion": "Add a transition from a predecessor node."
+      },
+      {
+        "id": "issue-4",
+        "severity": "warning",
+        "message": "Dead-end node 'Cancel eligible (oms.order.cancel.eligible)' has no outgoing edges.",
+        "location": "event_2",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-5",
+        "severity": "warning",
+        "message": "Dead-end node 'Cancel ineligible (oms.order.cancel.ineligible)' has no outgoing edges.",
+        "location": "event_3",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-6",
+        "severity": "warning",
+        "message": "Dead-end node 'In-flight stopped (oms.order.cancel.inflight.stopped)' has no outgoing edges.",
+        "location": "event_4",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-7",
+        "severity": "warning",
+        "message": "Dead-end node 'Deprovision completed (oms.service.deprovision.completed)' has no outgoing edges.",
+        "location": "event_6",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-8",
+        "severity": "warning",
+        "message": "Dead-end node 'Inventory released (oms.inventory.released)' has no outgoing edges.",
+        "location": "event_7",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-9",
+        "severity": "warning",
+        "message": "Dead-end node 'Cancel completed (oms.order.cancel.completed)' has no outgoing edges.",
+        "location": "event_8",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-10",
+        "severity": "warning",
+        "message": "Dead-end node 'eligible (or ineligible)' has no outgoing edges.",
+        "location": "state_2",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-11",
+        "severity": "warning",
+        "message": "Dead-end node 'inflight.stopped (if applicable)' has no outgoing edges.",
+        "location": "state_4",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-12",
+        "severity": "warning",
+        "message": "Dead-end node 'cancel.completed' has no outgoing edges.",
+        "location": "state_9",
+        "suggestion": "Add a transition toward an END node."
+      },
+      {
+        "id": "issue-13",
+        "severity": "warning",
+        "message": "State 'eligible (or ineligible)' is unreachable from the start node.",
+        "location": "state_2",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-14",
+        "severity": "warning",
+        "message": "State 'inflight.stopped (if applicable)' is unreachable from the start node.",
+        "location": "state_4",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-15",
+        "severity": "warning",
+        "message": "State 'deprovision.requested' is unreachable from the start node.",
+        "location": "state_6",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-16",
+        "severity": "warning",
+        "message": "State 'deprovision.completed' is unreachable from the start node.",
+        "location": "state_7",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-17",
+        "severity": "warning",
+        "message": "State 'inventory.released' is unreachable from the start node.",
+        "location": "state_8",
+        "suggestion": "Connect this state to the reachable graph from start."
+      },
+      {
+        "id": "issue-18",
+        "severity": "warning",
+        "message": "State 'cancel.completed' is unreachable from the start node.",
+        "location": "state_9",
+        "suggestion": "Connect this state to the reachable graph from start."
+      }
+    ],
+    "score": 0.1,
+    "health_score": 0.1,
+    "confidence": 0.8636,
+    "reviewer": "workflow-review",
+    "reviewed_at": "2026-06-25T15:45:17.338058Z"
+  },
+  "approval_status": "approved",
+  "cvpa_classification": {
+    "assignments": [
+      {
+        "node_id": "start",
+        "phase": "capture",
+        "rationale": "Initiates the workflow, marking the intake of the process.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "end",
+        "phase": "activate",
+        "rationale": "Represents the workflow's conclusion, triggering final downstream effects.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "activity_1",
+        "phase": "capture",
+        "rationale": "Intakes the cancel request, gathering initial data.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "activity_2",
+        "phase": "validate",
+        "rationale": "Checks eligibility, a form of verification.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "activity_3",
+        "phase": "process",
+        "rationale": "Performs core work of deprovisioning.",
+        "confidence": 0.98
+      },
+      {
+        "node_id": "activity_4",
+        "phase": "process",
+        "rationale": "Executes inventory release, a transformation.",
+        "confidence": 0.96
+      },
+      {
+        "node_id": "decision_1",
+        "phase": "validate",
+        "rationale": "Makes a decision based on the order's state.",
+        "confidence": 0.99
+      },
+      {
+        "node_id": "decision_2",
+        "phase": "validate",
+        "rationale": "Determines if in-flight work can be halted.",
+        "confidence": 0.99
+      },
+      {
+        "node_id": "decision_3",
+        "phase": "validate",
+        "rationale": "Verifies cancellation rights against contract rules.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "decision_4",
+        "phase": "process",
+        "rationale": "Calculates financial impact, a computational task.",
+        "confidence": 0.97
+      },
+      {
+        "node_id": "exception_1",
+        "phase": "validate",
+        "rationale": "Triggers on an invalid state (window expired), requiring assessment.",
+        "confidence": 0.85
+      },
+      {
+        "node_id": "exception_2",
+        "phase": "validate",
+        "rationale": "Indicates a legal hold, necessitating a validation check.",
+        "confidence": 0.88
+      },
+      {
+        "node_id": "exception_3",
+        "phase": "process",
+        "rationale": "Handles partial bundle cancel, a complex processing scenario.",
+        "confidence": 0.82
+      },
+      {
+        "node_id": "exception_4",
+        "phase": "activate",
+        "rationale": "Triggers on deprovision failure, leading to downstream notifications.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "exception_5",
+        "phase": "activate",
+        "rationale": "Occurs on billing reversal failure, prompting external actions.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "compensation_1",
+        "phase": "process",
+        "rationale": "Compensates for partial bundle cancel, involving calculation and adjustment.",
+        "confidence": 0.89
+      },
+      {
+        "node_id": "event_1",
+        "phase": "capture",
+        "rationale": "Marks the initial cancel request event.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "event_2",
+        "phase": "activate",
+        "rationale": "Emits a signal for eligible cancel, triggering downstream processes.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "event_3",
+        "phase": "activate",
+        "rationale": "Signals an ineligible cancel, leading to external notifications.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "event_4",
+        "phase": "activate",
+        "rationale": "Indicates in-flight work has stopped, an external effect.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "event_5",
+        "phase": "capture",
+        "rationale": "Initiates deprovisioning request, an intake of a new process.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "event_6",
+        "phase": "activate",
+        "rationale": "Confirms deprovisioning completion, a final external state.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "event_7",
+        "phase": "activate",
+        "rationale": "Signals inventory release, an external fulfillment action.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "event_8",
+        "phase": "activate",
+        "rationale": "Marks the completion of the cancel process, finalizing the workflow.",
+        "confidence": 1.0
+      },
+      {
+        "node_id": "state_1",
+        "phase": "capture",
+        "rationale": "Represents the initial state of receiving a request.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "state_2",
+        "phase": "validate",
+        "rationale": "Determines eligibility or ineligibility, a validation step.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_3",
+        "phase": "validate",
+        "rationale": "Confirms eligibility, a prerequisite for further actions.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_4",
+        "phase": "process",
+        "rationale": "Indicates in-flight work has been stopped, a process outcome.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "state_5",
+        "phase": "process",
+        "rationale": "Similar to state_4, marks a specific process state.",
+        "confidence": 0.8
+      },
+      {
+        "node_id": "state_6",
+        "phase": "process",
+        "rationale": "Requests deprovisioning, a core operational step.",
+        "confidence": 0.9
+      },
+      {
+        "node_id": "state_7",
+        "phase": "activate",
+        "rationale": "Confirms deprovisioning is completed, an external state.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "state_8",
+        "phase": "activate",
+        "rationale": "Marks inventory as released, fulfilling an external requirement.",
+        "confidence": 0.95
+      },
+      {
+        "node_id": "state_9",
+        "phase": "activate",
+        "rationale": "Final state, indicating the cancel process is fully completed.",
+        "confidence": 1.0
+      }
+    ],
+    "phase_summaries": [
+      {
+        "phase": "capture",
+        "node_ids": [
+          "start",
+          "activity_1",
+          "event_1",
+          "event_5",
+          "state_1"
+        ],
+        "summary": "5 node(s) in the capture phase."
+      },
+      {
+        "phase": "validate",
+        "node_ids": [
+          "activity_2",
+          "decision_1",
+          "decision_2",
+          "decision_3",
+          "exception_1",
+          "exception_2",
+          "state_2",
+          "state_3"
+        ],
+        "summary": "8 node(s) in the validate phase."
+      },
+      {
+        "phase": "process",
+        "node_ids": [
+          "activity_3",
+          "activity_4",
+          "decision_4",
+          "exception_3",
+          "compensation_1",
+          "state_4",
+          "state_5",
+          "state_6"
+        ],
+        "summary": "8 node(s) in the process phase."
+      },
+      {
+        "phase": "activate",
+        "node_ids": [
+          "end",
+          "exception_4",
+          "exception_5",
+          "event_2",
+          "event_3",
+          "event_4",
+          "event_6",
+          "event_7",
+          "event_8",
+          "state_7",
+          "state_8",
+          "state_9"
+        ],
+        "summary": "12 node(s) in the activate phase."
+      }
+    ]
+  },
+  "temporal_design": {
+    "workflow_name": "Ordercancellationworkflow",
+    "task_queue": "order-cancellation-queue",
+    "description": "Manages the cancellation of orders, handling eligibility, deprovisioning, and inventory release.",
+    "activities": [
+      {
+        "name": "Cancelrequestintake",
+        "source_node_id": "activity_1",
+        "description": "Intake and validate cancellation request.",
+        "inputs": [
+          "orderId",
+          "reason"
+        ],
+        "outputs": [
+          "requestValidated"
+        ],
+        "timeout_seconds": 30.0,
+        "retry_policy": {
+          "maximum_attempts": 2,
+          "initial_interval_seconds": 5.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": [
+            "InvalidOrderId"
+          ]
+        }
+      },
+      {
+        "name": "Eligibilitycheck",
+        "source_node_id": "activity_2",
+        "description": "Check if order is eligible for cancellation.",
+        "inputs": [
+          "requestValidated"
+        ],
+        "outputs": [
+          "eligibilityResult"
+        ],
+        "timeout_seconds": 20.0,
+        "retry_policy": null
+      },
+      {
+        "name": "Deprovisioning",
+        "source_node_id": "activity_3",
+        "description": "Deprovision services associated with the order.",
+        "inputs": [
+          "eligibilityResult"
+        ],
+        "outputs": [
+          "deprovisioned"
+        ],
+        "timeout_seconds": 120.0,
+        "retry_policy": {
+          "maximum_attempts": 3,
+          "initial_interval_seconds": 10.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      },
+      {
+        "name": "Inventoryrelease",
+        "source_node_id": "activity_4",
+        "description": "Release inventory allocated to the order.",
+        "inputs": [
+          "deprovisioned"
+        ],
+        "outputs": [
+          "inventoryReleased"
+        ],
+        "timeout_seconds": 90.0,
+        "retry_policy": null
+      }
+    ],
+    "signals": [
+      {
+        "name": "CancelRequested",
+        "description": "External signal to initiate cancellation.",
+        "payload": [
+          "orderId"
+        ]
+      },
+      {
+        "name": "DeprovisionRequested",
+        "description": "Signal to trigger deprovisioning externally.",
+        "payload": [
+          "serviceIds"
+        ]
+      }
+    ],
+    "queries": [
+      {
+        "name": "GetCancellationStatus",
+        "description": "Query the current status of a cancellation request.",
+        "returns": "CancellationStatus"
+      }
+    ],
+    "child_workflows": [
+      {
+        "name": "Partialbundlecancelworkflow",
+        "source_node_id": "exception_3",
+        "description": "Handles partial bundle cancellations.",
+        "inputs": [
+          "bundleId",
+          "cancelReason"
+        ],
+        "outputs": [
+          "partialCancelResult"
+        ],
+        "task_queue": "partial-bundle-cancel-queue"
+      }
+    ],
+    "timers": [
+      {
+        "name": "CancellationTimeout",
+        "duration_seconds": 86400.0,
+        "description": "Timeout for the entire cancellation process."
+      }
+    ],
+    "compensation_activities": [
+      {
+        "name": "Compensateremaininglegs",
+        "compensates": "InventoryRelease",
+        "source_node_id": "compensation_1",
+        "description": "Compensate for partial cancellations.",
+        "retry_policy": {
+          "maximum_attempts": 2,
+          "initial_interval_seconds": 2.0,
+          "backoff_coefficient": 2.0,
+          "maximum_interval_seconds": null,
+          "non_retryable_error_types": []
+        }
+      }
+    ],
+    "default_retry_policy": {
+      "maximum_attempts": 3,
+      "initial_interval_seconds": 1.0,
+      "backoff_coefficient": 2.0,
+      "maximum_interval_seconds": null,
+      "non_retryable_error_types": []
+    }
+  },
+  "mermaid_diagram": {
+    "diagram_type": "flowchart",
+    "direction": "TD",
+    "source": "flowchart TD\n    start([\"Start\"])\n    end_node([\"End\"])\n    activity_1[\"Cancel Request Intake\"]\n    activity_2[\"Eligibility Check\"]\n    activity_3[\"Deprovisioning\"]\n    activity_4[\"Inventory Release\"]\n    decision_1{\"Determine if order is cancelable based on state\"}\n    decision_2{\"Decide if in-flight work can be stopped\"}\n    decision_3{\"Validate cancellation right based on contract rule\"}\n    decision_4{\"Determine financial impact based on billing rule\"}\n    exception_1([\"Cancel window expired\"])\n    exception_2([\"Legal hold\"])\n    exception_3([\"Partial bundle cancel\"])\n    exception_4([\"Deprovision failure\"])\n    exception_5([\"Billing reversal failure\"])\n    compensation_1[\"Compensate remaining legs for Partial bundle cancel\"]\n    event_1([\"Cancel requested (oms.order.cancel.requested)\"])\n    event_2([\"Cancel eligible (oms.order.cancel.eligible)\"])\n    event_3([\"Cancel ineligible (oms.order.cancel.ineligible)\"])\n    event_4([\"In-flight stopped (oms.order.cancel.inflight.stopped)\"])\n    event_5([\"Deprovision requested (oms.service.deprovision.requested)\"])\n    event_6([\"Deprovision completed (oms.service.deprovision.completed)\"])\n    event_7([\"Inventory released (oms.inventory.released)\"])\n    event_8([\"Cancel completed (oms.order.cancel.completed)\"])\n    state_1[\"received\"]\n    state_2[\"eligible (or ineligible)\"]\n    state_3[\"eligible\"]\n    state_4[\"inflight.stopped (if applicable)\"]\n    state_5[\"inflight.stopped\"]\n    state_6[\"deprovision.requested\"]\n    state_7[\"deprovision.completed\"]\n    state_8[\"inventory.released\"]\n    state_9[\"cancel.completed\"]\n    start --> activity_1\n    activity_1 --> decision_1\n    decision_1 -->|yes| activity_2\n    decision_1 -->|no| exception_1\n    activity_2 --> decision_2\n    decision_2 -->|yes| activity_3\n    decision_2 -->|no| exception_2\n    activity_3 --> decision_3\n    decision_3 -->|yes| activity_4\n    decision_3 -->|no| exception_3\n    activity_4 --> decision_4\n    decision_4 -->|yes| end_node\n    decision_4 -->|no| exception_4\n    activity_1 -.->|on error| exception_1\n    exception_1 -.->|compensate| compensation_1\n    compensation_1 --> end_node\n    activity_2 -.->|on error| exception_2\n    exception_2 -.->|compensate| compensation_1\n    activity_3 -.->|on error| exception_3\n    exception_3 -.->|compensate| compensation_1\n    activity_4 -.->|on error| exception_4\n    exception_4 -.->|compensate| compensation_1\n    activity_4 -.->|on error| exception_5\n    exception_5 -.->|compensate| compensation_1\n    exception_1 -.->|retry| activity_1\n    exception_2 -.->|retry| activity_2\n    exception_3 -.->|retry| activity_3\n    start -.->|event| event_1\n    event_1 -.->|triggers| activity_1\n    activity_4 -.->|emits| event_2\n    activity_4 -.->|emits| event_3\n    activity_4 -.->|emits| event_4\n    start -.->|event| event_5\n    event_5 -.->|triggers| activity_1\n    activity_4 -.->|emits| event_6\n    activity_4 -.->|emits| event_7\n    activity_4 -.->|emits| event_8\n    state_1 -->|transition| state_2\n    state_3 -->|transition| state_4\n    state_5 -->|transition| state_6\n    state_6 -->|transition| state_7\n    state_7 -->|transition| state_8\n    state_8 -->|transition| state_9\n    classDef capture fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;\n    classDef validate fill:#fff8e1,stroke:#f9a825,color:#e65100;\n    classDef process fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;\n    classDef activate fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;\n    class start,activity_1,event_1,event_5,state_1 capture;\n    class activity_2,decision_1,decision_2,decision_3,exception_1,exception_2,state_2,state_3 validate;\n    class activity_3,activity_4,decision_4,exception_3,compensation_1,state_4,state_5,state_6 process;\n    class end_node,exception_4,exception_5,event_2,event_3,event_4,event_6,event_7,event_8,state_7,state_8,state_9 activate;",
+    "title": "Telecom Order Cancellation Workflow"
+  },
+  "confidence_scores": {
+    "metadata": 0.9,
+    "facts": 0.9115,
+    "graph": 1.0,
+    "cvpa": 0.9671,
+    "temporal": 0.9,
+    "overall": null,
+    "notes": {
+      "facts": "59 facts across 12 categories; 0 duplicate(s) removed.",
+      "cvpa": "33 nodes classified; 33 from model, 0 by fallback.",
+      "temporal": "4 activities, 2 signals, 1 child workflows, 1 compensations."
+    }
+  },
+  "stage": "completed",
+  "created_at": "2026-06-25T15:31:56.193057Z",
+  "updated_at": "2026-06-25T15:47:14.673759Z"
+}

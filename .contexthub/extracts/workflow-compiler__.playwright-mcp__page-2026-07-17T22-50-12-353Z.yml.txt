@@ -1,0 +1,106 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - link "workflow·compiler" [ref=e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e4]: document → spec → validate → approve → code
+    - navigation [ref=e5]:
+      - link "Projects" [ref=e6] [cursor=pointer]:
+        - /url: /
+      - link "Guide" [ref=e7] [cursor=pointer]:
+        - /url: /guide
+      - button "Switch to dark theme" [ref=e8]: ☾ Dark
+      - 'button "Account: smoke-test" [ref=e36] [cursor=pointer]': S
+  - main [ref=e9]:
+    - generic [ref=e202]:
+      - generic [ref=e203]:
+        - link "Back to projects" [ref=e204] [cursor=pointer]:
+          - /url: /
+          - text: ←
+        - generic [ref=e205]:
+          - generic "Completed Workflow 1" [ref=e206]
+          - button "Rename Completed Workflow 1" [ref=e207]
+          - generic "Project id" [ref=e210]: b9b301bf-83a7-4f67-bce0-9a646905852d
+        - generic [ref=e211]: Completed
+        - generic [ref=e212]:
+          - button "Spec" [ref=e213] [cursor=pointer]
+          - button "Results" [ref=e214] [cursor=pointer]
+        - generic [ref=e215]:
+          - button "Edit request" [ref=e216] [cursor=pointer]
+          - button "Save" [ref=e217] [cursor=pointer]
+          - button "Validate" [ref=e218] [cursor=pointer]
+          - button "Approve" [ref=e219] [cursor=pointer]
+      - generic [ref=e220]:
+        - complementary [ref=e221]:
+          - paragraph [ref=e222]: Workflows
+          - button "order-placement" [ref=e223] [cursor=pointer]
+          - button "order-fulfilment" [ref=e225] [cursor=pointer]
+          - button "payment-reconciliation" [ref=e227] [cursor=pointer]
+        - generic [ref=e229]:
+          - generic [ref=e230]:
+            - button "editor" [ref=e231] [cursor=pointer]
+            - button "preview" [ref=e232] [cursor=pointer]
+            - button "diagram" [ref=e233] [cursor=pointer]
+          - generic [ref=e234]: Loading editor…
+        - complementary [ref=e237]:
+          - generic [ref=e238]:
+            - heading "Findings" [level=3] [ref=e239]
+            - paragraph [ref=e240]: No findings — spec looks clean.
+          - generic [ref=e241]:
+            - heading "Triggers 1" [level=3] [ref=e242]:
+              - text: Triggers
+              - generic [ref=e243]: '1'
+            - list [ref=e244]:
+              - listitem [ref=e245]:
+                - generic [ref=e246]:
+                  - generic [ref=e247]:
+                    - checkbox "triggers order-fulfilment (fire-and-forget)" [checked]
+                      [ref=e248]
+                    - generic [ref=e249]:
+                      - text: triggers order-fulfilment
+                      - generic [ref=e250]: (fire-and-forget)
+                  - button "Delete" [ref=e251] [cursor=pointer]
+            - paragraph [ref=e252]: Delete a trigger that should not fire (e.g. a
+                customer-initiated flow).
+          - generic [ref=e253]:
+            - heading "Events 4" [level=3] [ref=e254]:
+              - text: Events
+              - generic [ref=e255]: '4'
+            - list [ref=e256]:
+              - listitem [ref=e257]:
+                - generic [ref=e258]: ev1 checkout.submitted
+                - combobox [ref=e259] [cursor=pointer]:
+                  - option "trigger (starts workflow)" [selected]
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)"
+              - listitem [ref=e260]:
+                - generic [ref=e261]: ev2 order_id
+                - combobox [ref=e262] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e263]:
+                - generic [ref=e264]: ev3 authorization_id
+                - combobox [ref=e265] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+              - listitem [ref=e266]:
+                - generic [ref=e267]: ev4 placement_status
+                - combobox [ref=e268] [cursor=pointer]:
+                  - option "trigger (starts workflow)"
+                  - option "signal_wait (bounded pause)"
+                  - option "output_emit (produces value)" [selected]
+            - paragraph [ref=e269]:
+              - code [ref=e270]: signal_wait
+              - text: makes a wait a bounded condition instead of a hang.
+          - generic [ref=e271]:
+            - heading "Edit history" [level=3] [ref=e272]
+            - group [ref=e274]:
+              - generic "7/17/2026, 11:17:30 AM — devansh 33 changes across 5 workflows" [ref=e275] [cursor=pointer]:
+                - text: 7/17/2026, 11:17:30 AM
+                - generic [ref=e276]: — devansh
+                - generic [ref=e277]: 33 changes across 5 workflows
+          - paragraph [ref=e278]: The Diagramview shows this workflow's graph as of
+              the last validate; run Classify phases (CVPA) there to color it. Generated
+              code appears in Results after approval.
+  - alert [ref=e29]

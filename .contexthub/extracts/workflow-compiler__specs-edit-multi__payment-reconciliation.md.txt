@@ -1,0 +1,97 @@
+# Payment Reconciliation
+
+<!--
+  workflow-compiler specification (v1) — slug: payment-reconciliation
+  This file is a projection of the structured spec. Edit it freely, then run
+  `workflow-compiler validate <project-id>` to fold your edits back in.
+  Lines you add are recorded as human-provided. Keep the `[id]` markers on
+  existing entries so your edits update the right element.
+-->
+
+## Purpose
+The Payment Reconciliation workflow verifies that every captured payment matches the order total and the payment gateway settlement record, and files a discrepancy report when they disagree.
+
+## Metadata
+- domain: 
+- owner: 
+- version: 0.1.0
+- actors: Finance Analyst, Finance Operations
+- systems: Finance Service, Payment Gateway, Order Service
+- triggers: payment.captured event received by the Finance Service
+- start states: payment.captured event received
+- end states: reconciled, discrepancy_reported
+- tags: 
+
+## Inputs
+- payment_id
+- order_id
+
+## Outputs
+- reconciliation_status
+- discrepancy_report_id
+
+## Business Rules
+<!-- none -->
+
+## API Interfaces
+- Fetch settlement record from Payment Gateway
+- Fetch order total from Order Service
+
+## Systems Involved
+- Finance Service
+- Payment Gateway
+- Order Service
+
+## Timers and SLAs
+<!-- none -->
+
+## Retries
+- Fetch settlement record: up to 3 times with exponential backoff starting at 5 seconds
+- Fetch order total: up to 3 times with exponential backoff starting at 5 seconds
+
+## Activities
+- [a1] Fetch settlement record
+- [a2] Fetch order total
+- [a3] Compare amounts
+- [a4] Mark reconciled
+- [a5] File discrepancy report and notify
+
+## Decisions
+- [d1] Do amounts match? — after: a3; yes: a4; no: a5
+
+## Exceptions
+<!-- none -->
+
+## Compensations
+<!-- none -->
+
+## Events
+- [e1] payment.captured — kind: trigger; emitted by: start
+
+## State Transitions
+<!-- none -->
+
+## Assumptions
+<!-- none -->
+
+## Ambiguities
+<!-- none -->
+
+## Suggested Edits
+<!-- none -->
+
+## Open Questions
+- [x] (R6-bounded-waits) What deadline bounds each wait (e.g. 24 hours)?
+  Answer: Settlement and order-total fetches are bounded by their retry policies; no long waits — the whole reconciliation must finish within 1 hour
+- [x] (R7-exceptions) Which failures should the workflow handle, and what are they named?
+  Answer: SettlementUnavailable (settlement record fetch exhausts retries); OrderTotalUnavailable (order total fetch exhausts retries)
+- [x] What is the deadline for waiting on carrier pickup confirmation in the Order Fulfilment workflow?
+  Answer: Not applicable to this workflow — pickup confirmation is now synchronous at dispatch in order-fulfilment (24-hour window recorded there)
+- [x] Which failures should the Payment Reconciliation workflow handle and what are they named?
+  Answer: SettlementUnavailable and OrderTotalUnavailable, as above
+
+## Cross-Workflow Dependencies
+- [x] uses output `payment_id` of `order-fulfilment` as input `payment_id` — payment_id from order-fulfilment to payment-reconciliation
+
+## Triggers
+<!-- none -->

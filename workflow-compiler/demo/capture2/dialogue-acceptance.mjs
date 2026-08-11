@@ -48,24 +48,39 @@ async function serverProject(ctx) {
   return (await r.json()).project;
 }
 
-/** Wait for either a new question, or the end-of-session panel. */
-async function settled(page) {
+/** The prompt text currently on screen, or null once the session has ended. */
+async function promptText(page) {
+  return page.evaluate(() => {
+    const box = document.querySelector("textarea[placeholder*='own words']");
+    if (!box) return null;
+    const card = box.closest("div.flex.flex-col")?.querySelector("div.rounded-md.border");
+    return card?.querySelector("p")?.innerText ?? "";
+  });
+}
+
+/**
+ * Wait for the panel to reach its next state.
+ *
+ * Pass the prompt captured BEFORE the action: this then waits for a genuine
+ * transition rather than for the panel to merely look idle. Idle is true again
+ * the instant after a click, before React has rendered the pending state, so
+ * waiting on idle alone lets the next click land on a disabled button and reads
+ * the previous turn's DOM back as if it were the new one.
+ */
+async function settled(page, prev = null) {
   await page.waitForFunction(
-    () => {
+    (prevText) => {
       const t = document.body.innerText;
       if (t.includes("Applying…") || t.includes("Reading the findings…")) return false;
-      // "Answer in your own words" is the textarea's PLACEHOLDER attribute, and
-      // placeholders are not part of body.innerText — testing for it there can
-      // never be true, so a waiting question was invisible to this check. Query
-      // the DOM for the box instead (currentQuestion already does exactly that).
-      if (document.querySelector("textarea[placeholder*='own words']")) return true;
-      return t.includes("All done.") || t.includes("Start resolving");
+      // The answer box is found by its placeholder ATTRIBUTE — placeholders are
+      // not part of body.innerText, so it can never be matched there.
+      const box = document.querySelector("textarea[placeholder*='own words']");
+      if (!box) return t.includes("All done.") || t.includes("Start resolving");
+      if (prevText === null) return true;
+      const card = box.closest("div.flex.flex-col")?.querySelector("div.rounded-md.border");
+      return (card?.querySelector("p")?.innerText ?? "") !== prevText;
     },
-    // Playwright's signature is (pageFunction, arg, options) — the options
-    // object MUST go third. Passing it second makes it the page function's
-    // argument and silently leaves the 30s default in place, which is far
-    // below a real dialogue turn (one LLM round trip, minutes on a slow model).
-    null,
+    prev,
     { timeout: 900_000 },
   );
 }
@@ -104,9 +119,10 @@ async function lastOutcome(page) {
 }
 
 async function answer(page, text) {
+  const prev = await promptText(page);
   await page.fill("textarea[placeholder*='own words']", text);
   await page.click("button:has-text('Answer')");
-  await settled(page);
+  await settled(page, prev);
 }
 
 async function main() {
@@ -156,18 +172,26 @@ async function main() {
     return finish();
   }
 
-  // 2. Grouping — the agenda should be shorter than the raw finding count when
-  //    related findings exist, and questions should read as prose, not as a
-  //    mechanical one-per-finding dump.
+  // 2. Grouping — the agenda should be no longer than its raw source count, and
+  //    questions should read as prose rather than a mechanical one-per-source
+  //    dump. The agenda's sources are blocking+warning findings AND each spec's
+  //    unresolved open questions (locked decision 2) — counting only findings
+  //    understates the denominator and scores real grouping as a failure, which
+  //    is exactly what happened once parked answers had grown the open-question
+  //    list.
   const findingCount = Object.values(projBefore.validation_findings || {})
     .flat()
     .filter((f) => f.severity === "blocking" || f.severity === "warning").length;
+  const openQuestionCount = (projBefore.specs || [])
+    .flatMap((s) => s.open_questions || [])
+    .filter((q) => !q.resolved).length;
+  const sourceCount = findingCount + openQuestionCount;
   const total = Number(q1.counter.match(/of (\d+)/)?.[1] ?? 0);
   record(
     2,
     "Related findings are grouped into questions",
-    total > 0 && total <= Math.max(findingCount, 1),
-    `${findingCount} blocking+warning findings → ${total} questions`,
+    total > 0 && total <= Math.max(sourceCount, 1),
+    `${findingCount} findings + ${openQuestionCount} open questions = ${sourceCount} sources → ${total} questions`,
   );
 
   // 1. A concrete answer applies immediately, with a patch-version bump.
@@ -299,8 +323,9 @@ async function main() {
   const q4 = await currentQuestion(page);
   if (!q4.done) {
     const before = await serverSpecs(ctx);
+    const prevSkip = await promptText(page);
     await page.click("button:has-text('Skip')");
-    await settled(page);
+    await settled(page, prevSkip);
     const after = await serverSpecs(ctx);
     case5.untouched = JSON.stringify(before) === JSON.stringify(after);
     record(5, "Skip leaves the spec untouched", case5.untouched === true, "");
@@ -313,8 +338,9 @@ async function main() {
   for (let i = 0; i < 25; i++) {
     const q = await currentQuestion(page);
     if (q.done) break;
+    const prevLoop = await promptText(page);
     await page.click("button:has-text('Skip')");
-    await settled(page);
+    await settled(page, prevLoop);
   }
   const summary = await page.evaluate(() => {
     const m = document.body.innerText.match(/All done\.[^\n]*/);

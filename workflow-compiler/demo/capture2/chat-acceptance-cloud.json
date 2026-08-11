@@ -1,0 +1,46 @@
+{
+  "project": "6bd74f67-c355-4812-b03b-1af72837bbe3",
+  "provider": "cloud",
+  "results": [
+    {
+      "id": 1,
+      "name": "Free-form mode opens with no session and no validate needed",
+      "passed": true
+    },
+    {
+      "id": 2,
+      "name": "A concrete instruction is applied to the spec",
+      "passed": true,
+      "detail": "turn tags: [\"APPLIED\"]"
+    },
+    {
+      "id": 3,
+      "name": "The applied change bumped the spec's patch version",
+      "passed": true,
+      "detail": "bumped=[order-fulfillment-workflow]"
+    },
+    {
+      "id": 4,
+      "name": "Spec tab shows the chat's change (no stale-buffer clobber)",
+      "passed": true,
+      "detail": "editor mentions the new step: true"
+    },
+    {
+      "id": 5,
+      "name": "Approve is re-gated until validation runs again",
+      "passed": true,
+      "detail": "approve_disabled=true"
+    },
+    {
+      "id": 6,
+      "name": "The transcript survives leaving and returning to the tab",
+      "passed": true
+    },
+    {
+      "id": 7,
+      "name": "A vague instruction is questioned or parked — never silently applied",
+      "passed": true,
+      "detail": "disposition: QUESTION"
+    }
+  ]
+}

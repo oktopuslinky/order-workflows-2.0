@@ -53,13 +53,13 @@ async function settled(page) {
   await page.waitForFunction(
     () => {
       const t = document.body.innerText;
-      return (
-        !t.includes("Applying…") &&
-        !t.includes("Reading the findings…") &&
-        (t.includes("All done.") ||
-          t.includes("Answer in your own words") ||
-          t.includes("Start resolving"))
-      );
+      if (t.includes("Applying…") || t.includes("Reading the findings…")) return false;
+      // "Answer in your own words" is the textarea's PLACEHOLDER attribute, and
+      // placeholders are not part of body.innerText — testing for it there can
+      // never be true, so a waiting question was invisible to this check. Query
+      // the DOM for the box instead (currentQuestion already does exactly that).
+      if (document.querySelector("textarea[placeholder*='own words']")) return true;
+      return t.includes("All done.") || t.includes("Start resolving");
     },
     // Playwright's signature is (pageFunction, arg, options) — the options
     // object MUST go third. Passing it second makes it the page function's
@@ -121,6 +121,13 @@ async function main() {
     auth = await ctx.request.post(`${API}/auth/login`, { data: CRED });
     if (!auth.ok()) throw new Error(`auth failed: ${auth.status()} ${await auth.text()}`);
   }
+
+  // Close any session left open by an earlier run. A killed run leaves one
+  // behind, and then the panel opens on a question instead of the "Start
+  // resolving" button this script waits for — so a single crash would poison
+  // every subsequent attempt. Applied answers stay applied; only the agenda
+  // is discarded, and it is a snapshot that must be retaken anyway.
+  await ctx.request.delete(`${API}/projects/${PROJECT}/dialogue`);
 
   const page = await ctx.newPage();
   page.on("console", (m) => {

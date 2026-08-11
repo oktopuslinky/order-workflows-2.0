@@ -27,6 +27,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from workflow_compiler.exceptions import CompilationError
 from workflow_compiler.interfaces.agent import BaseAgent
 from workflow_compiler.interfaces.llm import BaseLLMProvider
@@ -476,10 +478,21 @@ class FactsPatchApplier:
                 return False
             updates = {k: _norm(v) if isinstance(v, str) else v
                        for k, v in patch.payload.items()
-                       if k in items[idx].model_fields and k != "id"}
+                       if k in type(items[idx]).model_fields and k != "id"}
             if not updates:
                 return False
-            items[idx] = items[idx].model_copy(update=updates)
+            # Re-validate rather than model_copy(update=...): that bypasses
+            # pydantic entirely, so a payload string would land on an
+            # enum-typed field (EventNode.kind) and only fail much later, in
+            # the renderer, as `'str' object has no attribute 'value'`. A patch
+            # that would corrupt the node is dropped, like every other
+            # ungrounded op — the applier is where the strict work belongs.
+            try:
+                items[idx] = type(items[idx]).model_validate(
+                    {**items[idx].model_dump(), **updates}
+                )
+            except ValidationError:
+                return False
             return True
         if patch.action == PatchAction.MERGE:
             keep, _, drop = ref.partition("+")

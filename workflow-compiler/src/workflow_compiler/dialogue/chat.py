@@ -154,7 +154,14 @@ class SpecChatEngine:
         full_instruction = (
             f"{pending_instruction} — {text}" if pending_instruction else text
         )
-        return self._dispose(project, session, spec, plan, full_instruction)
+        return self._dispose(
+            project,
+            session,
+            spec,
+            plan,
+            full_instruction,
+            after_clarification=pending_question is not None,
+        )
 
     def _resolve_spec(
         self,
@@ -207,6 +214,8 @@ class SpecChatEngine:
         spec: WorkflowSpec,
         plan: InstructionPlan,
         instruction: str,
+        *,
+        after_clarification: bool = False,
     ) -> ChatOutcome:
         """Resolve one interpreted instruction: apply, acknowledge, ask, or park.
 
@@ -233,7 +242,10 @@ class SpecChatEngine:
                 session.pending_slug = spec.slug
                 return self._settle(session, spec, ChatTurnStatus.CLARIFYING, question)
 
-        return self._park(project, session, spec, plan, instruction)
+        return self._park(
+            project, session, spec, plan, instruction,
+            after_clarification=after_clarification,
+        )
 
     def _apply(
         self,
@@ -262,16 +274,25 @@ class SpecChatEngine:
         spec: WorkflowSpec,
         plan: InstructionPlan,
         instruction: str,
+        *,
+        after_clarification: bool = False,
     ) -> ChatOutcome:
         """Record an unmappable instruction as a new open question on the spec."""
         note = (plan.park_note or "").strip() or instruction
         park_as_open_question(project, spec, note, ref=f"chat:{session.session_id}")
         self._mark_dirty(project, session, spec.slug)
-        reply = (
-            plan.reply.strip()
-            or "I could not turn that into a specification change, so I have recorded it "
+        default = (
+            "I could not turn that into a specification change, so I have recorded it "
             "as an open question."
         )
+        # The engine owns the disposition, so it owns the sentence describing it.
+        # A model denied a second clarification writes its question into `reply`
+        # anyway, which would tell the user to "please specify…" at the very
+        # moment their answer was parked. Observed live on the cloud provider,
+        # not hypothetical. Note the agent has already cleared
+        # `needs_clarification` by this point, so the pending flag is the only
+        # remaining signal that the model was still trying to ask.
+        reply = default if after_clarification else (plan.reply.strip() or default)
         return self._settle(
             session, spec, ChatTurnStatus.PARKED, reply, parked_as=note
         )

@@ -344,3 +344,29 @@ async def test_an_empty_message_is_rejected() -> None:
 
     with pytest.raises(CompilationError, match="cannot be empty"):
         await _engine(MockProvider()).send(project, session, "   ")
+
+
+async def test_a_forbidden_second_clarification_does_not_reply_with_a_question() -> None:
+    """Observed live: the model re-asks in `reply` after being denied a second
+    clarification, so the user is told to "please specify…" just as their answer
+    is parked. The engine owns the disposition, so it owns the sentence."""
+    project = _project()
+    session = SpecChatEngine.start(project)
+    provider = MockProvider(
+        structured=[
+            _plan(needs_clarification=True, clarifying_question="Which step?"),
+            _plan(
+                needs_clarification=True,
+                clarifying_question="But which one?",
+                reply="Please specify whether a step is missing.",
+            ),
+        ]
+    )
+    engine = _engine(provider)
+
+    await engine.send(project, session, "make it better")
+    outcome = await engine.send(project, session, "not sure, ops owns it")
+
+    assert outcome.status is ChatTurnStatus.PARKED
+    assert "recorded it" in outcome.reply
+    assert "Please specify" not in outcome.reply

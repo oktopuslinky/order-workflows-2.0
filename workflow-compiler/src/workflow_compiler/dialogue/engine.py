@@ -22,16 +22,20 @@ terminates. Re-validating afterwards produces the next round.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from workflow_compiler.agents.dialogue import DialogueAgent
+from workflow_compiler.dialogue.spec_ops import (
+    apply_patches,
+    park_as_open_question,
+    replace_spec,
+    reset_to_spec_gate,
+)
 from workflow_compiler.exceptions import CompilationError
 from workflow_compiler.interfaces.llm import BaseLLMProvider
 from workflow_compiler.models import (
     CompilationProject,
-    Provenance,
     SpecItem,
     WorkflowSpec,
 )
@@ -272,15 +276,7 @@ class DialogueEngine:
         plan: AnswerPlan,
     ) -> AnswerOutcome:
         """Fold the answer's patches into the spec and bump its patch version."""
-        effective = [p for p in plan.patches if not p.is_noop()]
-        new_spec, summary, warnings = self._applier.apply(
-            spec, effective, project.document_text
-        )
-        bumped = self._bump_patch_version(new_spec.metadata.version)
-        if bumped is not None:
-            new_spec.metadata = new_spec.metadata.model_copy(update={"version": bumped})
-            summary.append(f"version bumped to {bumped}")
-        self._replace_spec(project, new_spec)
+        _, summary, warnings = apply_patches(project, spec, plan.patches, self._applier)
         self._mark_dirty(project, session, question.slug)
 
         question.status = QuestionStatus.ANSWERED
@@ -306,15 +302,9 @@ class DialogueEngine:
         for confirmation but never silently drop it.
         """
         note = (plan.park_note or "").strip() or answer
-        parked = SpecItem(
-            text=note,
-            provenance=Provenance.HUMAN_PROVIDED,
-            resolved=False,
-            ref=f"dialogue:{question.question_id}",
+        park_as_open_question(
+            project, spec, note, ref=f"dialogue:{question.question_id}"
         )
-        new_spec = spec.model_copy(deep=True)
-        new_spec.open_questions = [*new_spec.open_questions, parked]
-        self._replace_spec(project, new_spec)
         self._mark_dirty(project, session, question.slug)
 
         question.status = QuestionStatus.PARKED
@@ -347,14 +337,9 @@ class DialogueEngine:
         session clears it (see :meth:`finish`), which is what forces a
         re-validate before approval.
         """
-        from workflow_compiler.models.enums import ApprovalStatus
-        from workflow_compiler.models.project import ProjectStage
-
         if slug not in session.applied_specs:
             session.applied_specs.append(slug)
-        project.spec_approval_status = ApprovalStatus.PENDING
-        project.stage = ProjectStage.SPEC_DRAFTED
-        project.touch()
+        reset_to_spec_gate(project)
         session.touch()
 
     @staticmethod
@@ -372,13 +357,4 @@ class DialogueEngine:
     @staticmethod
     def _replace_spec(project: CompilationProject, spec: WorkflowSpec) -> None:
         """Swap ``spec`` in by slug, preserving order."""
-        project.specs = [spec if s.slug == spec.slug else s for s in project.specs]
-
-    @staticmethod
-    def _bump_patch_version(version: str) -> str | None:
-        """``X.Y.Z`` → ``X.Y.(Z+1)``; ``None`` when ``version`` is not semver."""
-        match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version.strip())
-        if match is None:
-            return None
-        major, minor, patch = (int(g) for g in match.groups())
-        return f"{major}.{minor}.{patch + 1}"
+        replace_spec(project, spec)

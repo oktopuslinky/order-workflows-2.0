@@ -288,6 +288,47 @@ export interface DialogueResponse {
   spec_markdown: Record<string, string>;
 }
 
+export type ChatTurnStatus = "applied" | "clarifying" | "parked" | "no_change";
+
+export interface SpecChatTurn {
+  turn_id: string;
+  role: "user" | "assistant";
+  text: string;
+  slug: string | null;
+  /** Set on assistant turns only. */
+  status: ChatTurnStatus | null;
+  changes: string[];
+  parked_as: string | null;
+  warnings: string[];
+  created_at: string;
+}
+
+export interface SpecChatSession {
+  session_id: string;
+  turns: SpecChatTurn[];
+  pending_instruction: string | null;
+  pending_question: string | null;
+  pending_slug: string | null;
+  applied_specs: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SpecChatResponse {
+  project: CompilationProject;
+  session: SpecChatSession | null;
+  reply: string | null;
+  status: ChatTurnStatus | null;
+  slug: string | null;
+  changes: string[];
+  parked_as: string | null;
+  warnings: string[];
+  /** True when the next message is read as a reply to a clarifying question. */
+  awaiting_clarification: boolean;
+  applied: number;
+  spec_markdown: Record<string, string>;
+}
+
 export interface CvpaPreviewResponse {
   slug: string;
   diagram: string;

@@ -69,6 +69,13 @@ from workflow_compiler.models.spec import (
     WorkflowSpec,
     WorkflowTrigger,
 )
+from workflow_compiler.models.spec_chat import (
+    ChatRole,
+    ChatTurnStatus,
+    InstructionPlan,
+    SpecChatSession,
+    SpecChatTurn,
+)
 from workflow_compiler.models.state import WorkflowState
 from workflow_compiler.models.structure import (
     ActivityNode,
@@ -191,6 +198,12 @@ __all__ = [
     "DraftedQuestions",
     "QuestionOrigin",
     "QuestionStatus",
+    # free-form spec chat
+    "ChatRole",
+    "ChatTurnStatus",
+    "InstructionPlan",
+    "SpecChatSession",
+    "SpecChatTurn",
     # enums
     "ApprovalStatus",
     "CVPAPhase",

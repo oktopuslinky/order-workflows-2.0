@@ -8,6 +8,7 @@ import { api, ApiError } from "@/lib/api";
 import { useRuns } from "@/lib/runs";
 import { APPROVE_STEPS, shortId, STAGE_LABEL, STAGE_TONE } from "@/lib/format";
 import { DialoguePanel } from "@/components/DialoguePanel";
+import { SpecChatPanel } from "@/components/SpecChatPanel";
 import { DiagramPanel } from "@/components/DiagramPanel";
 import { EditHistory } from "@/components/EditHistory";
 import { EditRequestPanel } from "@/components/EditRequestPanel";
@@ -210,6 +211,10 @@ function Workspace({
   );
   const [active, setActive] = useState(slugs[0] ?? "");
   const [tab, setTab] = useState<"spec" | "resolve" | "results">("spec");
+  // Two ways to resolve, sharing one tab: answer the compiler's questions, or
+  // just say what to change. Guided leads because it is the one that knows what
+  // is actually wrong with the spec.
+  const [resolveMode, setResolveMode] = useState<"guided" | "free">("guided");
   const [viewMode, setViewMode] = useState<"editor" | "preview" | "diagram">(
     "editor",
   );
@@ -534,14 +539,37 @@ function Workspace({
         <div className="min-h-0 flex-1 overflow-auto p-4">
           <div className="mx-auto max-w-2xl">
             <h2 className="text-base font-semibold">Resolve open items</h2>
-            <p className="mt-1 mb-4 text-sm text-[var(--muted)]">
-              The compiler asks about what it could not settle from the
-              document. Answer in plain language.
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              {resolveMode === "guided"
+                ? "The compiler asks about what it could not settle from the document. Answer in plain language."
+                : "Tell the compiler what to change and it edits the spec for you. No validate needed first."}
             </p>
-            <DialoguePanel
-              projectId={proj.project_id}
-              onSpecUpdated={adoptDialogueSpec}
-            />
+            <div className="seg my-4 inline-flex text-xs">
+              <button
+                onClick={() => setResolveMode("guided")}
+                className={resolveMode === "guided" ? "seg-active" : ""}
+              >
+                Guided
+              </button>
+              <button
+                onClick={() => setResolveMode("free")}
+                className={resolveMode === "free" ? "seg-active" : ""}
+              >
+                Free-form
+              </button>
+            </div>
+            {resolveMode === "guided" ? (
+              <DialoguePanel
+                projectId={proj.project_id}
+                onSpecUpdated={adoptDialogueSpec}
+              />
+            ) : (
+              <SpecChatPanel
+                projectId={proj.project_id}
+                slugs={proj.specs.map((s) => s.slug)}
+                onSpecUpdated={adoptDialogueSpec}
+              />
+            )}
           </div>
         </div>
       ) : tab === "results" ? (

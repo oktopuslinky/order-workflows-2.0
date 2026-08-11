@@ -61,6 +61,11 @@ async function settled(page) {
           t.includes("Start resolving"))
       );
     },
+    // Playwright's signature is (pageFunction, arg, options) — the options
+    // object MUST go third. Passing it second makes it the page function's
+    // argument and silently leaves the 30s default in place, which is far
+    // below a real dialogue turn (one LLM round trip, minutes on a slow model).
+    null,
     { timeout: 900_000 },
   );
 }

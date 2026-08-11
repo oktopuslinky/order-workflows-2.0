@@ -4,6 +4,7 @@
 import type {
   CvpaPreviewResponse,
   DialogueResponse,
+  SpecChatResponse,
   EditPreviewResponse,
   Job,
   JobStartBody,
@@ -277,6 +278,23 @@ export const api = {
 
   endDialogue: (id: string) =>
     request<DialogueResponse>(`/projects/${encodeURIComponent(id)}/dialogue`, {
+      method: "DELETE",
+    }),
+
+  // Free-form spec chat — the other door to the same gate. POST opens a session
+  // implicitly, so there is no separate start call.
+  getSpecChat: (id: string) =>
+    request<SpecChatResponse>(`/projects/${encodeURIComponent(id)}/chat`),
+
+  sendSpecChat: (id: string, message: string, slug?: string | null) =>
+    request<SpecChatResponse>(`/projects/${encodeURIComponent(id)}/chat`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ message, slug: slug ?? null }),
+    }),
+
+  endSpecChat: (id: string) =>
+    request<SpecChatResponse>(`/projects/${encodeURIComponent(id)}/chat`, {
       method: "DELETE",
     }),
 

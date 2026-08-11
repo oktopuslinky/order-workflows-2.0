@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from workflow_compiler.metrics import TimeSavedReport
 from workflow_compiler.models import (
+    ChatTurnStatus,
     CompilationProject,
     DialogueQuestion,
     DialogueSession,
@@ -16,6 +17,7 @@ from workflow_compiler.models import (
     GeneratedFile,
     ProjectStage,
     ResolvedEdit,
+    SpecChatSession,
     WorkflowState,
 )
 from workflow_compiler.models.user import UserPreferences
@@ -360,6 +362,67 @@ class DialogueAnswerRequest(BaseModel):
         ...,
         min_length=1,
         description="The user's answer, in ordinary prose — no particular format.",
+    )
+
+
+class SpecChatRequest(BaseModel):
+    """Request body for one free-form spec-editing instruction."""
+
+    message: str = Field(
+        ...,
+        min_length=1,
+        description="What the user wants changed, in ordinary prose.",
+    )
+    slug: str | None = Field(
+        default=None,
+        description=(
+            "Workflow the instruction concerns. Send the one the user is looking "
+            "at; omit to let the interpreter choose. An unknown slug is rejected "
+            "rather than silently redirected."
+        ),
+    )
+
+
+class SpecChatResponse(BaseModel):
+    """The chat's state after an operation, plus what the last message did.
+
+    ``session`` is ``None`` once the chat has been closed. As with the guided
+    dialogue, everything the last message changed is reported explicitly — a
+    client should never have to diff the specs to find out whether it took.
+    """
+
+    project: CompilationProject
+    session: SpecChatSession | None = Field(
+        default=None, description="The open chat, or None once it has been closed."
+    )
+    reply: str | None = Field(
+        default=None, description="Plain-language reply to show the user."
+    )
+    status: ChatTurnStatus | None = Field(
+        default=None, description="How the last message was disposed of."
+    )
+    slug: str | None = Field(
+        default=None, description="Workflow the last message was read against."
+    )
+    changes: list[str] = Field(
+        default_factory=list, description="What the last message changed in the spec."
+    )
+    parked_as: str | None = Field(
+        default=None,
+        description="Set when the last message was recorded as a new open question.",
+    )
+    warnings: list[str] = Field(
+        default_factory=list, description="Non-fatal issues from applying the last message."
+    )
+    awaiting_clarification: bool = Field(
+        default=False,
+        description="True when the next message will be read as a reply to a question.",
+    )
+    applied: int = Field(
+        default=0, description="How many instructions have changed the specs."
+    )
+    spec_markdown: dict[str, str] = Field(
+        default_factory=dict, description="slug → rendered spec Markdown (kept in step)."
     )
 
 

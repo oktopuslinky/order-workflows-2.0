@@ -22,6 +22,7 @@ from workflow_compiler.models.edit import EditRecord
 from workflow_compiler.models.enums import ApprovalStatus
 from workflow_compiler.models.findings import Severity, SpecFinding
 from workflow_compiler.models.spec import CrossReference, WorkflowSpec, WorkflowTrigger
+from workflow_compiler.models.spec_chat import SpecChatSession
 
 
 class ProjectStage(StrEnum):
@@ -103,6 +104,14 @@ class CompilationProject(WorkflowBaseModel):
         description=(
             "The active conversational spec-resolution session, if one is open. "
             "None for projects that have never run one (including legacy projects)."
+        ),
+    )
+    spec_chat: SpecChatSession | None = Field(
+        default=None,
+        description=(
+            "The active free-form spec-editing chat, if one is open. Independent "
+            "of dialogue_session — the two are separate doors to the same gate "
+            "and may both be open. None for projects that have never run one."
         ),
     )
     owner_id: str | None = Field(

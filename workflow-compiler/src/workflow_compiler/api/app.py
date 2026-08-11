@@ -105,6 +105,8 @@ from workflow_compiler.api.schemas import (
     RejectRequest,
     RenameProjectRequest,
     SettingsDefaults,
+    SpecChatRequest,
+    SpecChatResponse,
     SpecUpdateRequest,
     UserPublic,
     WorkflowIdList,
@@ -113,7 +115,7 @@ from workflow_compiler.api.schemas import (
 from workflow_compiler.codegen.temporal.project_generator import generate_project_files
 from workflow_compiler.compiler import WorkflowCompiler
 from workflow_compiler.config import get_settings
-from workflow_compiler.dialogue import AnswerOutcome
+from workflow_compiler.dialogue import AnswerOutcome, ChatOutcome
 from workflow_compiler.exceptions import (
     ApprovalError,
     CompilationError,
@@ -132,6 +134,7 @@ from workflow_compiler.models import (
     CompilationProject,
     DialogueSession,
     GeneratedFile,
+    SpecChatSession,
     TemporalWorkflowDesign,
 )
 from workflow_compiler.models.user import User
@@ -863,6 +866,91 @@ def create_app() -> FastAPI:
         _check_owner(await _guard(compiler.load_project(project_id)), user)
         project = await _guard(compiler.end_dialogue(project_id))
         return _dialogue_response(project, None)
+
+    # ------------------------------------------------------------------ #
+    # Free-form spec chat: the user says what to change, we patch it
+    # ------------------------------------------------------------------ #
+    # The other door to the same gate. No agenda and no `validate` prerequisite
+    # — POST is enough to start one, so there is no separate "open" call the UI
+    # has to make before the user can type.
+
+    def _chat_response(
+        project: CompilationProject,
+        session: SpecChatSession | None,
+        *,
+        outcome: ChatOutcome | None = None,
+    ) -> SpecChatResponse:
+        """Wrap the chat state for the client, including what just changed."""
+        return SpecChatResponse(
+            project=project,
+            session=session,
+            reply=outcome.reply if outcome is not None else None,
+            status=outcome.status if outcome is not None else None,
+            slug=outcome.slug if outcome is not None else None,
+            changes=outcome.changes if outcome is not None else [],
+            parked_as=outcome.parked_as if outcome is not None else None,
+            warnings=outcome.warnings if outcome is not None else [],
+            awaiting_clarification=(
+                session.awaiting_clarification if session is not None else False
+            ),
+            applied=session.applied_count if session is not None else 0,
+            spec_markdown={
+                spec.slug: render_spec(spec, project.cross_references, project.triggers)
+                for spec in project.specs
+            },
+        )
+
+    @app.get(
+        "/projects/{project_id}/chat",
+        response_model=SpecChatResponse,
+        tags=["chat"],
+    )
+    async def get_spec_chat(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> SpecChatResponse:
+        """Return the open chat and its transcript, or an empty response."""
+        project = await _guard(compiler.load_project(project_id))
+        _check_owner(project, user)
+        return _chat_response(project, project.spec_chat)
+
+    @app.post(
+        "/projects/{project_id}/chat",
+        response_model=SpecChatResponse,
+        tags=["chat"],
+    )
+    async def send_spec_chat(
+        project_id: str,
+        request: SpecChatRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> SpecChatResponse:
+        """Send one instruction in prose; the spec is patched in place.
+
+        Opens a session implicitly when none is open, so the client can just
+        post the user's first message.
+        """
+        _check_owner(await _guard(compiler.load_project(project_id)), user)
+        project, session, outcome = await _guard(
+            compiler.send_spec_chat(project_id, request.message, slug=request.slug)
+        )
+        return _chat_response(project, session, outcome=outcome)
+
+    @app.delete(
+        "/projects/{project_id}/chat",
+        response_model=SpecChatResponse,
+        tags=["chat"],
+    )
+    async def end_spec_chat(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> SpecChatResponse:
+        """Close the chat and discard the transcript. Applied changes stay."""
+        _check_owner(await _guard(compiler.load_project(project_id)), user)
+        project = await _guard(compiler.end_spec_chat(project_id))
+        return _chat_response(project, None)
 
     # ------------------------------------------------------------------ #
     # Background jobs: cancelable validate/approve that survive navigation

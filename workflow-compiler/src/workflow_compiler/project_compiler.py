@@ -37,7 +37,12 @@ from workflow_compiler.compiler import (
     WorkflowCompiler,
     _emit,
 )
-from workflow_compiler.dialogue import AnswerOutcome, DialogueEngine
+from workflow_compiler.dialogue import (
+    AnswerOutcome,
+    ChatOutcome,
+    DialogueEngine,
+    SpecChatEngine,
+)
 from workflow_compiler.exceptions import (
     ApprovalError,
     CompilationError,
@@ -60,6 +65,7 @@ from workflow_compiler.models import (
     Provenance,
     ResolvedEdit,
     Severity,
+    SpecChatSession,
     SpecFinding,
     SpecItem,
     TriggerMode,
@@ -161,6 +167,7 @@ class ProjectCompiler:
         self._threshold = graph_health_threshold
         # Built lazily: most projects never open a dialogue session.
         self._dialogue: DialogueEngine | None = None
+        self._spec_chat: SpecChatEngine | None = None
 
     @classmethod
     def from_settings(
@@ -591,6 +598,72 @@ class ProjectCompiler:
                 "No dialogue session is open for this project. Start one first."
             )
         return project.dialogue_session
+
+    # ------------------------------------------------------------------ #
+    # Stage 2a-ter: free-form spec chat
+    # ------------------------------------------------------------------ #
+    # The other door to the same gate. Unlike the guided dialogue this needs no
+    # prior `validate` — there is no findings agenda, the user simply says what
+    # they want changed.
+
+    @property
+    def spec_chat(self) -> SpecChatEngine:
+        """The free-form spec-editing engine, built lazily on first use."""
+        if self._spec_chat is None:
+            self._spec_chat = SpecChatEngine(self._llm, prompt_manager=self._prompts)
+        return self._spec_chat
+
+    async def start_spec_chat(
+        self, project_id: str, *, persist: bool = True
+    ) -> tuple[CompilationProject, SpecChatSession]:
+        """Open a free-form chat, or return the one already open.
+
+        Idempotent on purpose: the transcript is the value here, so re-opening
+        must not discard it (contrast ``start_dialogue``, whose agenda is a
+        snapshot and *must* be retaken).
+        """
+        project = await self._projects.load(project_id)
+        if project.spec_chat is None:
+            project.spec_chat = self.spec_chat.start(project)
+            project.touch()
+            if persist:
+                await self._projects.save(project)
+        return project, project.spec_chat
+
+    async def send_spec_chat(
+        self,
+        project_id: str,
+        message: str,
+        *,
+        slug: str | None = None,
+        persist: bool = True,
+    ) -> tuple[CompilationProject, SpecChatSession, ChatOutcome]:
+        """Send one free-form instruction; the spec is patched in place.
+
+        Opens a session implicitly when none exists — a chat has no setup step
+        the user should have to think about.
+        """
+        project = await self._projects.load(project_id)
+        session = project.spec_chat or self.spec_chat.start(project)
+        started = time.perf_counter()
+        outcome = await self.spec_chat.send(project, session, message, slug=slug)
+        self._record_timing(project, "spec_chat:send", time.perf_counter() - started)
+        project.spec_chat = session
+        project.touch()
+        if persist:
+            await self._projects.save(project)
+        return project, session, outcome
+
+    async def end_spec_chat(
+        self, project_id: str, *, persist: bool = True
+    ) -> CompilationProject:
+        """Close the chat, keeping every change already applied."""
+        project = await self._projects.load(project_id)
+        project.spec_chat = None
+        project.touch()
+        if persist:
+            await self._projects.save(project)
+        return project
 
     # ------------------------------------------------------------------ #
     # Stage 2b: edit requests against compiled workflows

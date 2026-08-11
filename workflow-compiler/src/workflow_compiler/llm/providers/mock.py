@@ -75,6 +75,32 @@ _DEMO_RESPONSES: dict[str, dict[str, Any]] = {
         ],
         "note": "canned mock edit plan",
     },
+    # Conversational spec resolution. The canned agenda is one question so a
+    # mock-backed session is short but real: answering it applies the patch
+    # below, which is what makes the Resolve flow demoable offline.
+    "DraftedQuestions": {
+        "questions": [
+            {
+                "slug": "demo-order-workflow",
+                "question": "What happens to an order once it has shipped?",
+                "section": "Outputs",
+                "covers": [],
+            }
+        ],
+        "note": "canned mock question agenda",
+    },
+    "AnswerPlan": {
+        "patches": [
+            {
+                "action": "add",
+                "target": "activity",
+                "payload": {"name": "Mock-answered: Notify the customer"},
+                "evidence": {"quote": "mock dialogue answer"},
+            }
+        ],
+        "needs_followup": False,
+        "note": "canned mock answer plan",
+    },
     "TemporalDesignOutput": {
         "workflow_name": "DemoOrderWorkflow",
         "task_queue": "demo-orders",

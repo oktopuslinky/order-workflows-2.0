@@ -1173,6 +1173,30 @@ Project endpoints (the compile → validate → approve pipeline; spec files tra
 | POST   | `/projects/{id}/edit/preview` | `{edit_document, workflows?}`             | Dry-run the edit: would-be summary, post-edit spec Markdown, and the `resolved` handoff blob. Persists nothing. |
 | POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes (synchronous). |
 | POST   | `/projects/{id}/approve`    | `{workflows?, reviewer?, spec_markdown?, accept_incomplete?, allow_unconfirmed_references?}` | Approve specs, compile every workflow (synchronous). |
+
+**Conversational spec resolution.** The alternative to hand-editing spec Markdown: the
+validator's **blocking and warning** findings (never INFO) plus each spec's unresolved open
+questions become plain-language questions, and answers are prose. Related findings may be
+**grouped** into one question; a vague answer earns exactly **one** clarifying follow-up. Each
+answer is applied **immediately** — one patch set and one patch-version bump per answered
+question — through the same human-authority applier the edit path uses, so additions need no
+document grounding and are marked `human_provided`. An answer that cannot be mapped to a spec
+change is **parked** as a new open question rather than discarded (the edit path aborts; this
+one never does). The agenda is a snapshot taken at start, so a session always terminates.
+Applied answers return the project to `spec_drafted`, and closing the session drops the
+findings for changed specs — validation must run again before approval.
+
+| Method | Path                          | Body        | Purpose                                    |
+|--------|-------------------------------|-------------|--------------------------------------------|
+| GET    | `/projects/{id}/dialogue`     | —           | The open session (or `session: null`).      |
+| POST   | `/projects/{id}/dialogue`     | —           | Open a session. 400 when there is nothing to resolve. Replaces any existing session. |
+| POST   | `/projects/{id}/dialogue/answer` | `{answer}` | Answer the current question in prose. Applies patches, or asks a follow-up, or parks. |
+| POST   | `/projects/{id}/dialogue/skip` | —          | Pass on the current question; the spec is untouched. |
+| DELETE | `/projects/{id}/dialogue`     | —           | Close the session. Answers already applied stay applied. |
+
+Every response carries `prompt` — the exact text to show the user, which is the pending
+clarifying follow-up when one is open and the question otherwise — plus `changes` /
+`parked_as` describing what the last answer did, and the refreshed `spec_markdown`.
 | GET    | `/metrics/summary`          | —                                           | Total time saved across your projects (measured pipeline seconds vs. the configurable `baseline_hours` human-team estimates). |
 
 Validate and approve can also run as **cancelable background runs** that keep going after

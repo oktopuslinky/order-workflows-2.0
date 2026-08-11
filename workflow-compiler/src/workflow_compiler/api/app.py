@@ -11,6 +11,17 @@ Project endpoints (the compile → validate → approve pipeline):
 - ``POST /projects/{id}/validate``  — run the spec validator passes.
 - ``POST /projects/{id}/approve``   — approve specs, compile every workflow.
 
+Conversational spec resolution — the alternative to hand-editing spec Markdown.
+The validator's blocking/warning findings and the specs' unresolved open
+questions become plain-language questions; answers are prose and are applied
+**incrementally** (one spec patch set and version bump per answered question):
+
+- ``GET    /projects/{id}/dialogue``        — the open session, if any.
+- ``POST   /projects/{id}/dialogue``        — open a session (400 if nothing to ask).
+- ``POST   /projects/{id}/dialogue/answer`` — answer the current question in prose.
+- ``POST   /projects/{id}/dialogue/skip``   — pass, leaving the spec untouched.
+- ``DELETE /projects/{id}/dialogue``        — close it; applied answers stay applied.
+
 Long stages can also run in the background so they can be canceled and survive
 the user navigating away (one run per project at a time, unlimited across
 projects; canceling never persists a partial result):
@@ -73,6 +84,8 @@ from workflow_compiler.api.schemas import (
     ApproveRequest,
     CvpaPreviewRequest,
     CvpaPreviewResponse,
+    DialogueAnswerRequest,
+    DialogueResponse,
     EditPreviewResponse,
     JobResponse,
     JobStartRequest,
@@ -99,6 +112,7 @@ from workflow_compiler.api.schemas import (
 from workflow_compiler.codegen.temporal.project_generator import generate_project_files
 from workflow_compiler.compiler import WorkflowCompiler
 from workflow_compiler.config import get_settings
+from workflow_compiler.dialogue import AnswerOutcome
 from workflow_compiler.exceptions import (
     ApprovalError,
     CompilationError,
@@ -111,7 +125,12 @@ from workflow_compiler.exceptions import (
 )
 from workflow_compiler.ingestion import DocumentParserFactory
 from workflow_compiler.metrics import compute_time_saved
-from workflow_compiler.models import CompilationProject, GeneratedFile, TemporalWorkflowDesign
+from workflow_compiler.models import (
+    CompilationProject,
+    DialogueSession,
+    GeneratedFile,
+    TemporalWorkflowDesign,
+)
 from workflow_compiler.models.user import User
 from workflow_compiler.project_compiler import ProjectCompiler
 from workflow_compiler.spec import render_spec
@@ -681,6 +700,123 @@ def create_app() -> FastAPI:
             )
         )
         return await _project_response(project, compiler, user)
+
+    # ------------------------------------------------------------------ #
+    # Conversational spec resolution: ask about findings, answer in prose
+    # ------------------------------------------------------------------ #
+    # Answers apply incrementally — each one patches its spec and bumps that
+    # spec's patch version — so these are all plain synchronous calls. A single
+    # answer is one LLM round trip, not a pipeline run.
+
+    def _dialogue_response(
+        project: CompilationProject,
+        session: DialogueSession | None,
+        *,
+        outcome: AnswerOutcome | None = None,
+    ) -> DialogueResponse:
+        """Wrap the dialogue state for the client, including what just changed."""
+        question = session.current if session is not None else None
+        return DialogueResponse(
+            project=project,
+            session=session,
+            question=question,
+            prompt=question.prompt if question is not None else None,
+            answered=session.answered_count if session is not None else 0,
+            total=len(session.questions) if session is not None else 0,
+            remaining=(
+                max(len(session.questions) - session.cursor, 0)
+                if session is not None
+                else 0
+            ),
+            changes=outcome.changes if outcome is not None else [],
+            parked_as=outcome.parked_as if outcome is not None else None,
+            warnings=outcome.warnings if outcome is not None else [],
+            spec_markdown={
+                spec.slug: render_spec(spec, project.cross_references, project.triggers)
+                for spec in project.specs
+            },
+        )
+
+    @app.get(
+        "/projects/{project_id}/dialogue",
+        response_model=DialogueResponse,
+        tags=["dialogue"],
+    )
+    async def get_dialogue(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> DialogueResponse:
+        """Return the open session, or an empty response when none is open."""
+        project = await _guard(compiler.load_project(project_id))
+        _check_owner(project, user)
+        return _dialogue_response(project, project.dialogue_session)
+
+    @app.post(
+        "/projects/{project_id}/dialogue",
+        response_model=DialogueResponse,
+        tags=["dialogue"],
+    )
+    async def start_dialogue(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> DialogueResponse:
+        """Open a session over the project's blocking/warning findings + questions.
+
+        400 when there is nothing to resolve — validate first if the specs moved.
+        """
+        _check_owner(await _guard(compiler.load_project(project_id)), user)
+        project, session = await _guard(compiler.start_dialogue(project_id))
+        return _dialogue_response(project, session)
+
+    @app.post(
+        "/projects/{project_id}/dialogue/answer",
+        response_model=DialogueResponse,
+        tags=["dialogue"],
+    )
+    async def answer_dialogue(
+        project_id: str,
+        request: DialogueAnswerRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> DialogueResponse:
+        """Answer the current question in prose; the spec is patched in place."""
+        _check_owner(await _guard(compiler.load_project(project_id)), user)
+        project, session, outcome = await _guard(
+            compiler.answer_dialogue(project_id, request.answer)
+        )
+        return _dialogue_response(project, session, outcome=outcome)
+
+    @app.post(
+        "/projects/{project_id}/dialogue/skip",
+        response_model=DialogueResponse,
+        tags=["dialogue"],
+    )
+    async def skip_dialogue(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> DialogueResponse:
+        """Pass on the current question, leaving the spec untouched."""
+        _check_owner(await _guard(compiler.load_project(project_id)), user)
+        project, session = await _guard(compiler.skip_dialogue(project_id))
+        return _dialogue_response(project, session)
+
+    @app.delete(
+        "/projects/{project_id}/dialogue",
+        response_model=DialogueResponse,
+        tags=["dialogue"],
+    )
+    async def end_dialogue(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> DialogueResponse:
+        """Close the session. Every answer already applied stays applied."""
+        _check_owner(await _guard(compiler.load_project(project_id)), user)
+        project = await _guard(compiler.end_dialogue(project_id))
+        return _dialogue_response(project, None)
 
     # ------------------------------------------------------------------ #
     # Background jobs: cancelable validate/approve that survive navigation

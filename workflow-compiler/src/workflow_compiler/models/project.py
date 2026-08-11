@@ -17,6 +17,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
+from workflow_compiler.models.dialogue import DialogueSession
 from workflow_compiler.models.edit import EditRecord
 from workflow_compiler.models.enums import ApprovalStatus
 from workflow_compiler.models.findings import Severity, SpecFinding
@@ -96,6 +97,13 @@ class CompilationProject(WorkflowBaseModel):
     edit_log: list[EditRecord] = Field(
         default_factory=list,
         description="Append-only audit trail of applied edit requests.",
+    )
+    dialogue_session: DialogueSession | None = Field(
+        default=None,
+        description=(
+            "The active conversational spec-resolution session, if one is open. "
+            "None for projects that have never run one (including legacy projects)."
+        ),
     )
     owner_id: str | None = Field(
         default=None,

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { useRuns } from "@/lib/runs";
 import { APPROVE_STEPS, shortId, STAGE_LABEL, STAGE_TONE } from "@/lib/format";
+import { DialoguePanel } from "@/components/DialoguePanel";
 import { DiagramPanel } from "@/components/DiagramPanel";
 import { EditHistory } from "@/components/EditHistory";
 import { EditRequestPanel } from "@/components/EditRequestPanel";
@@ -208,7 +209,7 @@ function Workspace({
     () => ({ ...data.spec_markdown }),
   );
   const [active, setActive] = useState(slugs[0] ?? "");
-  const [tab, setTab] = useState<"spec" | "results">("spec");
+  const [tab, setTab] = useState<"spec" | "resolve" | "results">("spec");
   const [viewMode, setViewMode] = useState<"editor" | "preview" | "diagram">(
     "editor",
   );
@@ -389,6 +390,12 @@ function Workspace({
             Spec
           </button>
           <button
+            onClick={() => setTab("resolve")}
+            className={tab === "resolve" ? "seg-active" : ""}
+          >
+            Resolve
+          </button>
+          <button
             onClick={() => setTab("results")}
             disabled={!hasResults}
             className={tab === "results" ? "seg-active" : ""}
@@ -514,7 +521,18 @@ function Workspace({
         />
       )}
 
-      {tab === "results" ? (
+      {tab === "resolve" ? (
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          <div className="mx-auto max-w-2xl">
+            <h2 className="text-base font-semibold">Resolve open items</h2>
+            <p className="mt-1 mb-4 text-sm text-[var(--muted)]">
+              The compiler asks about what it could not settle from the
+              document. Answer in plain language.
+            </p>
+            <DialoguePanel projectId={proj.project_id} />
+          </div>
+        </div>
+      ) : tab === "results" ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-auto">
           {data.time_saved && (
             <div className="px-4 pt-3">

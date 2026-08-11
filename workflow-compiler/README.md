@@ -187,6 +187,33 @@ npm run dev          # or a custom port: npm run dev -- -p 3001
 Open http://localhost:3000. The frontend talks to the backend at `http://localhost:8000`;
 override with `NEXT_PUBLIC_API_BASE` in `frontend/.env.local`.
 
+## Use — Resolve findings by conversation
+
+Editing spec Markdown by hand is not the only way through the human gate. Open a
+project's **Resolve** tab and the compiler asks about what it could not settle from the
+document — one plain-language question at a time — and you answer in ordinary prose:
+
+> ⛔ **order-fulfillment › Outputs**
+> "Payment Confirmed" is produced but never consumed. Which workflow picks it up?
+>
+> *— it goes to the shipping workflow, that one kicks off once payment clears*
+
+Each answer is translated into deterministic spec operations and applied **immediately**
+(the workflow's patch version bumps per answer), so stopping half way keeps everything you
+already answered. Questions are drawn from the validator's blocking and warning findings
+plus each spec's unresolved open questions — so run `validate` first.
+
+Three behaviors worth knowing:
+
+- Related findings are **grouped** into one question rather than asked mechanically.
+- A vague answer earns **one** clarifying follow-up, never an interrogation.
+- An answer that cannot become a spec change — "ops owns that, not decided yet" — is
+  **recorded as a new open question** instead of being discarded.
+
+Because the specs change, validation must run again before approval. The same flow is
+available over HTTP (`POST /projects/{id}/dialogue`, then `/dialogue/answer`); see
+[`docs/HOW_IT_WORKS.md` §9.3](docs/HOW_IT_WORKS.md).
+
 ## Use — Library
 
 ```python

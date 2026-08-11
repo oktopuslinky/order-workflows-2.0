@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 from workflow_compiler.metrics import TimeSavedReport
 from workflow_compiler.models import (
     CompilationProject,
+    DialogueQuestion,
+    DialogueSession,
     EditRecord,
     GeneratedFile,
     ProjectStage,
@@ -325,4 +327,57 @@ class ProjectFilesResponse(BaseModel):
             "Every generated file: each workflow's bundle under '<slug>/...' plus the "
             "shared project glue files (contracts.py, README.md) at the root."
         ),
+    )
+
+
+class DialogueAnswerRequest(BaseModel):
+    """Request body for answering the dialogue's current question."""
+
+    answer: str = Field(
+        ...,
+        min_length=1,
+        description="The user's answer, in ordinary prose — no particular format.",
+    )
+
+
+class DialogueResponse(BaseModel):
+    """The dialogue's state after an operation, plus what the last answer did.
+
+    ``session`` is ``None`` once the session has been ended, which is how the
+    client knows to leave the panel. Everything the last answer changed is
+    reported explicitly — a client should never have to diff the specs to find
+    out whether an answer took effect.
+    """
+
+    project: CompilationProject
+    session: DialogueSession | None = Field(
+        default=None, description="The open session, or None once it has been closed."
+    )
+    question: DialogueQuestion | None = Field(
+        default=None, description="The question now awaiting an answer, if any."
+    )
+    prompt: str | None = Field(
+        default=None,
+        description=(
+            "Exact text to show the user: the pending clarifying follow-up when "
+            "one is open, else the current question."
+        ),
+    )
+    answered: int = Field(
+        default=0, description="How many questions have produced applied spec changes."
+    )
+    total: int = Field(default=0, description="Questions on the agenda.")
+    remaining: int = Field(default=0, description="Questions not yet dispositioned.")
+    changes: list[str] = Field(
+        default_factory=list, description="What the last answer changed in the spec."
+    )
+    parked_as: str | None = Field(
+        default=None,
+        description="Set when the last answer was recorded as a new open question.",
+    )
+    warnings: list[str] = Field(
+        default_factory=list, description="Non-fatal issues from applying the last answer."
+    )
+    spec_markdown: dict[str, str] = Field(
+        default_factory=dict, description="slug → rendered spec Markdown (kept in step)."
     )

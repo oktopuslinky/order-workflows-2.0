@@ -116,6 +116,22 @@ picture before changing pipeline behavior.
   raises `EditPreviewStaleError` (HTTP 409). Confirm must never re-interpret; the whole point is
   that what applies is exactly what was previewed. CLI: `edit --dry-run`.
 
+- **Conversational spec resolution is a second door to the same gate.** `dialogue/engine.py`
+  turns the validator's **blocking + warning** findings (never INFO) plus each spec's unresolved
+  `open_questions` into plain-language questions (`agents/dialogue.py` may **group** related ones
+  and ask **one** clarifying follow-up), and translates prose answers into `Patch`es applied
+  through the same `EditPatchApplier` the edit path uses — so answers inherit human authority and
+  `HUMAN_PROVIDED` provenance. Three rules are load-bearing: answers apply **incrementally** (one
+  patch set + one patch-version bump per answered question, so abandoning a session keeps what was
+  already answered); the agenda is a **snapshot** taken at `start`, so parking a question cannot
+  grow it and sessions always terminate; and an answer that cannot be mapped is **parked** as a new
+  open question, never discarded and never fatal (contrast the edit path, which is atomic and
+  aborts). `validation_findings` is deliberately kept during a session — it is the agenda's source —
+  and cleared by `finish()` only for the specs that actually changed, which is what forces a
+  re-validate. Session state lives on `CompilationProject.dialogue_session`; the API is
+  `GET/POST/DELETE /projects/{id}/dialogue` plus `/dialogue/answer` and `/dialogue/skip`, and the
+  UI is the project page's **Resolve** tab.
+
 - **HTTP auth + time-saved metric.** The API uses local accounts (`api/auth.py`: scrypt +
   HMAC-signed session cookie, users under `<state-root>/users/`); project routes require
   `get_current_user`, projects carry `owner_id` (recorded for attribution). By default

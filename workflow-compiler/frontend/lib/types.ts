@@ -165,6 +165,7 @@ export interface CompilationProject {
   warnings: string[];
   validation_findings: Record<string, SpecFinding[]>;
   edit_log: EditRecord[];
+  dialogue_session: DialogueSession | null;
   stage: ProjectStage;
   created_at: string;
   updated_at: string;
@@ -228,6 +229,49 @@ export interface ProjectResponse {
   // slug → structural Mermaid source, built deterministically from the current
   // specs (a preview of what graph approval will build).
   diagrams: Record<string, string>;
+}
+
+// --- Conversational spec resolution ---------------------------------------
+
+export type QuestionStatus = "pending" | "answered" | "parked" | "skipped";
+
+export interface DialogueQuestion {
+  question_id: string;
+  slug: string;
+  text: string;
+  origin: "finding" | "open_question";
+  severity: Severity;
+  section: string | null;
+  covers: string[];
+  status: QuestionStatus;
+  answer: string | null;
+  followups: string[];
+  changes: string[];
+  parked_as: string | null;
+}
+
+export interface DialogueSession {
+  session_id: string;
+  questions: DialogueQuestion[];
+  cursor: number;
+  applied_specs: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DialogueResponse {
+  project: CompilationProject;
+  session: DialogueSession | null;
+  question: DialogueQuestion | null;
+  /** Exact text to show: the open clarifying follow-up, else the question. */
+  prompt: string | null;
+  answered: number;
+  total: number;
+  remaining: number;
+  changes: string[];
+  parked_as: string | null;
+  warnings: string[];
+  spec_markdown: Record<string, string>;
 }
 
 export interface CvpaPreviewResponse {

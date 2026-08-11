@@ -3,6 +3,7 @@
 
 import type {
   CvpaPreviewResponse,
+  DialogueResponse,
   EditPreviewResponse,
   Job,
   JobStartBody,
@@ -246,6 +247,33 @@ export const api = {
         accept_incomplete: opts.acceptIncomplete ?? false,
         allow_unconfirmed_references: opts.allowUnconfirmedReferences ?? false,
       }),
+    }),
+
+  // Conversational spec resolution. Each answer is one LLM round trip and is
+  // applied immediately, so these stay plain synchronous calls (no job needed).
+  getDialogue: (id: string) =>
+    request<DialogueResponse>(`/projects/${encodeURIComponent(id)}/dialogue`),
+
+  startDialogue: (id: string) =>
+    request<DialogueResponse>(`/projects/${encodeURIComponent(id)}/dialogue`, {
+      method: "POST",
+    }),
+
+  answerDialogue: (id: string, answer: string) =>
+    request<DialogueResponse>(
+      `/projects/${encodeURIComponent(id)}/dialogue/answer`,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify({ answer }) },
+    ),
+
+  skipDialogue: (id: string) =>
+    request<DialogueResponse>(
+      `/projects/${encodeURIComponent(id)}/dialogue/skip`,
+      { method: "POST" },
+    ),
+
+  endDialogue: (id: string) =>
+    request<DialogueResponse>(`/projects/${encodeURIComponent(id)}/dialogue`, {
+      method: "DELETE",
     }),
 
   // Background runs (validate/approve). Start returns immediately; the run keeps

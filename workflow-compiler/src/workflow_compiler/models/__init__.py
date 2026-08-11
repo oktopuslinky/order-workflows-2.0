@@ -14,6 +14,15 @@ from workflow_compiler.models.cvpa import (
     CVPANodeAssignment,
     CVPAPhaseSummary,
 )
+from workflow_compiler.models.dialogue import (
+    AnswerPlan,
+    DialogueQuestion,
+    DialogueSession,
+    DraftedQuestion,
+    DraftedQuestions,
+    QuestionOrigin,
+    QuestionStatus,
+)
 from workflow_compiler.models.edit import (
     EditPlan,
     EditRecord,
@@ -174,7 +183,14 @@ __all__ = [
     # mermaid
     "MermaidDiagram",
     # confidence
+    "AnswerPlan",
     "ConfidenceScores",
+    "DialogueQuestion",
+    "DialogueSession",
+    "DraftedQuestion",
+    "DraftedQuestions",
+    "QuestionOrigin",
+    "QuestionStatus",
     # enums
     "ApprovalStatus",
     "CVPAPhase",

@@ -95,6 +95,16 @@ picture before changing pipeline behavior.
   `graph_health_threshold`, default 0.9); the classic `approve` stays as the manual override, and
   the readiness checklist is absorbed into the spec's Open Questions section.
 
+- **Conversational spec resolution is a second door to the same gate.** `dialogue/engine.py` turns
+  **blocking + warning** findings (never INFO) plus unresolved `open_questions` into plain
+  questions (`agents/dialogue.py` may group related ones and ask **one** follow-up), and applies
+  prose answers as `Patch`es via the same `EditPatchApplier` the edit path uses. Answers apply
+  **incrementally** (one patch set + version bump each); the agenda is a **snapshot**, so sessions
+  always terminate; an unmappable answer is **parked** as a new open question rather than aborting
+  (unlike the atomic edit path). `validation_findings` survives the session and `finish()` clears
+  it only for changed specs, forcing a re-validate. State: `CompilationProject.dialogue_session`;
+  API `/projects/{id}/dialogue[/answer|/skip]`; UI: the project page's **Resolve** tab.
+
 ## Conventions
 
 - Pydantic v2 models everywhere; Python 3.12+; `mypy --strict` must pass (the pydantic mypy plugin

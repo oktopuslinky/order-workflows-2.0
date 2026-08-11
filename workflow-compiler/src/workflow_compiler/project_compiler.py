@@ -37,6 +37,7 @@ from workflow_compiler.compiler import (
     WorkflowCompiler,
     _emit,
 )
+from workflow_compiler.dialogue import AnswerOutcome, DialogueEngine
 from workflow_compiler.exceptions import (
     ApprovalError,
     CompilationError,
@@ -49,6 +50,7 @@ from workflow_compiler.models import (
     CompilationProject,
     CompilationStage,
     CrossReference,
+    DialogueSession,
     EditPlan,
     EditRecord,
     FactCategory,
@@ -133,6 +135,8 @@ class ProjectCompiler:
         )
         self._validator = SpecValidator(llm_provider, prompt_manager=self._prompts)
         self._threshold = graph_health_threshold
+        # Built lazily: most projects never open a dialogue session.
+        self._dialogue: DialogueEngine | None = None
 
     @classmethod
     def from_settings(
@@ -478,6 +482,89 @@ class ProjectCompiler:
         if persist:
             await self._projects.save(project)
         return project
+
+    # ------------------------------------------------------------------ #
+    # Stage 2a-bis: conversational spec resolution
+    # ------------------------------------------------------------------ #
+
+    @property
+    def dialogue(self) -> DialogueEngine:
+        """The conversational-resolution engine, built lazily on first use."""
+        if self._dialogue is None:
+            self._dialogue = DialogueEngine(self._llm, prompt_manager=self._prompts)
+        return self._dialogue
+
+    async def start_dialogue(
+        self, project_id: str, *, persist: bool = True
+    ) -> tuple[CompilationProject, DialogueSession]:
+        """Open a question-and-answer session over the project's unresolved items.
+
+        Replaces any session already open — the agenda is a snapshot, so a stale
+        one would ask about findings that no longer hold.
+        """
+        project = await self._projects.load(project_id)
+        started = time.perf_counter()
+        session = await self.dialogue.start(project)
+        self._record_timing(project, "dialogue:start", time.perf_counter() - started)
+        project.dialogue_session = session
+        project.touch()
+        if persist:
+            await self._projects.save(project)
+        return project, session
+
+    async def answer_dialogue(
+        self, project_id: str, answer: str, *, persist: bool = True
+    ) -> tuple[CompilationProject, DialogueSession, AnswerOutcome]:
+        """Apply one prose answer to the open session's current question."""
+        project = await self._projects.load(project_id)
+        session = self._require_session(project)
+        started = time.perf_counter()
+        outcome = await self.dialogue.answer(project, session, answer)
+        self._record_timing(project, "dialogue:answer", time.perf_counter() - started)
+        if session.complete:
+            self.dialogue.finish(project, session)
+        project.dialogue_session = session
+        project.touch()
+        if persist:
+            await self._projects.save(project)
+        return project, session, outcome
+
+    async def skip_dialogue(
+        self, project_id: str, *, persist: bool = True
+    ) -> tuple[CompilationProject, DialogueSession]:
+        """Pass on the current question without changing the spec."""
+        project = await self._projects.load(project_id)
+        session = self._require_session(project)
+        self.dialogue.skip(session)
+        if session.complete:
+            self.dialogue.finish(project, session)
+        project.dialogue_session = session
+        project.touch()
+        if persist:
+            await self._projects.save(project)
+        return project, session
+
+    async def end_dialogue(
+        self, project_id: str, *, persist: bool = True
+    ) -> CompilationProject:
+        """Close the open session, keeping every change already applied."""
+        project = await self._projects.load(project_id)
+        session = self._require_session(project)
+        self.dialogue.finish(project, session)
+        project.dialogue_session = None
+        project.touch()
+        if persist:
+            await self._projects.save(project)
+        return project
+
+    @staticmethod
+    def _require_session(project: CompilationProject) -> DialogueSession:
+        """Return the open session, or explain that there is none."""
+        if project.dialogue_session is None:
+            raise CompilationError(
+                "No dialogue session is open for this project. Start one first."
+            )
+        return project.dialogue_session
 
     # ------------------------------------------------------------------ #
     # Stage 2b: edit requests against compiled workflows

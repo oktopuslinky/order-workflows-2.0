@@ -133,10 +133,33 @@ class ProjectCompileRequest(BaseModel):
     )
 
 
+class LocalModel(BaseModel):
+    """One model the gateway advertises, with its probed health if known."""
+
+    id: str = Field(..., description="Model id to pass as `model`.")
+    available: bool | None = Field(
+        default=None,
+        description="True/False once probed; None when health was not checked.",
+    )
+    detail: str | None = Field(
+        default=None, description="Why the model is unavailable, when it is."
+    )
+
+
 class LocalModelList(BaseModel):
-    """Response listing the models the local eGPU gateway exposes."""
+    """Response listing the models the local eGPU gateway exposes.
+
+    The gateway advertises every configured model whether or not its inference
+    server is actually up, so an id appearing here is not a promise that it
+    serves. ``entries`` carries the health verdict when ``probe=true`` was asked
+    for; ``models`` stays the plain advertised list it has always been.
+    """
 
     models: list[str] = Field(default_factory=list)
+    entries: list[LocalModel] = Field(default_factory=list)
+    probed: bool = Field(
+        default=False, description="Whether health was actually checked."
+    )
 
 
 class SpecUpdateRequest(BaseModel):

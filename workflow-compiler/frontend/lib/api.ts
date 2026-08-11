@@ -136,8 +136,12 @@ export const api = {
 
   metricsSummary: () => request<MetricsSummary>("/metrics/summary"),
 
-  listLocalModels: () =>
-    request<LocalModelList>("/providers/local/models"),
+  // `probe` costs a one-token generation per model on a single-GPU box, so it
+  // is only ever sent when the user explicitly asks to check availability.
+  listLocalModels: (probe = false) =>
+    request<LocalModelList>(
+      `/providers/local/models${probe ? "?probe=true" : ""}`,
+    ),
 
   getProject: (id: string) =>
     request<ProjectResponse>(`/projects/${encodeURIComponent(id)}`),

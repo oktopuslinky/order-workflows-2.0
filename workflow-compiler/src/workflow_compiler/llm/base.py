@@ -43,6 +43,13 @@ _CORRECTION_INSTRUCTION = (
     "The previous response was not valid against the schema. Error:\n{error}\n"
     "Return corrected JSON only."
 )
+#: Re-ask used when the model returned nothing at all. Deliberately distinct from
+#: :data:`_CORRECTION_INSTRUCTION`: there is no previous output to correct, so
+#: quoting a parse error just puts an error message where the schema should be.
+_EMPTY_RESPONSE_INSTRUCTION = (
+    "The previous response was empty — no content was returned. "
+    "Do not explain; emit the JSON value for the schema above and nothing else."
+)
 
 
 class HttpChatProvider(BaseLLMProvider):
@@ -120,13 +127,30 @@ class HttpChatProvider(BaseLLMProvider):
         messages = self._messages(prompt, system)
         messages.append(ChatMessage.user(_STRUCTURED_INSTRUCTION.format(schema=schema_text)))
 
+        attempts = self._config.structured_retries + 1
         last_error: Exception | None = None
-        for attempt in range(self._config.structured_retries + 1):
-            if last_error is not None:
-                messages.append(
-                    ChatMessage.user(_CORRECTION_INSTRUCTION.format(error=last_error))
-                )
+        empty_responses = 0
+        for attempt in range(attempts):
             response = await self.chat(messages, temperature=temperature, json_mode=True)
+            # An empty completion is a distinct failure from malformed JSON, and
+            # frequent on reasoning models that spend the whole budget in their
+            # thinking channel. Treating it as a schema error re-asks with a
+            # parse error quoted back and an empty assistant turn appended —
+            # neither of which tells the model anything. Ask again cleanly.
+            if not response.text.strip():
+                empty_responses += 1
+                last_error = ProviderResponseError(
+                    f"{self.name} returned an empty completion "
+                    f"(model={self._config.model})."
+                )
+                self._log.warning(
+                    "Empty completion, no content returned (attempt {}/{}, model {}).",
+                    attempt + 1,
+                    attempts,
+                    self._config.model,
+                )
+                messages.append(ChatMessage.user(_EMPTY_RESPONSE_INSTRUCTION))
+                continue
             try:
                 payload = extract_json(response.text)
                 return schema.model_validate(payload)
@@ -135,14 +159,26 @@ class HttpChatProvider(BaseLLMProvider):
                 self._log.warning(
                     "Structured output validation failed (attempt {}/{}): {}",
                     attempt + 1,
-                    self._config.structured_retries + 1,
+                    attempts,
                     exc,
                 )
                 messages.append(ChatMessage.assistant(response.text))
+                messages.append(
+                    ChatMessage.user(_CORRECTION_INSTRUCTION.format(error=exc))
+                )
 
+        # Name the empty-completion case in the terminal error too: "returned
+        # nothing every time" and "returned JSON that never fit the schema" call
+        # for different fixes (model/serving config vs. prompt or schema).
+        if empty_responses == attempts:
+            raise ProviderResponseError(
+                f"{self.name} returned an empty completion on all {attempts} attempt(s) "
+                f"(model={self._config.model}). The model produced no content — check "
+                f"that the model is serving and that its output budget is not being "
+                f"consumed entirely by reasoning tokens."
+            )
         raise SchemaValidationError(
-            f"Structured output failed validation after "
-            f"{self._config.structured_retries + 1} attempt(s): {last_error}"
+            f"Structured output failed validation after {attempts} attempt(s): {last_error}"
         )
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
@@ -173,13 +209,29 @@ class HttpChatProvider(BaseLLMProvider):
         )
         return self._parse_response(data)
 
+    def _timeout_message(self, method: str, endpoint: str, exc: Exception) -> str:
+        """Describe a transport timeout in terms the caller can act on.
+
+        ``httpx`` timeout exceptions usually stringify to ``''``, which produced
+        the bare ``"local request timed out: "``. Name the limit that was hit and
+        the model it was hit for, so the fix (raise the timeout, or pick a faster
+        model) is readable straight off the error.
+        """
+        detail = str(exc).strip() or type(exc).__name__
+        return (
+            f"{self.name} request timed out after {self._config.timeout:g}s "
+            f"({method} {endpoint}, model={self._config.model}): {detail}. "
+            f"Raise the per-request timeout (WORKFLOW_COMPILER_LLM_TIMEOUT, or "
+            f"--timeout on the CLI) or choose a faster model."
+        )
+
     async def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         """POST JSON to ``endpoint`` and return the decoded body."""
         client = self._ensure_client()
         try:
             response = await client.post(endpoint, json=payload, headers=self._auth_headers())
         except httpx.TimeoutException as exc:
-            raise ProviderTimeoutError(f"{self.name} request timed out: {exc}") from exc
+            raise ProviderTimeoutError(self._timeout_message("POST", endpoint, exc)) from exc
         except httpx.TransportError as exc:
             raise ProviderConnectionError(f"{self.name} transport error: {exc}") from exc
 
@@ -191,7 +243,7 @@ class HttpChatProvider(BaseLLMProvider):
         try:
             response = await client.get(endpoint, headers=self._auth_headers())
         except httpx.TimeoutException as exc:
-            raise ProviderTimeoutError(f"{self.name} request timed out: {exc}") from exc
+            raise ProviderTimeoutError(self._timeout_message("GET", endpoint, exc)) from exc
         except httpx.TransportError as exc:
             raise ProviderConnectionError(f"{self.name} transport error: {exc}") from exc
 

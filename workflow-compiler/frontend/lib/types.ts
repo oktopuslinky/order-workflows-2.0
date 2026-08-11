@@ -35,8 +35,22 @@ export type ReviewSeverity =
   | "critical"
   | string;
 
+export interface LocalModel {
+  id: string;
+  /** null until health has actually been probed. */
+  available: boolean | null;
+  detail: string | null;
+}
+
+/**
+ * The gateway advertises every configured model whether or not its inference
+ * server is up, so `models` is a list of names, not a promise that they serve.
+ * `entries` carries health once a probe has run.
+ */
 export interface LocalModelList {
   models: string[];
+  entries: LocalModel[];
+  probed: boolean;
 }
 
 export interface SpecFinding {

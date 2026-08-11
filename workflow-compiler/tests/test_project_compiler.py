@@ -21,7 +21,7 @@ from workflow_compiler.agents.segmentation import (
     WorkflowsDiscovery,
     WorkflowSegmentationAgent,
 )
-from workflow_compiler.compiler import ReviewConfig
+from workflow_compiler.compiler import ProgressEvent, ReviewConfig
 from workflow_compiler.exceptions import ApprovalError
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import (
@@ -192,6 +192,38 @@ async def test_compile_document_stops_at_spec_gate(tmp_path) -> None:
     names = sorted(p.name for p in paths)
     assert names == ["account-provisioning.md", "customer-onboarding.md", "overview.md"]
     assert "How to proceed" in (tmp_path / "overview.md").read_text(encoding="utf-8")
+
+
+async def test_extraction_reports_nested_progress_per_workflow() -> None:
+    """Fact extraction is the longest stage; it must not run silently.
+
+    It used to be handed no progress sink at all, so the minutes it spends per
+    workflow emitted nothing — indistinguishable from a hang. Its inner steps
+    now arrive as nested events labelled with the workflow they belong to.
+    """
+    provider = MockProvider(structured=_front_end_queue())
+    compiler = _compiler(provider)
+
+    events: list[ProgressEvent] = []
+    await compiler.compile_document(_DOCUMENT, progress=events.append)
+
+    # The outer, per-workflow steps still look exactly as they did.
+    outer = [e.name for e in events if e.phase == "agent" and e.status == "start"]
+    assert outer == [
+        "workflow-segmentation",
+        "extract:customer-onboarding",
+        "extract:account-provisioning",
+    ]
+
+    # And each extraction now reports its own inner agents, scoped by slug.
+    nested = [e.name for e in events if e.phase == "review-pass" and e.status == "start"]
+    assert "customer-onboarding:workflow-discovery" in nested
+    assert "customer-onboarding:fact-extraction" in nested
+    assert "account-provisioning:workflow-discovery" in nested
+    assert "account-provisioning:fact-extraction" in nested
+
+    # Nested events are never mistaken for top-level ones.
+    assert all(e.phase != "agent" for e in events if ":" in e.name and "extract:" not in e.name)
 
 
 async def test_validate_approve_and_compile_each_workflow(tmp_path) -> None:

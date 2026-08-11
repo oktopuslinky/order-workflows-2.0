@@ -13,6 +13,13 @@ from workflow_compiler.api.app import app
 from workflow_compiler.api.auth import get_user_store
 from workflow_compiler.api.dependencies import get_compiler, get_project_compiler
 from workflow_compiler.compiler import ReviewConfig
+from workflow_compiler.exceptions import (
+    ProviderConnectionError,
+    ProviderHTTPError,
+    ProviderResponseError,
+    ProviderTimeoutError,
+    SchemaValidationError,
+)
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import CompilationProject
 from workflow_compiler.storage import InMemoryStateStore
@@ -60,6 +67,44 @@ def client() -> TestClient:
         )
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (ProviderHTTPError(502, "Inference server unreachable"), 502),
+        (ProviderConnectionError("gateway refused the connection"), 502),
+        (ProviderResponseError("response choice had no content"), 502),
+        (SchemaValidationError("failed validation after 2 attempts"), 502),
+        (ProviderTimeoutError("request timed out after 300s"), 504),
+    ],
+)
+def test_compile_surfaces_provider_failure_as_bad_gateway(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    expected: int,
+) -> None:
+    """An upstream model failing is not this server failing.
+
+    A dead gateway model reported as 500 reads as a compiler bug and sends
+    debugging in the wrong direction; 502/504 says "upstream, and retryable".
+    """
+    compiler = app.dependency_overrides[get_project_compiler]()
+
+    async def boom(*args: object, **kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(compiler, "compile_document", boom)
+
+    upload = client.post(
+        "/projects/compile-upload",
+        files={"file": ("doc.md", _DOCUMENT.encode(), "text/markdown")},
+    )
+    assert upload.status_code == expected
+
+    inline = client.post("/projects/compile", json={"document_text": _DOCUMENT})
+    assert inline.status_code == expected
 
 
 def test_project_compile_returns_specs(client: TestClient) -> None:

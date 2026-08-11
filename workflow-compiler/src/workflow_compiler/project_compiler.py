@@ -22,7 +22,7 @@ import hashlib
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -108,6 +108,30 @@ OVERVIEW_FILENAME = "overview.md"
 #: plus the graph-review outcome. Findings in these sections are *recomputed* on
 #: every validate/approve, so a stale one can never survive a fixed spec.
 GATE_SECTIONS = frozenset({"Segmentation", "Open Questions", "Graph review"})
+
+
+def _nested_progress(
+    progress: ProgressCallback | None, label: str
+) -> ProgressCallback | None:
+    """Relay a sub-pipeline's events as nested steps of ``label``.
+
+    Fact extraction runs a pipeline of its own (discovery, extraction, and the
+    review passes inside each) and is by far the longest stage — minutes per
+    workflow. Handed no sink it reports nothing at all, which from the outside is
+    indistinguishable from a hang.
+
+    Events are re-emitted under the ``review-pass`` phase that consumers already
+    render as nested, and prefixed with ``label`` so consecutive workflows stay
+    tellable apart. The inner index/total describe the inner pipeline, which is
+    exactly what a nested step should show.
+    """
+    if progress is None:
+        return None
+
+    def relay(event: ProgressEvent) -> None:
+        _emit(progress, replace(event, phase="review-pass", name=f"{label}:{event.name}"))
+
+    return relay
 
 
 class ProjectCompiler:
@@ -221,7 +245,9 @@ class ProjectCompiler:
             ))
             seg_started = time.perf_counter()
             state = await self._compiler.extract_facts(
-                segment.text, project_id=project.project_id
+                segment.text,
+                project_id=project.project_id,
+                progress=_nested_progress(progress, segment.slug),
             )
             project.specs.append(self._build_spec(segment.slug, state))
             elapsed = time.perf_counter() - seg_started

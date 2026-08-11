@@ -89,6 +89,7 @@ from workflow_compiler.api.schemas import (
     EditPreviewResponse,
     JobResponse,
     JobStartRequest,
+    LocalModel,
     LocalModelList,
     LoginRequest,
     MetricsSummary,
@@ -117,6 +118,7 @@ from workflow_compiler.exceptions import (
     ApprovalError,
     CompilationError,
     EditPreviewStaleError,
+    LLMProviderError,
     ProviderConnectionError,
     ProviderTimeoutError,
     StateNotFoundError,
@@ -124,6 +126,7 @@ from workflow_compiler.exceptions import (
     WorkflowCompilerError,
 )
 from workflow_compiler.ingestion import DocumentParserFactory
+from workflow_compiler.llm.types import ChatMessage
 from workflow_compiler.metrics import compute_time_saved
 from workflow_compiler.models import (
     CompilationProject,
@@ -137,6 +140,11 @@ from workflow_compiler.spec import render_spec
 from workflow_compiler.storage.user_store import UserStore
 
 logger = logging.getLogger(__name__)
+
+#: Per-model deadline for a health probe. Generous enough that a cold but live
+#: model still answers a one-token request, short enough that four dead ones do
+#: not hold the picker open — they fail fast with HTTP 502 anyway.
+_PROBE_TIMEOUT = 30.0
 
 
 def _check_owner(project: CompilationProject, user: User) -> None:
@@ -195,6 +203,14 @@ async def _guard[T](coro: Awaitable[T]) -> T:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except CompilationError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    # The upstream model failing is not this server failing. A dead gateway
+    # model, an expired key or an unparseable completion are all bad-gateway
+    # conditions: 5xx-but-not-ours, and retryable by the caller. Reported as 500
+    # they read as a compiler bug and send debugging in the wrong direction.
+    except ProviderTimeoutError as exc:
+        raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, str(exc)) from exc
+    except LLMProviderError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     except WorkflowCompilerError as exc:  # pragma: no cover - defensive catch-all
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc)) from exc
 
@@ -311,8 +327,18 @@ def create_app() -> FastAPI:
         return SettingsDefaults(baseline_hours=dict(get_settings().baseline_hours))
 
     @app.get("/providers/local/models", response_model=LocalModelList, tags=["providers"])
-    async def local_models() -> LocalModelList:
-        """List the models the local eGPU gateway currently exposes (for the picker)."""
+    async def local_models(probe: bool = False) -> LocalModelList:
+        """List the models the local eGPU gateway currently exposes (for the picker).
+
+        The gateway advertises every configured model regardless of whether its
+        inference server is up, so the picker can otherwise offer models that
+        answer every request with HTTP 502. ``probe=true`` checks each one.
+
+        Probing is opt-in and **serial** on purpose: the eGPU is a single card
+        with no request queueing, so parallel probes — or probes fired
+        automatically on page load — inflate latency for anything else in flight
+        and can time out a running compile.
+        """
         provider = get_local_provider()
         try:
             ids = await provider.list_models()  # type: ignore[attr-defined]
@@ -322,7 +348,27 @@ def create_app() -> FastAPI:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
         finally:
             await provider.aclose()  # type: ignore[attr-defined]
-        return LocalModelList(models=ids)
+
+        if not probe:
+            return LocalModelList(
+                models=ids, entries=[LocalModel(id=i) for i in ids], probed=False
+            )
+
+        entries: list[LocalModel] = []
+        for model_id in ids:
+            checked = get_local_provider(model=model_id, timeout=_PROBE_TIMEOUT)
+            try:
+                await checked.chat(  # type: ignore[attr-defined]
+                    [ChatMessage.user("ping")], max_tokens=1
+                )
+                entries.append(LocalModel(id=model_id, available=True))
+            except LLMProviderError as exc:
+                entries.append(
+                    LocalModel(id=model_id, available=False, detail=str(exc)[:200])
+                )
+            finally:
+                await checked.aclose()  # type: ignore[attr-defined]
+        return LocalModelList(models=ids, entries=entries, probed=True)
 
     @app.post("/approve", response_model=WorkflowStateResponse, tags=["workflows"])
     async def approve_workflow(

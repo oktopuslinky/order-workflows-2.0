@@ -16,7 +16,18 @@ import type { DialogueResponse } from "@/lib/types";
  * always the exact text to show, so the client never has to work out whether it
  * is displaying a question or a follow-up.
  */
-export function DialoguePanel({ projectId }: { projectId: string }) {
+export function DialoguePanel({
+  projectId,
+  onSpecUpdated,
+}: {
+  projectId: string;
+  /**
+   * Called with the freshly rendered spec whenever an answer changed it, so the
+   * workspace can adopt it. Every response carries `spec_markdown`, so the
+   * caller never has to wait for the project refetch to land.
+   */
+  onSpecUpdated?: (specMarkdown: Record<string, string>) => void;
+}) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +52,16 @@ export function DialoguePanel({ projectId }: { projectId: string }) {
     setDraft("");
     setError(null);
     refreshProject();
+    // Refetching the project is not enough: the workspace keeps the spec in
+    // local editor buffers that only re-seed when the project id changes. Left
+    // alone they would still hold the pre-dialogue text — the Spec tab would
+    // show stale markdown, and Approve (which posts those buffers) would write
+    // them back over everything the dialogue just applied. Hand over the
+    // server's own rendering instead. Only on a real change: a skip, or merely
+    // opening a session, must not disturb what the user is editing.
+    if (data.changes.length > 0 || data.parked_as) {
+      onSpecUpdated?.(data.spec_markdown);
+    }
   };
 
   const fail = (e: unknown) =>

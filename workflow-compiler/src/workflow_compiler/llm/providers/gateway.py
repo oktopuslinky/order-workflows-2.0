@@ -45,6 +45,17 @@ class GatewaySessionProvider(OpenAICompatibleProvider):
     EMAIL_ENV: ClassVar[str] = "LLM_GATEWAY_EMAIL"
     PASSWORD_ENV: ClassVar[str] = "LLM_GATEWAY_PASSWORD"
     SESSION_COOKIE: ClassVar[str] = "openserver_session"
+    # NOTE: ``{"chat_template_kwargs": {"enable_thinking": False}}`` makes this
+    # gateway ~13x faster (945s -> 71s on examples/multi_workflow.md) but is NOT
+    # enabled, because that path is off-spec here and costs correctness: the
+    # answer comes back in ``reasoning_content`` instead of ``content``, and the
+    # extraction measurably degrades — compensation activities ("rollback
+    # provisioning", "deconfigure account") are dropped, and state transitions
+    # are hallucinated ("active -> upgrade_in_progress", absent from the input).
+    # Dropping compensations would silently corrupt the generated saga rollback.
+    # Prompt-level toggles ("detailed thinking off", "/no_think") are ignored by
+    # this server, and ``reasoning_effort`` accepts only low/medium/high.
+    EXTRA_BODY: ClassVar[dict[str, Any]] = {}
     #: Placeholder held in config until the gateway's default model is resolved.
     _UNRESOLVED_MODEL: ClassVar[str] = "__gateway_default__"
     #: Refresh the session this many seconds before it actually expires.
@@ -70,6 +81,36 @@ class GatewaySessionProvider(OpenAICompatibleProvider):
         super().__init__(model=model or self._UNRESOLVED_MODEL, **kwargs)
 
     # -- auth ---------------------------------------------------------------
+
+    def _resolve_content(self, message: dict[str, Any]) -> str | None:
+        """Promote the reasoning channel when the answer was routed into it.
+
+        With ``enable_thinking=false`` this gateway returns the requested answer
+        as ``reasoning_content`` and leaves ``content`` an empty string — the
+        source of "No JSON object or array found in response: ''". Falling back
+        recovers it.
+
+        Deliberately *not* done in the base class: when thinking is on, the
+        reasoning channel holds chain-of-thought prose, and promoting that would
+        feed commentary to the structured parser instead of letting it retry. So
+        only fall back when we asked for thinking to be off.
+        """
+        content = super()._resolve_content(message)
+        if content is not None and content.strip():
+            return content
+        if not self._thinking_disabled():
+            return content
+        for key in ("reasoning_content", "reasoning"):
+            fallback = message.get(key)
+            if fallback is not None and str(fallback).strip():
+                return str(fallback)
+        return content
+
+    @classmethod
+    def _thinking_disabled(cls) -> bool:
+        """True when this provider asks the gateway to skip chain-of-thought."""
+        kwargs = cls.EXTRA_BODY.get("chat_template_kwargs")
+        return isinstance(kwargs, dict) and kwargs.get("enable_thinking") is False
 
     def _origin(self) -> str:
         """Return ``scheme://host:port`` (auth routes live at the root, not /v1)."""

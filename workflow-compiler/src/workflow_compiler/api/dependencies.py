@@ -36,12 +36,19 @@ def get_project_compiler() -> ProjectCompiler:
     return ProjectCompiler.from_settings()
 
 
-def get_local_provider() -> BaseLLMProvider:
-    """Build a local eGPU gateway provider (for model discovery)."""
+def get_local_provider(
+    *, model: str | None = None, timeout: float | None = None
+) -> BaseLLMProvider:
+    """Build a local eGPU gateway provider (for model discovery and health probes).
+
+    ``model``/``timeout`` pin a specific advertised model and a short deadline,
+    which is what probing one model's health needs; both default to the
+    configured values.
+    """
     from workflow_compiler.config import get_settings
     from workflow_compiler.llm.factory import build_local_provider
 
-    return build_local_provider(get_settings())
+    return build_local_provider(get_settings(), model_override=model, timeout=timeout)
 
 
 #: Sentinel ``model`` value routing a compile through the hosted NVIDIA Nemotron

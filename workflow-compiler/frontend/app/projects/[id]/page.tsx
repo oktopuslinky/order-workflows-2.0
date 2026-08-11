@@ -239,6 +239,15 @@ function Workspace({
     setBuffers({ ...resp.spec_markdown });
   }
 
+  // A dialogue answer patches the spec server-side, outside the editor. Adopt
+  // the server's rendering as the new buffer content, and re-arm the gate: the
+  // spec no longer matches the last validate, so Approve has to wait for a
+  // fresh one (§ the dialogue's own docs say to re-validate afterwards).
+  function adoptDialogueSpec(specMarkdown: Record<string, string>) {
+    setBuffers({ ...specMarkdown });
+    setDirty(true);
+  }
+
   const save = useMutation({
     mutationFn: () => api.saveSpec(proj.project_id, buffers),
     onSuccess: (resp) => {
@@ -529,7 +538,10 @@ function Workspace({
               The compiler asks about what it could not settle from the
               document. Answer in plain language.
             </p>
-            <DialoguePanel projectId={proj.project_id} />
+            <DialoguePanel
+              projectId={proj.project_id}
+              onSpecUpdated={adoptDialogueSpec}
+            />
           </div>
         </div>
       ) : tab === "results" ? (

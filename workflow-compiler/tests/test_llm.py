@@ -15,6 +15,7 @@ from workflow_compiler.exceptions import (
     LLMProviderError,
     ProviderConnectionError,
     ProviderHTTPError,
+    ProviderResponseError,
     SchemaValidationError,
 )
 from workflow_compiler.interfaces.llm import BaseLLMProvider
@@ -187,6 +188,68 @@ async def test_nemotron_non_retryable_status_raises_immediately() -> None:
 async def test_nemotron_structured_invalid_then_raises() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_chat_response("not json at all"))
+
+    provider = _make_nemotron(handler)
+    with pytest.raises(SchemaValidationError):
+        await provider.structured("extract", _Person)
+    await provider.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Empty completions
+#
+# Reasoning models intermittently return no content at all. That is a different
+# failure from malformed JSON and is reported as such, so the logs point at the
+# serving setup rather than at the prompt or the schema.
+# ---------------------------------------------------------------------------
+
+
+async def test_structured_recovers_from_an_empty_completion() -> None:
+    """An empty first response is re-asked and the retry's answer is accepted."""
+    sent: list[list[dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content)["messages"])
+        if len(sent) == 1:
+            return httpx.Response(200, json=_chat_response(""))
+        return httpx.Response(200, json=_chat_response('{"name": "Ada", "age": 36}'))
+
+    provider = _make_nemotron(handler)
+    person = await provider.structured("extract", _Person)
+    await provider.aclose()
+
+    assert person == _Person(name="Ada", age=36)
+    assert len(sent) == 2
+    # No empty assistant turn is fed back — there is nothing there to correct.
+    assert all(m["content"].strip() for m in sent[1])
+    assert "empty" in sent[1][-1]["content"].lower()
+
+
+async def test_structured_all_empty_raises_provider_response_error() -> None:
+    """Nothing but empty completions is a provider fault, not a schema fault."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_chat_response("   "))
+
+    provider = _make_nemotron(handler)
+    with pytest.raises(ProviderResponseError) as excinfo:
+        await provider.structured("extract", _Person)
+    await provider.aclose()
+
+    message = str(excinfo.value)
+    assert "empty completion" in message
+    assert not isinstance(excinfo.value, SchemaValidationError)
+
+
+async def test_structured_mixed_empty_and_invalid_reports_schema_failure() -> None:
+    """One empty then real-but-wrong output still ends as a schema failure."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(200, json=_chat_response(""))
+        return httpx.Response(200, json=_chat_response('{"name": "Ada"}'))
 
     provider = _make_nemotron(handler)
     with pytest.raises(SchemaValidationError):

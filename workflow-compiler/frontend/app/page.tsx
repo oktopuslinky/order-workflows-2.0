@@ -35,6 +35,30 @@ export default function HomePage() {
     retry: false,
   });
 
+  // Health is probed only on request: the eGPU is a single card with no
+  // queueing, so probing every model on page load would compete with — and can
+  // time out — a compile someone else has running.
+  const checkModels = useMutation({
+    mutationFn: () => api.listLocalModels(true),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["local-models"], data);
+      // Never leave a model selected that we just learned is dead.
+      if (data.entries.some((m) => m.id === model && m.available === false)) {
+        setModel("");
+      }
+    },
+  });
+
+  const modelEntries =
+    localModels.data?.entries ??
+    (localModels.data?.models ?? []).map((id) => ({
+      id,
+      available: null,
+      detail: null,
+    }));
+  const probed = localModels.data?.probed ?? false;
+  const deadCount = modelEntries.filter((m) => m.available === false).length;
+
   const localModel = provider === "nemotron" ? undefined : model || undefined;
   const compile = useMutation({
     mutationFn: () =>
@@ -165,13 +189,41 @@ export default function HomePage() {
                 className="flex-1 cursor-pointer rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] outline-none focus:border-[var(--accent)]"
               >
                 <option value="">Spark default</option>
-                {localModels.data?.models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
+                {modelEntries.map((m) => (
+                  <option
+                    key={m.id}
+                    value={m.id}
+                    disabled={m.available === false}
+                    title={m.detail ?? undefined}
+                  >
+                    {m.id}
+                    {m.available === false ? " — unavailable" : ""}
                   </option>
                 ))}
               </select>
+              <button
+                type="button"
+                onClick={() => checkModels.mutate()}
+                disabled={checkModels.isPending}
+                title="Ask the gateway which of these models actually serve"
+                className="cursor-pointer rounded-md border border-[var(--border-strong)] px-2 py-1 text-xs text-[var(--muted)] transition hover:text-[var(--ink)] disabled:cursor-default disabled:opacity-60"
+              >
+                {checkModels.isPending ? "Checking…" : "Check"}
+              </button>
             </div>
+          )}
+          {provider !== "nemotron" && !probed && !localModels.error && (
+            <p className="mt-1 text-xs text-[var(--faint)]">
+              The gateway advertises these models whether or not they are
+              serving. Use <span className="font-medium">Check</span> to see
+              which ones actually answer.
+            </p>
+          )}
+          {provider !== "nemotron" && probed && deadCount > 0 && (
+            <p className="mt-1 text-xs text-[var(--faint)]">
+              {deadCount} of {modelEntries.length} advertised models are not
+              serving and cannot be selected.
+            </p>
           )}
           {provider !== "nemotron" && localModels.error && (
             <p className="mt-1 text-xs text-[var(--faint)]">

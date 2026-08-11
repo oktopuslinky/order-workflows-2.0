@@ -32,6 +32,9 @@ class OpenAICompatibleProvider(HttpChatProvider):
     DEFAULT_MODEL: ClassVar[str | None] = None
     API_KEY_ENV: ClassVar[str | None] = None
     DEFAULT_SYSTEM_PREAMBLE: ClassVar[str | None] = None
+    #: Extra top-level fields merged into every chat payload. Vendor-specific
+    #: knobs live here so subclasses can opt in without a new transport.
+    EXTRA_BODY: ClassVar[dict[str, Any]] = {}
 
     # Endpoints are relative (no leading slash) so they join onto a base_url
     # that ends in a path segment such as ``/v1/``.
@@ -146,7 +149,21 @@ class OpenAICompatibleProvider(HttpChatProvider):
             payload["max_tokens"] = resolved_max
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
+        # Server-specific knobs (e.g. the gateway's reasoning toggle). Set last so
+        # a provider can override a default, but never the messages themselves.
+        for key, value in self.EXTRA_BODY.items():
+            payload.setdefault(key, value)
         return payload
+
+    def _resolve_content(self, message: dict[str, Any]) -> str | None:
+        """Return the assistant text, or ``None`` when the choice carried none.
+
+        Base behaviour is the plain OpenAI contract: the answer is ``content``.
+        Servers that route the answer elsewhere override this — see
+        :class:`~workflow_compiler.llm.providers.gateway.GatewaySessionProvider`.
+        """
+        content = message.get("content")
+        return None if content is None else str(content)
 
     def _parse_response(self, data: dict[str, Any]) -> LLMResponse:
         choices = data.get("choices")
@@ -154,7 +171,7 @@ class OpenAICompatibleProvider(HttpChatProvider):
             raise ProviderResponseError(f"{self.name} response contained no choices.")
         first = choices[0]
         message = first.get("message") or {}
-        content = message.get("content")
+        content = self._resolve_content(message)
         if content is None:
             raise ProviderResponseError(f"{self.name} response choice had no content.")
 

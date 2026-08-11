@@ -116,6 +116,12 @@ class ProjectCompileRequest(BaseModel):
 
     document_text: str = Field(..., description="The raw business workflow document.")
     persist: bool = Field(default=True, description="Persist the resulting project.")
+    provider: str | None = Field(
+        default=None,
+        description="Optional LLM provider for this compile: 'local' (eGPU gateway "
+        "only), 'nemotron' (hosted NVIDIA API), or 'local-fallback' (gateway with "
+        "automatic Nemotron fallback). Defaults to the server's configured provider.",
+    )
     model: str | None = Field(
         default=None,
         description="Optional local gateway model id for this compile (else the server default).",

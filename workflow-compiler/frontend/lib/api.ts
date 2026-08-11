@@ -146,6 +146,7 @@ export const api = {
     persist = true,
     model?: string,
     nickname?: string,
+    provider?: string,
   ) =>
     request<ProjectResponse>("/projects/compile", {
       method: "POST",
@@ -153,6 +154,7 @@ export const api = {
       body: JSON.stringify({
         document_text: documentText,
         persist,
+        provider: provider || null,
         model: model || null,
         nickname: nickname || null,
       }),
@@ -163,10 +165,12 @@ export const api = {
     persist = true,
     model?: string,
     nickname?: string,
+    provider?: string,
   ) => {
     const form = new FormData();
     form.append("file", file);
     form.append("persist", String(persist));
+    if (provider) form.append("provider", provider);
     if (model) form.append("model", model);
     if (nickname) form.append("nickname", nickname);
     return request<ProjectResponse>("/projects/compile-upload", {

@@ -61,10 +61,12 @@ from workflow_compiler.api.auth import (
     verify_password,
 )
 from workflow_compiler.api.dependencies import (
+    SELECTABLE_PROVIDERS,
     get_compiler,
     get_local_provider,
     get_project_compiler,
     project_compiler_for_model,
+    project_compiler_for_selection,
 )
 from workflow_compiler.api.jobs import Job, JobConflictError, JobManager
 from workflow_compiler.api.schemas import (
@@ -372,6 +374,27 @@ def create_app() -> FastAPI:
             diagrams=await compiler.build_diagrams(project),
         )
 
+    def _select_compiler(
+        provider: str | None, model: str | None, default: ProjectCompiler
+    ) -> ProjectCompiler:
+        """Resolve the per-compile provider/model selection to a compiler.
+
+        An explicit ``provider`` wins; a bare ``model`` keeps the legacy sentinel
+        routing (``nemotron-cloud`` vs. local-with-fallback); neither uses the
+        server's configured default.
+        """
+        if provider:
+            if provider not in SELECTABLE_PROVIDERS:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    f"Unknown provider '{provider}'. "
+                    f"Available: {', '.join(SELECTABLE_PROVIDERS)}.",
+                )
+            return project_compiler_for_selection(provider, model)
+        if model:
+            return project_compiler_for_model(model)
+        return default
+
     @app.post("/projects/compile", response_model=ProjectResponse, tags=["projects"])
     async def compile_project(
         request: ProjectCompileRequest,
@@ -379,8 +402,7 @@ def create_app() -> FastAPI:
         user: User = Depends(get_current_user),
     ) -> ProjectResponse:
         """Segment a document into per-workflow specs (stops at the spec gate)."""
-        if request.model:
-            compiler = project_compiler_for_model(request.model)
+        compiler = _select_compiler(request.provider, request.model, compiler)
         project = await _guard(
             compiler.compile_document(request.document_text, persist=request.persist)
         )
@@ -397,6 +419,7 @@ def create_app() -> FastAPI:
     async def compile_project_upload(
         file: UploadFile = File(..., description="A .docx/.pdf/.md/.html/.txt document."),
         persist: bool = Form(default=True),
+        provider: str | None = Form(default=None),
         model: str | None = Form(default=None),
         nickname: str | None = Form(default=None),
         compiler: ProjectCompiler = Depends(get_project_compiler),
@@ -412,8 +435,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
         except WorkflowCompilerError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-        if model:
-            compiler = project_compiler_for_model(model)
+        compiler = _select_compiler(provider, model, compiler)
         project = await _guard(compiler.compile_document(content.text, persist=persist))
         project.owner_id = user.user_id
         if nickname and nickname.strip():

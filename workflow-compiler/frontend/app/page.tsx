@@ -10,10 +10,13 @@ import { RunningOverlay } from "@/components/RunningOverlay";
 import { TimeSavedStat } from "@/components/TimeSaved";
 import { ProjectsPanel } from "@/components/ProjectsPanel";
 
-// Sentinel model value that routes a compile through the hosted NVIDIA Nemotron
-// API instead of the local eGPU gateway. Kept in sync with the backend
-// (api/dependencies.py NEMOTRON_CLOUD).
-const NEMOTRON_CLOUD = "nemotron-cloud";
+// Per-compile provider choices. Kept in sync with the backend
+// (api/dependencies.py SELECTABLE_PROVIDERS).
+const PROVIDER_OPTIONS = [
+  { value: "local-fallback", label: "Spark + cloud fallback" },
+  { value: "local", label: "Spark (local only)" },
+  { value: "nemotron", label: "Nemotron (cloud)" },
+] as const;
 
 export default function HomePage() {
   const router = useRouter();
@@ -21,7 +24,9 @@ export default function HomePage() {
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [nickname, setNickname] = useState("");
-  const [model, setModel] = useState(NEMOTRON_CLOUD);
+  const [provider, setProvider] = useState<string>("local-fallback");
+  // "" = the gateway's advertised default model (local providers only).
+  const [model, setModel] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
   const localModels = useQuery({
@@ -30,11 +35,12 @@ export default function HomePage() {
     retry: false,
   });
 
+  const localModel = provider === "nemotron" ? undefined : model || undefined;
   const compile = useMutation({
     mutationFn: () =>
       file
-        ? api.compileUpload(file, true, model || undefined, nickname || undefined)
-        : api.compileText(text, true, model || undefined, nickname || undefined),
+        ? api.compileUpload(file, true, localModel, nickname || undefined, provider)
+        : api.compileText(text, true, localModel, nickname || undefined, provider),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       router.push(`/projects/${data.project.project_id}`);
@@ -131,30 +137,48 @@ export default function HomePage() {
         )}
 
           <div className="mt-4 flex items-center gap-2">
-            <label htmlFor="model" className="text-sm text-[var(--muted)]">
-              Model
+            <label htmlFor="provider" className="text-sm text-[var(--muted)]">
+              Provider
             </label>
             <select
-              id="model"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
+              id="provider"
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
               className="flex-1 cursor-pointer rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] outline-none focus:border-[var(--accent)]"
             >
-              <option value={NEMOTRON_CLOUD}>Nemotron (cloud)</option>
-              {(localModels.data?.models.length ?? 0) > 0 && (
-                <optgroup label="Local eGPU">
-                  {localModels.data?.models.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
+              {PROVIDER_OPTIONS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
             </select>
           </div>
-          {localModels.error && (
+          {provider !== "nemotron" && (
+            <div className="mt-3 flex items-center gap-2">
+              <label htmlFor="model" className="text-sm text-[var(--muted)]">
+                Model
+              </label>
+              <select
+                id="model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="flex-1 cursor-pointer rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] outline-none focus:border-[var(--accent)]"
+              >
+                <option value="">Spark default</option>
+                {localModels.data?.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {provider !== "nemotron" && localModels.error && (
             <p className="mt-1 text-xs text-[var(--faint)]">
-              Local eGPU models unavailable — Nemotron (cloud) is selected.
+              Could not list Spark models — the gateway may be off.
+              {provider === "local"
+                ? " Local-only compiles will fail until it is back."
+                : " Compiles will fall back to Nemotron (cloud)."}
             </p>
           )}
 

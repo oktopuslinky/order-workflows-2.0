@@ -153,11 +153,19 @@ python starter.py              # terminal 3
 
 ## Use — HTTP API
 
+Activate the virtual environment you installed into first, then:
+
 ```bash
-uvicorn workflow_compiler.api.app:app --reload
+python -m uvicorn workflow_compiler.api.app:app --reload
 ```
 
-Interactive docs at http://localhost:8000/docs. The API uses local accounts (register once via
+Interactive docs at http://localhost:8000/docs.
+
+> `python -m uvicorn` (not bare `uvicorn`) on purpose: it runs the server with *this* interpreter,
+> so it always sees the `workflow_compiler` you installed. A bare `uvicorn` resolves through `PATH`
+> and may belong to a different environment — the symptom is
+> `ModuleNotFoundError: No module named 'workflow_compiler'` from the reloader subprocess.
+> Check which one you would get with `where uvicorn` (Windows) / `which uvicorn` (macOS/Linux). The API uses local accounts (register once via
 `POST /auth/register`; a session cookie rides every call). Full endpoint reference:
 [`docs/HOW_IT_WORKS.md` §9.3](docs/HOW_IT_WORKS.md).
 
@@ -167,8 +175,8 @@ A Next.js frontend lives in [`frontend/`](frontend/). Run the backend API and th
 server side by side (two terminals, both from the repo root):
 
 ```bash
-# Terminal 1 — backend API (http://localhost:8000)
-uvicorn workflow_compiler.api.app:app --reload
+# Terminal 1 — backend API (http://localhost:8000), venv activated
+python -m uvicorn workflow_compiler.api.app:app --reload
 
 # Terminal 2 — frontend dev server (http://localhost:3000)
 cd frontend

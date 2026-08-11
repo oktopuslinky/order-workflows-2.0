@@ -1135,7 +1135,10 @@ reasoning models can also be slow; bump `--timeout` (e.g. `300.0`) to avoid
 
 ### 9.3 HTTP API (`api/app.py`, FastAPI)
 
-Run it with `uvicorn workflow_compiler.api.app:app --reload`; interactive docs live at `/docs`.
+Run it with `python -m uvicorn workflow_compiler.api.app:app --reload` from the virtual environment
+the package is installed in (a bare `uvicorn` resolves through `PATH` and may belong to a different
+environment, which surfaces as `ModuleNotFoundError: No module named 'workflow_compiler'`);
+interactive docs live at `/docs`.
 
 **Authentication.** The HTTP surface uses local accounts: register/sign in once and a signed
 HttpOnly session cookie rides every call. Projects created via the API carry an `owner_id`

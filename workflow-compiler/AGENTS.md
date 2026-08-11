@@ -28,7 +28,7 @@ pytest tests/test_integration.py  # full pipeline against the deterministic mock
 ruff check src tests            # lint (line-length 100, py312)
 mypy src                        # strict type-check (pydantic plugin enabled)
 
-uvicorn workflow_compiler.api.app:app --reload   # run the HTTP API (/docs for interactive)
+python -m uvicorn workflow_compiler.api.app:app --reload   # run the HTTP API (/docs for interactive)
 workflow-compiler compile examples/order_workflow.md --spec-dir ./specs --provider mock   # run CLI offline, no API key
 ```
 

@@ -15,6 +15,65 @@ please do not act on those without confirming first.
 
 ---
 
+## 0.0 Session 2026-08-11 evening — cloud pass
+
+Spark was unavailable, so this session ran the cloud provider only. Spark work is
+untouched and still pending.
+
+**Cloud, verified end to end through the dialogue:**
+
+| Stage | Result |
+|---|---|
+| `compile` (CLI, `--provider nemotron`) | ✅ **484s** on `examples/multi_workflow.md` — project **`23f776a1-f3fc-4633-81dc-2fc363394b14`**, spec dir `./specs-cloud`. Both specs; `customer-onboarding.customer_record_id → account-provisioning.customer_record_id` UNCONFIRMED. **1.9× faster than Spark's 936s.** |
+| `validate` | ✅ exit 1 *by design* — 1 blocking + 20 warning findings persisted |
+| Dialogue question drafting | ✅ 21 findings → 5–7 questions (grouping confirmed, §7.4 case 2) |
+| Dialogue cases 3, 4, 5 | ✅ one follow-up then park; park lands `human_provided`/unresolved/`ref=dialogue:<id>`; skip leaves spec untouched |
+| Dialogue case 1 | ❌ → **fixed**, see below. Re-run pending |
+| **Free-form spec chat** (new) | ✅ all four dispositions live on cloud — see §7.6 |
+
+### Three real bugs, all found by executing things that had never been run
+
+1. **`MODIFY` patches wrote raw strings onto enum-typed fields.**
+   `review_pipeline.py` used `model_copy(update=...)`, which bypasses pydantic,
+   so a payload string landed on `EventNode.kind` (typed `EventKind`). Nothing
+   failed at the time; it surfaced far away as `'str' object has no attribute
+   'value'` in `spec/renderer.py`, returned as a 500 — which Chrome reported as
+   a **CORS error**, because a 500 raised inside the app escapes before
+   `CORSMiddleware` adds headers. Three layers of misdirection over a one-line
+   cause. **This was not dialogue-specific** — same shared MODIFY path serves
+   the review pipeline and the edit-request path. Fixed by re-validating the
+   node; 4 regression tests. *Lesson worth generalizing: treat
+   `model_copy(update=...)` on a validated model as a smell.*
+2. **`dialogue-acceptance.mjs`: timeout in the wrong argument position.**
+   `page.waitForFunction(fn, {timeout})` — Playwright's signature is
+   `(fn, arg, options)`, so the intended 900s was silently ignored and the 30s
+   default applied, far below one dialogue turn.
+3. **`dialogue-acceptance.mjs`: waited on text that can never appear.**
+   `settled()` polled `body.innerText` for `"Answer in your own words"`, but
+   that is the textarea's *placeholder attribute*, which is not part of
+   `innerText`. A question sitting on screen awaiting an answer was invisible to
+   the wait. The script also now DELETEs any session left open by an earlier
+   run — a killed run left one behind, so a single crash poisoned every
+   subsequent attempt.
+
+### Environment gotchas learned tonight (add to §2)
+
+- **A long-running `next dev` can serve 500s from a poisoned cache** while
+  `next build` compiles the same code cleanly. If the UI 500s and the build is
+  green, restart the dev server before debugging anything else.
+- **The NVIDIA cloud API returned HTTP 504s** late in the session; the retry
+  layer backs off and recovers, but stages take much longer than the timings
+  above. Cloud is not always the fast path.
+- **undici (node `fetch`) has a 300s headers timeout.** A long API call looks
+  like `UND_ERR_HEADERS_TIMEOUT` on the client while the server is still working
+  happily. Check the server log before assuming failure.
+- **CLI `validate --spec-dir` re-reads the spec files from disk**, so it will
+  fold stale files back over changes the dialogue made in the project. After a
+  dialogue session, re-validate through the **API** (empty `spec_markdown`),
+  not the CLI.
+
+---
+
 ## 0. What is actually verified today
 
 **Updated 2026-08-11 after a Spark verification session.** Measurements and three
@@ -418,6 +477,39 @@ drafting and answer interpretation are LLM calls and may differ by provider.
 7. **Session end** — "All done" summary counts answered/parked/skipped correctly.
 8. **Re-validate → Approve** — specs changed, so validation must re-run; then approve
    through to generated code and confirm the dialogue's changes survive into the bundle.
+
+### 7.6 Free-form spec chat (new, 2026-08-11)
+
+A **second door to the same gate**, built this session. The guided dialogue works
+from an agenda — the validator asks, the user answers. This runs the other
+direction: the user types what they want changed and it becomes the same
+deterministic `Patch` operations through the same human-authority applier.
+
+- Engine `dialogue/chat.py`, agent `agents/spec_chat.py`, models
+  `models/spec_chat.py`, prompt `interpret_spec_instruction.md`, UI
+  `components/SpecChatPanel.tsx` (second mode in the Resolve tab).
+- API: `GET` / `POST` / `DELETE /projects/{id}/chat`. **POST opens a session
+  implicitly** — no start call, and no `validate` prerequisite.
+- Shared bookkeeping lives in `dialogue/spec_ops.py` so the two engines cannot
+  drift on provenance or on resetting the approval gate.
+- Differences from the guided dialogue that are deliberate: the target workflow
+  is resolved per turn (caller → workflow under discussion → single-spec project
+  → agent's pick, validated against real slugs; a hallucinated slug is
+  **ignored**, not obeyed); clarification is bounded per *instruction*; a
+  changed spec's stale findings are dropped **immediately**, since there is no
+  agenda to preserve.
+
+**Live cloud verification (project `6bd74f67`, all four dispositions):**
+
+| Instruction | Result | Time |
+|---|---|---|
+| "warehouse team should be an actor" (already true) | `no_change` — refused to duplicate | 5s |
+| "add a step that emails a tracking link once shipped" | `applied`, `0.1.0 → 0.1.1` | 7s |
+| "the cancellation path needs work" | `clarifying` — exactly one question | 22s |
+| "not sure, ops owns that" | `parked`, `ref=chat:<session>`, `human_provided` | 7s |
+
+Still to do: drive it **through the browser** (only the API path is proven), and
+run it on **Spark**.
 
 ### 7.5 Definition of done
 - [ ] All 8 cases in §7.4 pass on **provider `local`**

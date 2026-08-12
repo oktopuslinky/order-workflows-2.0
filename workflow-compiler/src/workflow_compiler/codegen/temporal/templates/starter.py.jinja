@@ -29,7 +29,16 @@ async def main() -> None:
 
     handle = await client.start_workflow(
         {{ workflow_class }}.run,
+{% if workflow_input_fields %}
+        # TODO: replace these placeholder values with real input.
+        WorkflowInput(
+{% for f in workflow_input_fields %}
+            {{ f.name }}={{ f.sample }},
+{% endfor %}
+        ),
+{% else %}
         WorkflowInput(),  # TODO: populate the workflow input fields.
+{% endif %}
         id=f"{{ package_name }}-{uuid.uuid4()}",
         task_queue=TASK_QUEUE,
     )

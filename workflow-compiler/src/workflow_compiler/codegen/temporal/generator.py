@@ -27,7 +27,7 @@ skeletons and the simple signal/query/timer/child declarations.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import networkx as nx
@@ -129,6 +129,52 @@ def _default_for(type_str: str) -> str:
     }.get(type_str.strip(), "None")
 
 
+def _sample_token(name: str) -> str:
+    """A readable placeholder string for a ``str`` field called ``name``.
+
+    Identifier-shaped fields get a short uppercase tag (``order_id`` →
+    ``ORD-1``), because that is the shape such values actually have and it reads
+    as an id at a glance. Everything else is prefixed ``sample-`` so it is
+    unmistakably not real data.
+    """
+    words = [word for word in _snake(name).split("_") if word]
+    if not words:
+        return "sample"
+    if words[-1] == "id":
+        stem = words[0] if len(words) > 1 else "id"
+        return f"{stem[:3].upper()}-1"
+    return "sample-" + "-".join(words)
+
+
+def _sample_for(name: str, type_str: str) -> str:
+    """A placeholder literal for a ``WorkflowInput`` field in ``starter.py``.
+
+    A freshly generated bundle should run end to end with one command, so the
+    starter passes sample data rather than a bare ``WorkflowInput()`` whose
+    every field is falsy. The reasoning matches :func:`_return_placeholder`: a
+    ``bool`` sample is ``True`` so a branch gating on it takes the main path
+    rather than sending the very first run down the rejection lane.
+
+    ``dict`` and ``list`` stay empty — there is no honest sample element to
+    invent for them, and an empty container is a valid input where a fabricated
+    one would be misleading.
+
+    Derived only from the field's declared name and type, so it is deterministic
+    and reproducible — consistent with "the LLM specifies; deterministic code
+    emits".
+    """
+    annotation = type_str.strip()
+    if annotation == "str":
+        return f'"{_sample_token(name)}"'
+    return {
+        "int": "1",
+        "float": "1.0",
+        "bool": "True",
+        "dict": "{}",
+        "list": "[]",
+    }.get(annotation, "None")
+
+
 def _return_placeholder(type_str: str) -> str:
     """A literal return value for an activity stub, so the bundle runs as-is.
 
@@ -155,6 +201,11 @@ class _Field:
     name: str
     annotation: str
     default: str
+    #: Placeholder literal used when a caller has to *construct* this field
+    #: rather than declare it — currently only ``starter.py``'s ``WorkflowInput``.
+    #: Empty for fields nobody constructs (activity inputs), which is why it has
+    #: a default; :meth:`_workflow_input_fields` is the one place that fills it.
+    sample: str = ""
 
 
 @dataclass(frozen=True)
@@ -503,6 +554,10 @@ class TemporalPythonCodeGenerator:
         So declare what is actually referenced too. Every field carries a
         default, which makes widening the dataclass harmless, whereas dropping
         the binding would silently sever a data flow the design asked for.
+
+        Each field also carries a ``sample`` literal for ``starter.py``, so a
+        freshly generated bundle runs with plausible input instead of an empty
+        ``WorkflowInput()``.
         """
         fields = self._params_to_fields(design.workflow_inputs)
         known = {field.name for field in fields}
@@ -513,7 +568,10 @@ class TemporalPythonCodeGenerator:
             fields.append(
                 _Field(name=name, annotation=annotation, default=_default_for(annotation))
             )
-        return fields
+        return [
+            replace(field, sample=_sample_for(field.name, field.annotation))
+            for field in fields
+        ]
 
     @staticmethod
     def _referenced_workflow_inputs(

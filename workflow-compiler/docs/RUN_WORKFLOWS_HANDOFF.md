@@ -336,11 +336,108 @@ browser uses (no LLM anywhere — the approved project was reused):
   a clean rollback as `failed` — honest, but a known limit.
 - A **worker that dies after startup**. The pool catches an immediate exit and
   reports the child's output; a worker that dies later leaves the run sitting in
-  `running` with no explanation. Surfacing that is the next obvious hardening.
+  `running` with no explanation. Surfacing that is the next obvious hardening —
+  see §9.
+
+### The bug this feature is most likely to hit again
+
+A worker started against **the wrong Temporal server**, and it is worth
+understanding because nothing about it looks like a failure.
+
+Runs execute the files on disk and never overwrite them (§3), so a bundle
+generated before `TEMPORAL_ADDRESS` support survives the fix — from an older
+`approve-spec --out-dir`, or an unzipped download. Its `worker.py` connects to a
+hardcoded `localhost:7233` whatever the app is configured with. The worker
+starts fine, connects to a *different* server, and the execution sits in
+`running` forever because nothing polls its queue.
+
+The diagnostic tell is precise and worth memorising:
+
+```
+temporal workflow show --address <addr> -w <id>
+  1  WorkflowExecutionStarted
+  2  WorkflowTaskScheduled      ← and NO WorkflowTaskStarted after it
+```
+
+`WorkflowTaskScheduled` with no matching `Started` means **no worker is polling
+that task queue**. It is never a workflow-logic problem.
+
+Now refused up front by `execution/bundles.py::worker_honors_address`, with a
+message naming the fix. Only the genuinely broken combination is blocked — a
+stale bundle whose baked-in address happens to match the configured one connects
+to the right place anyway.
 
 ---
 
-## 9. Reference
+## 9. Where to pick up
+
+**Branch state (2026-08-11).** `feat/run-workflows` = `feat/spec-dialogue` plus this
+feature. `feat/spec-dialogue` was merged **into** it cleanly (no conflicts), so:
+
+```bash
+# feat/spec-dialogue is an ancestor of feat/run-workflows — pure fast-forward.
+git -C "<repo>" checkout feat/spec-dialogue      # in the dialogue worktree
+git merge --ff-only feat/run-workflows
+```
+
+Verified safe: the 24 files this branch changes have **no overlap** with the
+files uncommitted in the dialogue worktree, so the fast-forward cannot disturb
+in-progress work there. Re-check with:
+
+```bash
+git diff --name-only feat/spec-dialogue feat/run-workflows
+git -C "<dialogue-worktree>" status --porcelain
+```
+
+If that changes (someone commits to `feat/spec-dialogue` first), it becomes a
+real merge — the likely conflict points are `api/app.py` (this branch appends a
+`/runs` route block inside `create_app()`), `api/schemas.py` and `config.py`
+(both append-only), and `codegen/temporal/generator.py`.
+
+### Next, in order
+
+1. **Drive the Run panel in a real browser.** Only the API layer is proven. The
+   pattern to copy is `demo/capture2/ui-compile-acceptance.mjs`. Watch for the
+   two traps recorded in `PIPELINE_HANDOFF.md` §0.0: Playwright's
+   `waitForFunction(fn, arg, options)` argument order, and waiting on text that
+   only exists as a `placeholder` attribute and so is absent from `innerText`.
+2. **Force a compensated run** and confirm it reads differently from a failure.
+   Make an activity raise (edit the materialized `activities.py` — hand-edits are
+   preserved by design), then check the run reports `compensated`, not `failed`.
+   This exercises the status-query path in `execution/temporal.py::_compensated`,
+   which is the only part of §8's "distinguishable" requirement not yet proven
+   against a live server.
+3. **Surface a worker that dies after startup.** `WorkerPool` already captures
+   each child's output and knows whether it is alive; nothing consults that once
+   the run is going. Wire it into `GET /runs/{id}` so a run whose worker died
+   reports the child's output instead of sitting in `running`. The `Run` record
+   already carries `bundle_dir` and `task_queue`, which is all the lookup needs.
+4. **Run it on Spark**, once the eGPU is available. Nothing here is
+   provider-specific — the feature needs no LLM at all — so this is really just
+   confirming an approved Spark project produces a runnable bundle.
+
+### How to verify without spending an LLM call
+
+The whole feature is LLM-free. Reuse an already-approved project:
+
+```bash
+# 1. Temporal on a port nothing else is using
+temporal server start-dev --headless --port 7234
+
+# 2. Backend pointed at it, writing bundles somewhere disposable
+WORKFLOW_COMPILER_TEMPORAL_ADDRESS=localhost:7234 \
+WORKFLOW_COMPILER_GENERATED_ROOT=/tmp/gen \
+  .venv/Scripts/python -m uvicorn workflow_compiler.api.app:app --port 8001
+```
+
+Then `GET /projects/{id}/runnable` → `POST /projects/{id}/runs` → poll
+`GET /runs/{run_id}`. **Always use a dedicated port**: a bundle worker joins
+whatever server it is pointed at, and on a shared one it will quietly compete for
+another instance's task queue.
+
+---
+
+## 10. Reference
 
 - `docs/PIPELINE_HANDOFF.md` — the pipeline itself; §0.0 has the 2026-08-11 cloud results
 - `docs/PIPELINE_RUN_LOG.md` — measured Spark runs and corrections

@@ -1,0 +1,53 @@
+{
+  "project": "3ebba227-deca-46c0-a6d1-6103a4cd480f",
+  "provider": "cloud",
+  "results": [
+    {
+      "id": 2,
+      "name": "Related findings are grouped into questions",
+      "passed": true,
+      "detail": "6 findings + 7 open questions = 13 sources → 6 questions"
+    },
+    {
+      "id": 1,
+      "name": "A concrete answer applies immediately and bumps the patch version",
+      "passed": true,
+      "detail": "applied=true after 3 question(s) changes=3 bumped=[customer-onboarding]"
+    },
+    {
+      "id": 6,
+      "name": "Spec tab shows the dialogue's changes; Approve is re-gated",
+      "passed": false,
+      "detail": "spec_fresh=false approve_disabled=true"
+    },
+    {
+      "id": 3,
+      "name": "A vague answer gets at most one follow-up per question, then acts",
+      "passed": true,
+      "detail": "follow-up=true second_follow-up=false resolved=parked"
+    },
+    {
+      "id": 4,
+      "name": "An unmappable answer parks as an unresolved open question",
+      "passed": true,
+      "detail": "parked_panel=true ref=dialogue:c28b7f74-d985-40cb-b19e-074d92397cc3 provenance=human_provided unresolved=true"
+    },
+    {
+      "id": 5,
+      "name": "Skip leaves the spec untouched",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "id": 7,
+      "name": "Session end reports accurate answered/parked/skipped counts",
+      "passed": true,
+      "detail": "All done. 1 of 6 answered, 3 parked as open questions, 2 skipped. | server={\"parked\":3,\"answered\":1,\"skipped\":2}"
+    }
+  ],
+  "counts": {
+    "parked": 3,
+    "answered": 1,
+    "skipped": 2
+  }
+}

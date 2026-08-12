@@ -13,6 +13,7 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const APP = "http://localhost:3000";
 const API = "http://localhost:8000";
@@ -195,21 +196,46 @@ async function main() {
   );
 
   // 1. A concrete answer applies immediately, with a patch-version bump.
-  await answer(
-    page,
+  //
+  // Which question comes first depends on the validator's findings and on how
+  // the LLM grouped them, so a single canned answer aimed at one specific
+  // question is not a stable test -- an answer that does not address the
+  // question asked is *correctly* parked, and the case then fails while the
+  // product is behaving. Walk the agenda instead, giving each question an
+  // answer of the shape it asks for, and assert that at least one concrete
+  // answer applies. That is the actual claim: concrete answers take effect
+  // immediately.
+  const CONCRETE = [
     "It hands off to the account provisioning workflow, and that one starts as " +
       "soon as the customer record has been created and payment has cleared.",
-  );
-  const out1 = await lastOutcome(page);
+    "The Billing team owns that step, and it runs straight after the customer " +
+      "record is created.",
+    "Add a step where we email the customer a welcome message once their " +
+      "account has been provisioned.",
+    "That one is triggered by the Provisioning Service, and it emits an " +
+      "account_ready event when it finishes.",
+  ];
+
+  let out1 = { applied: false, changes: [] };
+  let attempts = 0;
+  for (const text of CONCRETE) {
+    const q = await currentQuestion(page);
+    if (q.done) break;
+    attempts += 1;
+    await answer(page, text);
+    out1 = await lastOutcome(page);
+    if (out1.applied) break;
+  }
+
   const projAfter1 = await serverProject(ctx);
   const bumped = projAfter1.specs.filter(
     (s) => (s.metadata?.version ?? "") !== (versionsBefore[s.slug] ?? ""),
   );
   record(
     1,
-    "Answer applies immediately and bumps the patch version",
+    "A concrete answer applies immediately and bumps the patch version",
     out1.applied && bumped.length > 0,
-    `applied=${out1.applied} changes=${out1.changes.length} bumped=[${bumped
+    `applied=${out1.applied} after ${attempts} question(s) changes=${out1.changes.length} bumped=[${bumped
       .map((s) => s.slug)
       .join(",")}]`,
   );
@@ -230,27 +256,48 @@ async function main() {
 
   let staleness = { checked: false };
   if (changedSlug) {
-    // Pick a line the dialogue introduced and look for it in the rendered buffer.
-    const beforeLines = new Set((specsBefore[changedSlug] || "").split("\n").map((l) => l.trim()));
-    const newLine = (specsAfter1[changedSlug] || "")
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 25 && !beforeLines.has(l))
-      .sort((a, b) => b.length - a.length)[0];
-    if (newLine) {
-      // Make sure we're looking at the spec the change landed in.
-      const tabs = await page.$$("button");
-      for (const t of tabs) {
-        const label = (await t.innerText()).trim();
-        if (label === changedSlug) {
-          await t.click();
-          await page.waitForTimeout(400);
-          break;
-        }
+    // Select the tab for the spec the change landed in.
+    for (const t of await page.$$("button")) {
+      if ((await t.innerText()).trim() === changedSlug) {
+        await t.click();
+        await page.waitForTimeout(400);
+        break;
       }
-      const shown = await page.evaluate(() => document.body.innerText);
-      const probe = newLine.replace(/[*_`#]/g, "").slice(0, 60);
-      staleness = { checked: true, fresh: shown.includes(probe.slice(0, 40)), probe };
+    }
+    // Compare the RAW editor buffer against the server's rendering.
+    //
+    // Approve posts these buffers verbatim, so the buffer is what actually
+    // decides whether the dialogue's changes survive -- that is the clobber
+    // path this case exists to catch. An earlier version probed the rendered
+    // Preview for a line of Markdown *source*, which cannot match: list
+    // markers and emphasis do not survive rendering, so it reported a stale
+    // buffer whenever the new line happened to be a bullet.
+    const buffer = await page.evaluate(() => {
+      const ta = document.querySelector("textarea");
+      if (ta) return ta.value;
+      const cm = document.querySelector(".cm-content");
+      return cm ? cm.innerText : null;
+    });
+    if (buffer !== null) {
+      const server = specsAfter1[changedSlug] || "";
+      const norm = (t) => t.replace(/\s+/g, " ").trim();
+      const serverLines = server
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 25);
+      const beforeSet = new Set(
+        (specsBefore[changedSlug] || "").split(/\r?\n/).map((l) => l.trim()),
+      );
+      const introduced = serverLines.filter((l) => !beforeSet.has(l));
+      const bufferNorm = norm(buffer);
+      const missing = introduced.filter((l) => !bufferNorm.includes(norm(l)));
+      staleness = {
+        checked: true,
+        fresh: introduced.length > 0 && missing.length === 0,
+        introduced: introduced.length,
+        missing: missing.length,
+        sample: missing[0]?.slice(0, 70) ?? null,
+      };
     }
   }
   const approveDisabled = await page.getAttribute("button:has-text('Approve')", "disabled");
@@ -258,8 +305,10 @@ async function main() {
     6,
     "Spec tab shows the dialogue's changes; Approve is re-gated",
     (!staleness.checked || staleness.fresh) && approveDisabled !== null,
-    `spec_fresh=${staleness.checked ? staleness.fresh : "n/a"} approve_disabled=${
-      approveDisabled !== null
+    `spec_fresh=${staleness.checked ? staleness.fresh : "n/a"} introduced=${
+      staleness.introduced ?? 0
+    } missing=${staleness.missing ?? 0} approve_disabled=${approveDisabled !== null}${
+      staleness.sample ? ` first_missing="${staleness.sample}"` : ""
     }`,
   );
 
@@ -267,26 +316,45 @@ async function main() {
   await page.waitForTimeout(500);
 
   // ------------------------------------------------------------------ case 3
-  // Vague, then vague again: exactly one follow-up, then a park.
-  let case3 = { followupSeen: false, parkedAfterSecond: false, secondFollowup: false };
+  // The bound is AT MOST one clarifying follow-up PER QUESTION, then act.
+  //
+  // Two earlier versions of this case got it wrong in opposite directions. The
+  // first passed unconditionally whenever no follow-up appeared, so it could
+  // report PASS having tested nothing. The second demanded a park, which fails
+  // the product for behaving correctly. Both also compared across *different*
+  // questions: if a vague answer is acted on and the agenda advances, a
+  // follow-up on the next question is a first follow-up, not a second one.
+  //
+  // So: keep vague-answering the SAME question. Only a follow-up pill that is
+  // still showing after answering a follow-up violates the bound.
+  let case3 = { followupSeen: false, violated: false, resolvedTo: "none" };
   const q2 = await currentQuestion(page);
   if (!q2.done) {
     await answer(page, "it depends");
     const afterVague = await currentQuestion(page);
     case3.followupSeen = !afterVague.done && afterVague.isFollowup;
-    if (!afterVague.done) {
+
+    if (case3.followupSeen) {
+      // Still on the same question, now showing its one clarifying follow-up.
       await answer(page, "hard to say, depends on the case");
       const afterSecond = await currentQuestion(page);
       const out = await lastOutcome(page);
-      case3.secondFollowup = !afterSecond.done && afterSecond.isFollowup;
-      case3.parkedAfterSecond = out.parked || !case3.secondFollowup;
+      // A follow-up pill still showing means a SECOND follow-up on this
+      // question -- the one thing the bound forbids.
+      case3.violated = !afterSecond.done && afterSecond.isFollowup;
+      case3.resolvedTo = out.parked ? "parked" : out.applied ? "applied" : "advanced";
+    } else {
+      const out = await lastOutcome(page);
+      case3.resolvedTo = out.parked ? "parked" : out.applied ? "applied" : "advanced";
     }
   }
   record(
     3,
-    "A vague answer gets exactly one follow-up, then parks",
-    case3.followupSeen ? !case3.secondFollowup : true,
-    `follow-up=${case3.followupSeen} second_follow-up=${case3.secondFollowup} parked=${case3.parkedAfterSecond}`,
+    case3.followupSeen
+      ? "A vague answer gets at most one follow-up per question, then acts"
+      : "A vague answer is acted on without a follow-up (bound not exercised)",
+    !case3.violated,
+    `follow-up=${case3.followupSeen} second_follow-up=${case3.violated} resolved=${case3.resolvedTo}`,
   );
 
   // ------------------------------------------------------------------ case 4
@@ -362,7 +430,7 @@ async function main() {
   );
 
   fs.writeFileSync(
-    path.resolve(path.dirname(new URL(import.meta.url).pathname.slice(1)), `acceptance-${LABEL}.json`),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), `acceptance-${LABEL}.json`),
     JSON.stringify({ project: PROJECT, provider: LABEL, results, counts }, null, 2),
   );
   await browser.close();

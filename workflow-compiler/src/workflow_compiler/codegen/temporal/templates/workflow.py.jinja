@@ -71,14 +71,21 @@ class {{ workflow_class }}:
 {{ run_body }}
 {% for s in signals %}
 
-    @workflow.signal
-    def {{ s.method }}(self{% for p in s.params %}, {{ p }}: str{% endfor %}) -> None:
+    {#- Register under the DESIGN's signal name. Without an explicit name the
+        SDK registers the snake_cased Python method instead, so a caller
+        signalling 'SLABreachAlert' -- the name in the spec, in this docstring,
+        and in the workflow's own log line -- is silently ignored, and a bounded
+        wait hangs to its timeout and compensates. Verified against a live
+        Temporal server. #}
+    @workflow.signal(name="{{ s.signal_name }}")
+    def {{ s.method }}(self{% for p in s.params %}, {{ p }}: str = ""{% endfor %}) -> None:
         """Handle the '{{ s.signal_name }}' signal."""
         self.{{ s.attr }} = True
 {% endfor %}
 {% for q in queries %}
 
-    @workflow.query
+    {#- Same reason as signals above: register under the design's query name. #}
+    @workflow.query(name="{{ q.query_name }}")
     def {{ q.method }}(self) -> {{ q.return_type }}:
         """{{ q.description or 'Return in-flight workflow state.' }}"""
         return self._status

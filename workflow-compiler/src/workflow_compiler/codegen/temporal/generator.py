@@ -490,8 +490,77 @@ class TemporalPythonCodeGenerator:
         return False
 
     def _workflow_input_fields(self, design: TemporalWorkflowDesign) -> list[_Field]:
-        """Typed fields for the top-level ``WorkflowInput`` dataclass."""
-        return self._params_to_fields(design.workflow_inputs)
+        """Typed fields for the top-level ``WorkflowInput`` dataclass.
+
+        The declared ``workflow_inputs`` are the contract, but a step binding may
+        cite a workflow input the design never declared — the two halves of the
+        design are produced together and can disagree. The emitter writes
+        ``arg.<ref>`` for such a binding, so an undeclared ref becomes an
+        ``AttributeError`` on the first activity and the whole generated bundle
+        fails to run. (Found by actually executing a bundle: ``'WorkflowInput'
+        object has no attribute 'customer_order_items'``.)
+
+        So declare what is actually referenced too. Every field carries a
+        default, which makes widening the dataclass harmless, whereas dropping
+        the binding would silently sever a data flow the design asked for.
+        """
+        fields = self._params_to_fields(design.workflow_inputs)
+        known = {field.name for field in fields}
+        for name, annotation in self._referenced_workflow_inputs(design):
+            if name in known:
+                continue
+            known.add(name)
+            fields.append(
+                _Field(name=name, annotation=annotation, default=_default_for(annotation))
+            )
+        return fields
+
+    @staticmethod
+    def _referenced_workflow_inputs(
+        design: TemporalWorkflowDesign,
+    ) -> list[tuple[str, str]]:
+        """``(field, annotation)`` for every workflow input a binding cites.
+
+        The annotation is taken from the activity parameter the binding feeds, so
+        a recovered field is typed the way it is used rather than defaulted to
+        ``str``.
+        """
+        param_types: dict[str, str] = {}
+
+        def note(params: list[TemporalParam]) -> None:
+            for param in params:
+                param_types.setdefault(
+                    _snake(param.name), (param.type or "str").strip() or "str"
+                )
+
+        # Kept as two loops rather than one over a joined list: the two design
+        # types share `effective_params()` but have no common base declaring it,
+        # so joining them widens the element type and loses the method.
+        for activity in design.activities:
+            note(activity.effective_params())
+        for compensation in design.compensation_activities:
+            note(compensation.effective_params())
+
+        found: list[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        def walk(steps: list[TemporalStep]) -> None:
+            for step in steps:
+                for binding in step.bindings or []:
+                    if binding.source is not BindingSource.WORKFLOW_INPUT:
+                        continue
+                    if not binding.ref:
+                        continue
+                    name = _snake(binding.ref)
+                    if not name or name in seen:
+                        continue
+                    seen.add(name)
+                    found.append((name, param_types.get(_snake(binding.param), "str")))
+                for lane in step.lanes:
+                    walk(lane)
+
+        walk(design.plan)
+        return found
 
     @staticmethod
     def _signals(design: TemporalWorkflowDesign) -> list[_Signal]:

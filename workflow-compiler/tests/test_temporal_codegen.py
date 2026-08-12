@@ -472,9 +472,14 @@ def test_saga_compensation_registered_after_its_activity() -> None:
 
 def test_signals_queries_and_timers_rendered() -> None:
     workflow = _file(to_temporal_python(_design(), graph=_graph()), "workflow.py")
-    assert "@workflow.signal" in workflow
-    assert "def cancel_order(self, reason: str) -> None:" in workflow
-    assert "@workflow.query" in workflow
+    # Registered under the design's own names: without an explicit name the SDK
+    # would register the snake_cased method, and a caller using the documented
+    # name would be silently ignored.
+    assert '@workflow.signal(name="cancel order")' in workflow
+    # Payload params default, so a signal sent with fewer args than declared
+    # does not raise TypeError inside the handler and fail the workflow task.
+    assert 'def cancel_order(self, reason: str = "") -> None:' in workflow
+    assert '@workflow.query(name="status")' in workflow
     assert "def status(self) -> str:" in workflow
     assert "SLA = timedelta(seconds=3600)" in workflow
 

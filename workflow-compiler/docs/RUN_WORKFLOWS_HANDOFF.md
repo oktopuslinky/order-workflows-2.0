@@ -10,8 +10,10 @@ This document has two halves:
 
 1. **§1–4 — what works today**, measured, so you can run a bundle by hand and know
    what to expect. This is prerequisite knowledge for the second half.
-2. **§5–8 — the in-app Run feature**, which does not exist yet: what to build, where
-   it goes, and the decisions already made.
+2. **§5–8 — the in-app Run feature.** ✅ **Built 2026-08-11** — see §8 for what is
+   done and what is still unverified, and `docs/RUN_FEATURE_DESIGN.md` for the
+   decisions. §5.3's three worker-lifecycle options were settled on **A**, and
+   §7 (sample values in `starter.py`) shipped with it.
 
 Everything in §1–4 was executed against a live Temporal server on 2026-08-12. Where
 something is unproven it says so.
@@ -299,13 +301,42 @@ The activity stubs are a separate and much larger question; leave them stubs.
 
 ## 8. Definition of done for the Run feature
 
-- [ ] A user can run a generated workflow from the Results tab without leaving the app
-- [ ] Status, current step, and terminal outcome are visible in the UI
-- [ ] Declared signals can be sent from the UI, by their **spec** names (§6.2)
-- [ ] A compensating (failed) run is visibly distinguishable from a completed one
-- [ ] Absent Temporal is reported as a disabled control, never a click-time error
-- [ ] No Temporal SDK import inside `compiler`/`agents` — executor stays behind an interface
-- [ ] `pytest`, `ruff check src tests` green; `mypy src` no worse than its 35-error baseline
+**Built 2026-08-11 on `feat/run-workflows`** (commits `b170514`, `ab4457a`, `a31e259`).
+
+- [x] A user can run a generated workflow from the Results tab without leaving the app
+- [x] Status, current step, and terminal outcome are visible in the UI
+- [x] Declared signals can be sent from the UI, by their **spec** names (§6.2)
+- [x] A compensating (failed) run is visibly distinguishable from a completed one
+- [x] Absent Temporal is reported as a disabled control, never a click-time error
+- [x] No Temporal SDK import inside `compiler`/`agents` — executor stays behind an interface
+- [x] `pytest`, `ruff check src tests` green; `mypy src` at its 35-error baseline
+- [x] §7 — generated starters ship sample input (`order_id="ORD-1"`), verified by
+      re-rendering the stored design of the bundle that ran on 2026-08-12
+
+Design notes and the decisions behind them: **`docs/RUN_FEATURE_DESIGN.md`**.
+
+### What was verified live
+
+Against a Temporal dev server on an isolated port, driving the HTTP API the
+browser uses (no LLM anywhere — the approved project was reused):
+
+- the bundle materialized to disk (7 files) and the worker subprocess started;
+- **every activity ran in plan order**, including the parallel pair
+  (`SendOrderConfirmation` + `NotifyWarehouse`), each named in the step trail;
+- the workflow parked on its 24-hour SLA timer exactly as §2 describes;
+- a signal sent under its **spec** name was delivered (`signal_received`).
+
+### Not yet verified
+
+- The **browser** path. The API layer the UI calls is proven end to end; the
+  React panel itself is only proven by `tsc` + `next build`.
+- A genuinely **compensated** run. The compensation path is implemented and
+  distinguished via the workflow's own status query, but the verified run took
+  the success path. A design that declares no string-returning query will report
+  a clean rollback as `failed` — honest, but a known limit.
+- A **worker that dies after startup**. The pool catches an immediate exit and
+  reports the child's output; a worker that dies later leaves the run sitting in
+  `running` with no explanation. Surfacing that is the next obvious hardening.
 
 ---
 

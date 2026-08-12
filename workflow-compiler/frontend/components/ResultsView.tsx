@@ -7,6 +7,7 @@ import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { FindingsPanel } from "./FindingsPanel";
 import { MermaidView } from "./MermaidView";
+import { RunPanel } from "./RunPanel";
 import type { CompilationProject, SpecFinding, WorkflowState } from "@/lib/types";
 
 export function ResultsView({
@@ -125,6 +126,7 @@ export function ResultsView({
               <div>
                 <h4 className="eyebrow mb-1.5">Generated files</h4>
                 <CodeFiles files={state?.temporal_code?.files ?? []} />
+                <RunPanel projectId={project.project_id} slug={active} />
               </div>
             </div>
           </>

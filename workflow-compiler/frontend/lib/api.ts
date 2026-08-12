@@ -15,6 +15,8 @@ import type {
   ProjectResponse,
   ProjectSummary,
   ResolvedEdit,
+  Run,
+  RunnableListResponse,
   SettingsDefaults,
   UserPreferences,
   WorkflowStateResponse,
@@ -349,4 +351,33 @@ export const api = {
         reviewer: reviewer ?? null,
       }),
     }),
+
+  // --- running generated bundles ---
+
+  runnable: (id: string) =>
+    request<RunnableListResponse>(`/projects/${encodeURIComponent(id)}/runnable`),
+
+  startRun: (id: string, slug: string, input: Record<string, unknown>) =>
+    request<Run>(`/projects/${encodeURIComponent(id)}/runs`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ slug, input }),
+    }),
+
+  listRuns: (id: string) =>
+    request<Run[]>(`/projects/${encodeURIComponent(id)}/runs`),
+
+  getRun: (runId: string) => request<Run>(`/runs/${encodeURIComponent(runId)}`),
+
+  // One entry per declared parameter — a single object where several are
+  // expected raises TypeError inside the handler and fails the workflow task.
+  signalRun: (runId: string, name: string, args: unknown[]) =>
+    request<Run>(`/runs/${encodeURIComponent(runId)}/signal`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ name, args }),
+    }),
+
+  terminateRun: (runId: string) =>
+    request<Run>(`/runs/${encodeURIComponent(runId)}`, { method: "DELETE" }),
 };

@@ -187,7 +187,7 @@ class TemporalExecutor(WorkflowExecutor):
             result=result,
             error=error,
             events=events,
-            current_step=events[-1].detail if events else None,
+            current_step=_current_step(events),
         )
 
     @staticmethod
@@ -218,14 +218,23 @@ class TemporalExecutor(WorkflowExecutor):
         except Exception:  # pragma: no cover - history is a nicety, not the status
             return out
 
+        # An ActivityTaskCompleted event carries no activity name — only the id
+        # of the Scheduled event that started it. Without this map the trail
+        # reads "activity completed" five times in a row, which tells the user
+        # nothing about where their process actually got to.
+        scheduled_names: dict[int, str] = {}
+
         for event in history.events:
             name = _event_type_name(event)
+            if name == "ACTIVITY_TASK_SCHEDULED":
+                scheduled_names[int(event.event_id)] = _event_detail(event, "activity")
             kind = _INTERESTING.get(name)
             if kind is None:
                 continue
-            out.append(
-                RunEvent(at=_event_time(event), kind=kind, detail=_event_detail(event, kind))
-            )
+            detail = _event_detail(event, kind)
+            if kind in {"activity_completed", "activity_failed"}:
+                detail = scheduled_names.get(_scheduled_event_id(event), detail)
+            out.append(RunEvent(at=_event_time(event), kind=kind, detail=detail))
         return out
 
     async def signal(
@@ -300,6 +309,30 @@ def _event_detail(event: Any, kind: str) -> str:
         if value:
             return str(value)
     return kind.replace("_", " ")
+
+
+def _scheduled_event_id(event: Any) -> int:
+    for attribute in (
+        "activity_task_completed_event_attributes",
+        "activity_task_failed_event_attributes",
+    ):
+        if event.HasField(attribute):
+            return int(getattr(event, attribute).scheduled_event_id)
+    return -1
+
+
+def _current_step(events: list[RunEvent]) -> str | None:
+    """Where the process actually is.
+
+    The last *event* is often bookkeeping — a workflow parked on its SLA timer
+    ends on ``timer_started``, whose detail is a bare timer id. The last thing
+    the user recognizes is the most recent activity, so prefer that and fall
+    back to the raw tail only when no activity has run yet.
+    """
+    for event in reversed(events):
+        if event.kind.startswith("activity_"):
+            return event.detail
+    return events[-1].detail if events else None
 
 
 def _failure_message(events: list[RunEvent]) -> str | None:

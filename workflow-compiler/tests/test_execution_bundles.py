@@ -18,6 +18,8 @@ from workflow_compiler.execution import (
     materialize_bundle,
 )
 from workflow_compiler.models import (
+    GeneratedFile,
+    TemporalCodeBundle,
     TemporalParam,
     TemporalQueryDesign,
     TemporalSignalDesign,
@@ -75,6 +77,28 @@ def test_materialize_never_overwrites_a_hand_edited_file(tmp_path: Path) -> None
     assert (directory / "activities.py").read_text(encoding="utf-8") == implemented
     assert "activities.py" in second.kept
     assert "activities.py" not in second.written
+
+
+def test_materialize_rerenders_rather_than_replaying_stored_code(tmp_path: Path) -> None:
+    """Stored ``temporal_code`` is whatever codegen produced at approve time.
+
+    Handoff §6 records that every bundle generated before 2026-08-12 carries
+    real defects, so writing the stored copy to disk resurrects fixed bugs in
+    code the user is about to run. Caught for real: the stored worker.py
+    predated TEMPORAL_ADDRESS support, so the worker silently connected to a
+    different server and the execution's first workflow task was never polled.
+    """
+    state = _state()
+    state.temporal_code = TemporalCodeBundle(
+        package_name="order_fulfillment_workflow",
+        files=[GeneratedFile(path="worker.py", content="# stale, from an old codegen\n")],
+    )
+
+    materialize_bundle(state, tmp_path / "b")
+
+    worker = (tmp_path / "b" / "worker.py").read_text(encoding="utf-8")
+    assert "stale" not in worker
+    assert 'os.environ.get("TEMPORAL_ADDRESS"' in worker
 
 
 def test_describe_runnable_exposes_form_fields_with_sample_defaults(tmp_path: Path) -> None:

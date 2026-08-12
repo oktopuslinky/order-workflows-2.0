@@ -428,3 +428,77 @@ export interface WorkflowState {
 export interface WorkflowStateResponse {
   state: WorkflowState;
 }
+
+// --- Running generated bundles (docs/RUN_WORKFLOWS_HANDOFF.md §5) ---
+
+export interface TemporalHealth {
+  reachable: boolean;
+  address: string;
+  detail: string | null;
+}
+
+export interface WorkflowInputField {
+  name: string;
+  /** Declared annotation: str, int, float, bool, dict, list. */
+  type: string;
+  /** The literal the generator puts in starter.py — reused as the form default
+   *  so the form and the bundle cannot drift apart. */
+  sample: string;
+}
+
+export interface SignalDescriptor {
+  /** As the *spec* names it. Signalling the snake_cased method does nothing. */
+  name: string;
+  params: string[];
+}
+
+export interface RunnableWorkflow {
+  slug: string;
+  workflow_id: string;
+  workflow_type: string;
+  task_queue: string;
+  runnable: boolean;
+  bundle_dir: string | null;
+  materialized: boolean;
+  inputs: WorkflowInputField[];
+  signals: SignalDescriptor[];
+}
+
+export interface RunnableListResponse {
+  temporal: TemporalHealth;
+  workflows: RunnableWorkflow[];
+}
+
+/** `compensated` is deliberately distinct from `failed`: the saga rolled back
+ *  cleanly, which is the workflow doing its job. */
+export type RunState =
+  | "running"
+  | "completed"
+  | "failed"
+  | "compensated"
+  | "terminated"
+  | "timed_out"
+  | "canceled";
+
+export interface RunEvent {
+  at: string | null;
+  kind: string;
+  detail: string;
+}
+
+export interface Run {
+  run_id: string;
+  project_id: string;
+  slug: string;
+  workflow_id: string;
+  execution_run_id: string;
+  task_queue: string;
+  state: RunState;
+  result: string | null;
+  error: string | null;
+  current_step: string | null;
+  events: RunEvent[];
+  created_at: string;
+  bundle_written: string[];
+  bundle_kept: string[];
+}

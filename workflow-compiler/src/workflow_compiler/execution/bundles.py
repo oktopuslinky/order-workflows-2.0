@@ -75,21 +75,34 @@ def materialize_bundle(
     caller can surface that, and a user who wants the pristine bundle back can
     delete the directory.
 
-    Falls back to the stored ``temporal_code`` when present, and re-renders from
-    the stored design otherwise, so a state saved before codegen fixes landed
-    still yields a current bundle (handoff §4.3).
+    The bundle is **re-rendered from the stored design**, not replayed from the
+    stored ``temporal_code``. That distinction is load-bearing. ``temporal_code``
+    is whatever codegen produced at approve time, and §6 of the handoff records
+    that every bundle generated before 2026-08-12 carries real defects — signals
+    registered under the wrong name, ``WorkflowInput`` missing fields the
+    workflow reads. Writing those to disk would resurrect fixed bugs in code the
+    user is about to run.
+
+    It is also how this was caught: replaying the stored bundle wrote a
+    ``worker.py`` predating the ``TEMPORAL_ADDRESS`` support, so the worker
+    connected to the default address instead of the configured one, silently
+    served a different server, and the execution sat in ``Running`` with its
+    first workflow task never polled.
+
+    Re-rendering is deterministic and LLM-free (§4.3). The stored files are kept
+    only as a fallback for a state that has code but no design.
     """
     directory.mkdir(parents=True, exist_ok=True)
 
     files: dict[str, str] = {}
-    if state.temporal_code is not None and state.temporal_code.files:
-        files = {f.path: f.content for f in state.temporal_code.files}
-    elif state.temporal_design is not None:
+    if state.temporal_design is not None:
         bundle = TemporalPythonCodeGenerator().generate(
             state.temporal_design,
             graph=state.workflow_graph if graph_ordered else None,
         )
         files = {f.path: f.content for f in bundle.files}
+    elif state.temporal_code is not None and state.temporal_code.files:
+        files = {f.path: f.content for f in state.temporal_code.files}
 
     written: list[str] = []
     kept: list[str] = []

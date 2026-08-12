@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from workflow_compiler.compiler import WorkflowCompiler
 
 if TYPE_CHECKING:
+    from workflow_compiler.interfaces.executor import WorkflowExecutor
     from workflow_compiler.interfaces.llm import BaseLLMProvider
     from workflow_compiler.project_compiler import ProjectCompiler
 
@@ -34,6 +35,27 @@ def get_project_compiler() -> ProjectCompiler:
     from workflow_compiler.project_compiler import ProjectCompiler
 
     return ProjectCompiler.from_settings()
+
+
+@lru_cache(maxsize=1)
+def get_executor() -> WorkflowExecutor:
+    """Provide the process-wide executor for running generated bundles.
+
+    Cached because it owns long-lived state: a Temporal client and the pool of
+    bundle worker subprocesses, which are reused across runs (a workflow parked
+    on a 24-hour timer needs its worker to outlive the request that started it).
+
+    Constructing it never imports ``temporalio`` — that happens on first use, so
+    the API starts cleanly without the optional ``[run]`` extra and reports
+    Temporal as unavailable instead. Tests override this with ``FakeExecutor``.
+    """
+    from workflow_compiler.config import get_settings
+    from workflow_compiler.execution.temporal import TemporalExecutor
+
+    settings = get_settings()
+    return TemporalExecutor(
+        address=settings.temporal_address, namespace=settings.temporal_namespace
+    )
 
 
 def get_local_provider(

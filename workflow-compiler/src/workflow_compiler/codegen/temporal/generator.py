@@ -129,6 +129,20 @@ def _default_for(type_str: str) -> str:
     }.get(type_str.strip(), "None")
 
 
+def workflow_input_summary(design: TemporalWorkflowDesign) -> list[tuple[str, str, str]]:
+    """``(name, annotation, sample)`` per ``WorkflowInput`` field.
+
+    The same list ``starter.py`` is rendered from, exposed for callers that need
+    to *construct* a workflow input rather than emit one — the in-app runner
+    builds its input form from this. Sharing the resolution is the point: a field
+    recovered from a step binding (see :meth:`_workflow_input_fields`) must
+    appear in the form exactly as it appears in ``shared.py``, and re-deriving it
+    somewhere else is how the two halves drift apart again.
+    """
+    fields = TemporalPythonCodeGenerator()._workflow_input_fields(design)
+    return [(field.name, field.annotation, field.sample) for field in fields]
+
+
 def _sample_token(name: str) -> str:
     """A readable placeholder string for a ``str`` field called ``name``.
 

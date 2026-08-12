@@ -467,3 +467,141 @@ class DialogueResponse(BaseModel):
     spec_markdown: dict[str, str] = Field(
         default_factory=dict, description="slug → rendered spec Markdown (kept in step)."
     )
+
+
+# --------------------------------------------------------------------------- #
+# Running generated bundles (docs/RUN_WORKFLOWS_HANDOFF.md §5)
+# --------------------------------------------------------------------------- #
+
+
+class TemporalHealth(BaseModel):
+    """Whether executions can be started at all.
+
+    Reported up front so the UI disables its Run control with a reason, rather
+    than failing when it is clicked (§5.4).
+    """
+
+    reachable: bool = Field(..., description="True when a Temporal server answered.")
+    address: str = Field(..., description="Address that was probed.")
+    detail: str | None = Field(default=None, description="Why it is not reachable.")
+
+
+class WorkflowInputFieldSchema(BaseModel):
+    """One field of a bundle's ``WorkflowInput``, for building the input form."""
+
+    name: str
+    type: str = Field(..., description="Declared annotation: str, int, dict, ...")
+    sample: str = Field(
+        ...,
+        description=(
+            "Placeholder literal the generator renders into starter.py, reused "
+            "as the form's default so the two cannot drift apart."
+        ),
+    )
+
+
+class SignalSchema(BaseModel):
+    """A declared signal, named as the **spec** names it (§6.2)."""
+
+    name: str
+    params: list[str] = Field(default_factory=list)
+
+
+class RunnableWorkflowSchema(BaseModel):
+    """One generated workflow the user may run."""
+
+    slug: str
+    workflow_id: str
+    workflow_type: str
+    task_queue: str
+    runnable: bool = Field(
+        ..., description="False when no bundle exists and none can be materialized."
+    )
+    bundle_dir: str | None = Field(
+        default=None, description="Directory the worker will run in."
+    )
+    materialized: bool = Field(
+        default=False, description="True when the bundle is already written to disk."
+    )
+    inputs: list[WorkflowInputFieldSchema] = Field(default_factory=list)
+    signals: list[SignalSchema] = Field(default_factory=list)
+
+
+class RunnableListResponse(BaseModel):
+    """What the Results tab needs to offer Run controls."""
+
+    temporal: TemporalHealth
+    workflows: list[RunnableWorkflowSchema] = Field(default_factory=list)
+
+
+class StartRunRequest(BaseModel):
+    """Start one execution of a generated workflow."""
+
+    slug: str = Field(..., description="Which generated workflow to run.")
+    input: dict[str, object] = Field(
+        default_factory=dict,
+        description="Field values for WorkflowInput; unknown fields are rejected.",
+    )
+
+
+class SignalRunRequest(BaseModel):
+    """Deliver a signal to a running execution."""
+
+    name: str = Field(..., description="Signal name as the spec declares it (§6.2).")
+    args: list[object] = Field(
+        default_factory=list,
+        description=(
+            "One entry per declared parameter. A single object where several "
+            "are expected raises TypeError inside the handler (§2.1)."
+        ),
+    )
+
+
+class RunEventSchema(BaseModel):
+    """One entry of a run's step trail."""
+
+    at: datetime | None = None
+    kind: str
+    detail: str
+
+
+class RunResponse(BaseModel):
+    """Observed state of one execution."""
+
+    run_id: str = Field(..., description="This app's id for the run.")
+    project_id: str
+    slug: str
+    workflow_id: str = Field(..., description="Temporal workflow id.")
+    execution_run_id: str = Field(..., description="Temporal run id.")
+    task_queue: str
+    state: Literal[
+        "running",
+        "completed",
+        "failed",
+        "compensated",
+        "terminated",
+        "timed_out",
+        "canceled",
+    ] = Field(
+        ...,
+        description=(
+            "'compensated' is distinct from 'failed': the saga rolled back "
+            "cleanly, which is the workflow doing its job."
+        ),
+    )
+    result: str | None = None
+    error: str | None = None
+    current_step: str | None = None
+    events: list[RunEventSchema] = Field(default_factory=list)
+    created_at: datetime
+    bundle_written: list[str] = Field(
+        default_factory=list,
+        description="Bundle files created on disk by this start, if any.",
+    )
+    bundle_kept: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Existing files left untouched — a hand-edited activities.py is "
+            "never overwritten, which is why runs execute from disk."
+        ),
+    )

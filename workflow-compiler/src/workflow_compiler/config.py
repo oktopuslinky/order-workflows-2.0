@@ -142,6 +142,28 @@ class Settings(BaseSettings):
         ),
     )
 
+    temporal_address: str = Field(
+        default="localhost:7233",
+        description=(
+            "Temporal frontend address used to run generated bundles from the app. "
+            "Absence is reported through GET /health so the UI can disable the Run "
+            "control rather than failing when it is clicked."
+        ),
+    )
+    temporal_namespace: str = Field(
+        default="default", description="Temporal namespace executions are started in."
+    )
+    generated_root: str = Field(
+        default="./generated",
+        description=(
+            "Root the in-app runner reads bundles from, as "
+            "'<generated_root>/<project-id>/<slug>/'. Matches the CLI's --out-dir "
+            "default. Bundles execute from disk so a hand-edited activities.py is "
+            "what actually runs; a missing bundle is materialized once and then "
+            "never overwritten."
+        ),
+    )
+
     stepwise: bool = Field(
         default=False,
         description=(

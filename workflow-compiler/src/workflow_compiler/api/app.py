@@ -56,7 +56,10 @@ projects (``owner_id`` is None, e.g. CLI-created) stay visible to everyone.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable
+import uuid
+from collections.abc import AsyncIterator, Awaitable
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,6 +77,7 @@ from workflow_compiler.api.auth import (
 from workflow_compiler.api.dependencies import (
     SELECTABLE_PROVIDERS,
     get_compiler,
+    get_executor,
     get_local_provider,
     get_project_compiler,
     project_compiler_for_model,
@@ -104,12 +108,21 @@ from workflow_compiler.api.schemas import (
     RegisterRequest,
     RejectRequest,
     RenameProjectRequest,
+    RunEventSchema,
+    RunnableListResponse,
+    RunnableWorkflowSchema,
+    RunResponse,
     SettingsDefaults,
+    SignalRunRequest,
+    SignalSchema,
     SpecChatRequest,
     SpecChatResponse,
     SpecUpdateRequest,
+    StartRunRequest,
+    TemporalHealth,
     UserPublic,
     WorkflowIdList,
+    WorkflowInputFieldSchema,
     WorkflowStateResponse,
 )
 from workflow_compiler.codegen.temporal.project_generator import generate_project_files
@@ -127,7 +140,21 @@ from workflow_compiler.exceptions import (
     UnsupportedFormatError,
     WorkflowCompilerError,
 )
+from workflow_compiler.execution import (
+    Run,
+    RunRegistry,
+    bundle_dir,
+    describe_runnable,
+    is_materialized,
+    materialize_bundle,
+)
 from workflow_compiler.ingestion import DocumentParserFactory
+from workflow_compiler.interfaces.executor import (
+    ExecutorUnavailableError,
+    RunNotFoundError,
+    RunStatus,
+    WorkflowExecutor,
+)
 from workflow_compiler.llm.types import ChatMessage
 from workflow_compiler.metrics import compute_time_saved
 from workflow_compiler.models import (
@@ -136,6 +163,7 @@ from workflow_compiler.models import (
     GeneratedFile,
     SpecChatSession,
     TemporalWorkflowDesign,
+    WorkflowState,
 )
 from workflow_compiler.models.user import User
 from workflow_compiler.project_compiler import ProjectCompiler
@@ -218,12 +246,106 @@ async def _guard[T](coro: Awaitable[T]) -> T:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc)) from exc
 
 
+async def _run_guard[T](coro: Awaitable[T]) -> T:
+    """Map execution failures onto HTTP statuses.
+
+    A missing SDK or an unreachable server is **503**, not 500: it is a
+    precondition of the deployment, not a bug in the request. The UI normally
+    prevents ever reaching this by disabling the control (§5.4), but a server
+    that dies between the health check and the click must still say why.
+    """
+    try:
+        return await coro
+    except ExecutorUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _status_query_for(state: WorkflowState) -> str | None:
+    """A query that reports the workflow's own disposition, if it declares one.
+
+    Needed because a compensating saga ends *failed* on the server — the
+    generated ``workflow.py`` sets ``self._status = "compensated"`` and re-raises
+    — so a clean rollback and a genuine crash are indistinguishable without
+    asking the workflow. Prefers a query that names itself a status; falls back
+    to any string-returning query. ``None`` when there is none, in which case a
+    compensated run honestly reads as failed rather than being guessed at.
+    """
+    design = state.temporal_design
+    if design is None or not design.queries:
+        return None
+    string_queries = [q for q in design.queries if (q.returns or "str").strip() == "str"]
+    if not string_queries:
+        return None
+    named = next((q for q in string_queries if "status" in q.name.lower()), None)
+    return (named or string_queries[0]).name
+
+
+def _run_response(
+    run: Run,
+    status: RunStatus,
+    *,
+    written: list[str] | None = None,
+    kept: list[str] | None = None,
+) -> RunResponse:
+    return RunResponse(
+        run_id=run.run_id,
+        project_id=run.project_id,
+        slug=run.slug,
+        workflow_id=run.workflow_id,
+        execution_run_id=status.run_id or run.execution_run_id,
+        task_queue=run.task_queue,
+        state=status.state,
+        result=status.result,
+        error=status.error,
+        current_step=status.current_step,
+        events=[
+            RunEventSchema(at=event.at, kind=event.kind, detail=event.detail)
+            for event in status.events
+        ],
+        created_at=run.created_at,
+        bundle_written=written or [],
+        bundle_kept=kept or [],
+    )
+
+
+def _cached_run_response(run: Run) -> RunResponse:
+    """The last observed state, without calling Temporal.
+
+    Used by the list endpoint so opening the Results tab costs one round trip
+    rather than one per run.
+    """
+    return RunResponse(
+        run_id=run.run_id,
+        project_id=run.project_id,
+        slug=run.slug,
+        workflow_id=run.workflow_id,
+        execution_run_id=run.execution_run_id,
+        task_queue=run.task_queue,
+        state=run.last_state,
+        created_at=run.created_at,
+    )
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Reap bundle worker subprocesses so they do not outlive the API.
+
+    The pool deliberately keeps workers alive across requests (a workflow parked
+    on a 24-hour timer needs one), so nothing else would ever stop them.
+    """
+    yield
+    await get_executor().shutdown()
+
+
 def create_app() -> FastAPI:
     """Application factory."""
     app = FastAPI(
         title="workflow-compiler",
         version=__version__,
         description="Compile business workflow documents into canonical artifacts.",
+        lifespan=_lifespan,
     )
 
     app.add_middleware(
@@ -243,10 +365,31 @@ def create_app() -> FastAPI:
     # the request, and cancelling one never persists a partial result.
     jobs = JobManager()
 
+    # Executions started from the Results tab. In memory like `jobs`, and for a
+    # stronger reason: Temporal is the durable record, so a restart loses only
+    # the project/slug mapping, never the run itself.
+    runs = RunRegistry()
+
     @app.get("/health", tags=["meta"])
-    async def health() -> dict[str, str]:
-        """Liveness probe."""
-        return {"status": "ok", "version": __version__}
+    async def health(
+        executor: WorkflowExecutor = Depends(get_executor),
+    ) -> dict[str, object]:
+        """Liveness probe, plus whether generated bundles can be run.
+
+        The Temporal block is what lets the UI disable its Run control with a
+        reason instead of failing on click (§5.4).
+        """
+        reachability = await executor.health()
+        return {
+            "status": "ok",
+            "version": __version__,
+            "temporal": {
+                "reachable": reachability.reachable,
+                "address": reachability.address,
+                "detail": reachability.detail,
+            },
+        }
+
 
     @app.post("/auth/register", response_model=UserPublic, tags=["auth"])
     async def register(
@@ -1084,6 +1227,228 @@ def create_app() -> FastAPI:
         _check_owner(await _guard(compiler.load_project(project_id)), user)
         diagram = await _guard(compiler.classify_preview(project_id, request.workflow))
         return CvpaPreviewResponse(slug=request.workflow, diagram=diagram)
+
+    # -- running generated bundles (RUN_WORKFLOWS_HANDOFF §5) ---------------
+
+    @app.get(
+        "/projects/{project_id}/runnable",
+        response_model=RunnableListResponse,
+        tags=["runs"],
+    )
+    async def list_runnable(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        states: WorkflowCompiler = Depends(get_compiler),
+        executor: WorkflowExecutor = Depends(get_executor),
+        user: User = Depends(get_current_user),
+    ) -> RunnableListResponse:
+        """What can be run, and whether Temporal is there to run it.
+
+        Reachability is reported rather than assumed so the UI can disable the
+        control with a reason instead of failing when it is clicked (§5.4).
+        """
+        project = await _guard(compiler.load_project(project_id))
+        _check_owner(project, user)
+
+        health = await executor.health()
+        root = get_settings().generated_root
+        workflows: list[RunnableWorkflowSchema] = []
+        for slug, workflow_id in project.workflow_ids.items():
+            state = await _guard(states.load_state(workflow_id))
+            runnable = describe_runnable(
+                slug=slug, state=state, root=root, project_id=project_id
+            )
+            workflows.append(
+                RunnableWorkflowSchema(
+                    slug=runnable.slug,
+                    workflow_id=runnable.workflow_id,
+                    workflow_type=runnable.workflow_type,
+                    task_queue=runnable.task_queue,
+                    runnable=runnable.runnable,
+                    bundle_dir=runnable.bundle_dir,
+                    materialized=is_materialized(bundle_dir(root, project_id, slug)),
+                    inputs=[
+                        WorkflowInputFieldSchema(
+                            name=f.name, type=f.type, sample=f.sample
+                        )
+                        for f in runnable.inputs
+                    ],
+                    signals=[
+                        SignalSchema(name=s.name, params=s.params) for s in runnable.signals
+                    ],
+                )
+            )
+        return RunnableListResponse(
+            temporal=TemporalHealth(
+                reachable=health.reachable,
+                address=health.address,
+                detail=health.detail,
+            ),
+            workflows=workflows,
+        )
+
+    @app.post(
+        "/projects/{project_id}/runs", response_model=RunResponse, tags=["runs"]
+    )
+    async def start_run(
+        project_id: str,
+        request: StartRunRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        states: WorkflowCompiler = Depends(get_compiler),
+        executor: WorkflowExecutor = Depends(get_executor),
+        user: User = Depends(get_current_user),
+    ) -> RunResponse:
+        """Start one execution of a generated workflow.
+
+        The bundle is materialized to disk if it is not there, and then run
+        **from disk** — so a hand-implemented ``activities.py`` is what actually
+        executes. Existing files are never overwritten (§3).
+        """
+        project = await _guard(compiler.load_project(project_id))
+        _check_owner(project, user)
+
+        workflow_id = project.workflow_ids.get(request.slug)
+        if workflow_id is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No generated workflow {request.slug!r} in this project.",
+            )
+        state = await _guard(states.load_state(workflow_id))
+        root = get_settings().generated_root
+        runnable = describe_runnable(
+            slug=request.slug, state=state, root=root, project_id=project_id
+        )
+        if not runnable.runnable or runnable.bundle_dir is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{request.slug!r} has no generated bundle to run — approve "
+                    "the specs first."
+                ),
+            )
+
+        unknown = set(request.input) - {f.name for f in runnable.inputs}
+        if unknown:
+            # Rejected rather than dropped: a field the workflow never reads is
+            # a caller mistake, and silently ignoring it makes the run look like
+            # it honored input it did not.
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown WorkflowInput field(s): {', '.join(sorted(unknown))}.",
+            )
+
+        materialized = materialize_bundle(state, Path(runnable.bundle_dir))
+        started = await _run_guard(
+            executor.start(
+                bundle_dir=str(materialized.directory),
+                workflow_type=runnable.workflow_type,
+                task_queue=runnable.task_queue,
+                workflow_id=f"{request.slug}-{uuid.uuid4().hex[:12]}",
+                payload=dict(request.input),
+            )
+        )
+
+        run = runs.add(
+            project_id=project_id,
+            slug=request.slug,
+            owner_id=user.user_id,
+            workflow_id=started.workflow_id,
+            execution_run_id=started.run_id,
+            task_queue=runnable.task_queue,
+            workflow_type=runnable.workflow_type,
+            bundle_dir=str(materialized.directory),
+            status_query=_status_query_for(state),
+        )
+        return _run_response(
+            run,
+            started,
+            written=materialized.written,
+            kept=materialized.kept,
+        )
+
+    @app.get(
+        "/projects/{project_id}/runs", response_model=list[RunResponse], tags=["runs"]
+    )
+    async def list_runs(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> list[RunResponse]:
+        """Runs for this project, newest first (cached states, no Temporal call)."""
+        _check_owner(await _guard(compiler.load_project(project_id)), user)
+        visible = None if get_settings().projects_shared else user.user_id
+        return [_cached_run_response(run) for run in runs.list(
+            owner_id=visible, project_id=project_id
+        )]
+
+    @app.get("/runs/{run_id}", response_model=RunResponse, tags=["runs"])
+    async def get_run(
+        run_id: str,
+        executor: WorkflowExecutor = Depends(get_executor),
+        user: User = Depends(get_current_user),
+    ) -> RunResponse:
+        """Live status and step trail for one run."""
+        run = _require_run(run_id)
+        status = await _run_guard(
+            executor.describe(
+                workflow_id=run.workflow_id,
+                run_id=run.execution_run_id,
+                status_query=run.status_query,
+            )
+        )
+        runs.note_state(run.run_id, status.state)
+        return _run_response(run, status)
+
+    @app.post("/runs/{run_id}/signal", response_model=RunResponse, tags=["runs"])
+    async def signal_run(
+        run_id: str,
+        request: SignalRunRequest,
+        executor: WorkflowExecutor = Depends(get_executor),
+        user: User = Depends(get_current_user),
+    ) -> RunResponse:
+        """Deliver a signal by its **spec** name, one argument per parameter (§6.2)."""
+        run = _require_run(run_id)
+        await _run_guard(
+            executor.signal(
+                workflow_id=run.workflow_id,
+                run_id=run.execution_run_id,
+                name=request.name,
+                args=list(request.args),
+            )
+        )
+        status = await _run_guard(
+            executor.describe(
+                workflow_id=run.workflow_id,
+                run_id=run.execution_run_id,
+                status_query=run.status_query,
+            )
+        )
+        runs.note_state(run.run_id, status.state)
+        return _run_response(run, status)
+
+    @app.delete("/runs/{run_id}", response_model=RunResponse, tags=["runs"])
+    async def terminate_run(
+        run_id: str,
+        executor: WorkflowExecutor = Depends(get_executor),
+        user: User = Depends(get_current_user),
+    ) -> RunResponse:
+        """Stop a running execution."""
+        run = _require_run(run_id)
+        await _run_guard(
+            executor.terminate(
+                workflow_id=run.workflow_id,
+                run_id=run.execution_run_id,
+                reason="terminated from the workflow-compiler UI",
+            )
+        )
+        runs.note_state(run.run_id, "terminated")
+        return _cached_run_response(run)
+
+    def _require_run(run_id: str) -> Run:
+        run = runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"No run {run_id!r}.")
+        return run
 
     return app
 

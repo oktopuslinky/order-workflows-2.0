@@ -13,6 +13,7 @@ Then, from inside this package directory::
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 
 from temporalio.client import Client
@@ -25,7 +26,7 @@ TASK_QUEUE = "{{ task_queue }}"
 
 async def main() -> None:
     """Connect to Temporal and start a single workflow execution."""
-    client = await Client.connect("localhost:7233")
+    client = await Client.connect(os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"))
 
     handle = await client.start_workflow(
         {{ workflow_class }}.run,

@@ -127,7 +127,7 @@ corrections to this document are in **`docs/PIPELINE_RUN_LOG.md`** — read that
 
 | Stage | Local eGPU | Cloud | Notes |
 |---|---|---|---|
-| Ingestion (`.md`) | ✅ | ✅ | `.docx/.pdf/.html/.txt` paths still untested on both |
+| Ingestion (`.md`) | ✅ | ✅ | **`.docx` and `.pdf` now verified on cloud** (7/7 each, via the UI); `.html/.txt` still untested |
 | Segmentation (+3 review passes) | ✅ | ✅ | 90s local (was 113s) |
 | Fact extraction per workflow | ✅ | ✅ | 358–420s *per workflow* local |
 | Spec file render → human gate | ✅ | ✅ | 2 specs, cross-workflow dep detected |

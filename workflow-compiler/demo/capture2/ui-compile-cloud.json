@@ -1,0 +1,42 @@
+{
+  "provider": "cloud",
+  "project": "http://localhost:3000/projects/9dc4dc0b-560f-4b7e-a9d1-7401a508e8a1",
+  "results": [
+    {
+      "id": 1,
+      "name": "The document uploads through the file control",
+      "passed": true,
+      "detail": "multi_workflow.md"
+    },
+    {
+      "id": 2,
+      "name": "Provider picker selects Nemotron (cloud)",
+      "passed": true,
+      "detail": "nemotron"
+    },
+    {
+      "id": 3,
+      "name": "Compile completes and opens the project",
+      "passed": true,
+      "detail": "284s → 9dc4dc0b-560f-4b7e-a9d1-7401a508e8a1"
+    },
+    {
+      "id": 4,
+      "name": "A new project was created with both workflows",
+      "passed": true,
+      "detail": "new=true specs=2 stage=spec_drafted"
+    },
+    {
+      "id": 5,
+      "name": "The cross-workflow dependency was detected",
+      "passed": true,
+      "detail": "undefined->undefined"
+    },
+    {
+      "id": 6,
+      "name": "The project page renders the compiled specs",
+      "passed": false,
+      "detail": "85 chars rendered"
+    }
+  ]
+}

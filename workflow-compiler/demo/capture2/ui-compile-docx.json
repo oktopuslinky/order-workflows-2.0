@@ -1,0 +1,53 @@
+{
+  "doc": "C:\\Users\\devag\\AppData\\Local\\Temp\\claude\\C--Users-devag-Documents-Code--local--order-workflows-dialogue\\1fe760d7-5948-4e49-9d67-83dd6baeae0f\\scratchpad\\fixtures\\customer_lifecycle.docx",
+  "provider": "nemotron",
+  "project": "11f67c89-bd23-41ab-98a3-d6d921c969f0",
+  "elapsed": 281,
+  "results": [
+    {
+      "id": 1,
+      "name": "File input accepts the document and the UI confirms it",
+      "passed": true,
+      "detail": "customer_lifecycle.docx"
+    },
+    {
+      "id": 2,
+      "name": "Provider select is set",
+      "passed": true,
+      "detail": "provider=nemotron"
+    },
+    {
+      "id": 3,
+      "name": "Compile completes through the browser and redirects to the project",
+      "passed": true,
+      "detail": "281s → 11f67c89-bd23-41ab-98a3-d6d921c969f0 (overlay_seen=true http=200)"
+    },
+    {
+      "id": 4,
+      "name": "Specs were drafted with real content",
+      "passed": true,
+      "detail": "stage=spec_drafted specs=2/2 [customer-onboarding:4a/2x/0c, account-provisioning:3a/2x/2c] empty=0"
+    },
+    {
+      "id": 41,
+      "name": "Compensations and cross-workflow dependencies survived extraction",
+      "passed": true,
+      "detail": "compensations=2/1 xrefs=1 [customer-onboarding.customer_record_id→account-provisioning.customer_record_id confirmed=false]"
+    },
+    {
+      "id": 5,
+      "name": "Project page renders the compiled specs",
+      "passed": true,
+      "detail": "2/2 slugs on screen"
+    },
+    {
+      "id": 6,
+      "name": "No unexpected browser console errors during the compile",
+      "passed": true,
+      "detail": "clean (1 benign Spark-probe 502s ignored)"
+    }
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  ]
+}

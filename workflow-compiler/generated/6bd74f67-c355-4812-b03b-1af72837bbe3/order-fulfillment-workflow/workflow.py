@@ -172,18 +172,15 @@ class OrderFulfillmentWorkflow:
             raise
         self._status = "completed"
         return self._status
-
-    @workflow.signal
-    def order_submitted_signal(self, order_id: str) -> None:
+    @workflow.signal(name="OrderSubmittedSignal")
+    def order_submitted_signal(self, order_id: str = "") -> None:
         """Handle the 'OrderSubmittedSignal' signal."""
         self._order_submitted_signal_received = True
-
-    @workflow.signal
-    def slabreach_alert(self, order_id: str, delay_reason: str) -> None:
+    @workflow.signal(name="SLABreachAlert")
+    def slabreach_alert(self, order_id: str = "", delay_reason: str = "") -> None:
         """Handle the 'SLABreachAlert' signal."""
         self._slabreach_alert_received = True
-
-    @workflow.query
+    @workflow.query(name="GetOrderStatus")
     def get_order_status(self) -> str:
         """Query the current status of an order."""
         return self._status

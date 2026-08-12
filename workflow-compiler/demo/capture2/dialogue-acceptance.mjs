@@ -304,7 +304,13 @@ async function main() {
   record(
     6,
     "Spec tab shows the dialogue's changes; Approve is re-gated",
-    (!staleness.checked || staleness.fresh) && approveDisabled !== null,
+    // No `|| !staleness.checked` escape hatch. This case exists to catch the
+    // clobber path -- a spec patched server-side while the editor still holds
+    // the pre-change text, which Approve then posts back over it. If the buffer
+    // could not be read, the check did not run, and reporting PASS for a check
+    // that did not run is how the previous two versions of case 3 hid real
+    // gaps. Fail loudly instead so the selector gets fixed.
+    staleness.checked && staleness.fresh && approveDisabled !== null,
     `spec_fresh=${staleness.checked ? staleness.fresh : "n/a"} introduced=${
       staleness.introduced ?? 0
     } missing=${staleness.missing ?? 0} approve_disabled=${approveDisabled !== null}${

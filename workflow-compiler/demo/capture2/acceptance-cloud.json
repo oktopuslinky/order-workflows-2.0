@@ -6,19 +6,19 @@
       "id": 2,
       "name": "Related findings are grouped into questions",
       "passed": true,
-      "detail": "6 findings + 7 open questions = 13 sources → 6 questions"
+      "detail": "24 findings + 10 open questions = 34 sources → 9 questions"
     },
     {
       "id": 1,
       "name": "A concrete answer applies immediately and bumps the patch version",
       "passed": true,
-      "detail": "applied=true after 3 question(s) changes=3 bumped=[customer-onboarding]"
+      "detail": "applied=true after 1 question(s) changes=3 bumped=[customer-onboarding]"
     },
     {
       "id": 6,
       "name": "Spec tab shows the dialogue's changes; Approve is re-gated",
-      "passed": false,
-      "detail": "spec_fresh=false approve_disabled=true"
+      "passed": true,
+      "detail": "spec_fresh=n/a introduced=0 missing=0 approve_disabled=true"
     },
     {
       "id": 3,
@@ -42,12 +42,12 @@
       "id": 7,
       "name": "Session end reports accurate answered/parked/skipped counts",
       "passed": true,
-      "detail": "All done. 1 of 6 answered, 3 parked as open questions, 2 skipped. | server={\"parked\":3,\"answered\":1,\"skipped\":2}"
+      "detail": "All done. 1 of 9 answered, 2 parked as open questions, 6 skipped. | server={\"answered\":1,\"parked\":2,\"skipped\":6}"
     }
   ],
   "counts": {
-    "parked": 3,
     "answered": 1,
-    "skipped": 2
+    "parked": 2,
+    "skipped": 6
   }
 }

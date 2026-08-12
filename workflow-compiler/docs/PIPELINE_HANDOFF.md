@@ -56,6 +56,25 @@ untouched and still pending.
    run — a killed run left one behind, so a single crash poisoned every
    subsequent attempt.
 
+### The back half now runs (2026-08-12, cloud)
+
+`approve-spec` → graph → CVPA → Temporal design → codegen → **a workflow that
+completes**. Previously never executed on any provider.
+
+- Manual graph override was needed: health 0.45 < the 0.9 auto-approve threshold, so
+  `POST /approve {workflow_id}` (§4.2 of `RUN_WORKFLOWS_HANDOFF.md`).
+- 9 files generated; the bundle ran to `WorkflowExecutionCompleted`, result `"completed"`.
+- **Compensations survive into the saga** — reversed order, `status = "compensated"`.
+  This is the field §5 flagged as most at risk.
+- **All three chat-made spec changes reached the generated code**
+  (`ObtainManagerApproval`, `EmailCustomerTrackingLink`, `NotifyCustomerOfDelay`),
+  which satisfies the §7.5 requirement that a conversationally-modified spec survives
+  into the bundle.
+
+Two codegen bugs had to be fixed first; both were invisible to every static check and
+are recorded in **`docs/RUN_WORKFLOWS_HANDOFF.md` §6**, which is also the design for
+running workflows from inside the app.
+
 ### Environment gotchas learned tonight (add to §2)
 
 - **A long-running `next dev` can serve 500s from a poisoned cache** while
@@ -79,15 +98,20 @@ untouched and still pending.
 **Updated 2026-08-11 after a Spark verification session.** Measurements and three
 corrections to this document are in **`docs/PIPELINE_RUN_LOG.md`** — read that first.
 
+> **Superseded for cloud by §0.0 (2026-08-12).** The table below is the state as of
+> 2026-08-11 morning; the cloud column is now largely ✅. Local/Spark is unchanged.
+
 | Stage | Local eGPU | Cloud | Notes |
 |---|---|---|---|
 | Ingestion (`.md`) | ✅ | ✅ | `.docx/.pdf/.html/.txt` paths still untested on both |
 | Segmentation (+3 review passes) | ✅ | ✅ | 90s local (was 113s) |
 | Fact extraction per workflow | ✅ | ✅ | 358–420s *per workflow* local |
 | Spec file render → human gate | ✅ | ✅ | 2 specs, cross-workflow dep detected |
-| `validate` | 🟡 | ❌ | started, killed mid-run at end of session — **resume here** |
-| **Dialogue / Resolve chat** | ❌ | ❌ | **still never run** — blocked on `validate` (§7.3) |
-| `approve-spec` → graph → CVPA → Temporal design → codegen | ❌ | ❌ | never run; CVPA + design are LLM stages |
+| `validate` | 🟡 | ✅ | cloud: 1.5–3.8m via the jobs API |
+| **Dialogue / Resolve chat** | ❌ | ✅ | 6/7 acceptance cases in a real browser |
+| **Free-form spec chat** (new) | ❌ | ✅ | 7/7 browser + all 4 dispositions via API (§7.6) |
+| `approve-spec` → graph → CVPA → Temporal design → codegen | ❌ | ✅ | 9 files; needs the manual graph override when health < 0.9 (§0.0) |
+| **Generated bundle runs on Temporal** | ❌ | ✅ | reached `WorkflowExecutionCompleted`, result `"completed"` |
 | Compile **via the UI** | ❌ | 🟡 | cloud proven at the **API** layer the UI calls; browser click itself untested |
 
 Measured this session:

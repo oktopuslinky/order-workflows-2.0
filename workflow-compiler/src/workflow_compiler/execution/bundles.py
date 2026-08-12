@@ -40,6 +40,15 @@ from workflow_compiler.models import TemporalWorkflowDesign, WorkflowState
 #: Files that must be present for a directory to count as a runnable bundle.
 _REQUIRED = ("worker.py", "workflow.py", "activities.py", "shared.py")
 
+#: Proof that a generated ``worker.py`` connects to the *configured* Temporal
+#: address rather than a baked-in one.
+_ADDRESS_MARKER = 'os.environ.get("TEMPORAL_ADDRESS"'
+
+#: The address older templates hardcoded. A bundle that predates
+#: ``TEMPORAL_ADDRESS`` support always connects here, whatever the app is
+#: configured to use.
+LEGACY_WORKER_ADDRESS = "localhost:7233"
+
 
 @dataclass(frozen=True)
 class MaterializeResult:
@@ -62,6 +71,23 @@ def bundle_dir(root: str | Path, project_id: str, slug: str) -> Path:
 def is_materialized(directory: Path) -> bool:
     """``True`` when ``directory`` holds a bundle that can actually be run."""
     return all((directory / name).is_file() for name in _REQUIRED)
+
+
+def worker_honors_address(directory: Path) -> bool:
+    """Whether ``directory``'s ``worker.py`` reads ``TEMPORAL_ADDRESS``.
+
+    Bundles generated before that support connect to a hardcoded
+    ``localhost:7233`` no matter what the app is configured with. Because runs
+    execute the files on disk and never overwrite them, such a bundle can
+    outlive the fix — and it fails in the worst possible way: the worker starts
+    happily, connects to a *different* server, and the execution sits in
+    ``running`` forever because nothing is polling its queue. Detecting it is
+    the difference between an explanation and an unexplained hang.
+    """
+    try:
+        return _ADDRESS_MARKER in (directory / "worker.py").read_text(encoding="utf-8")
+    except OSError:
+        return False
 
 
 def materialize_bundle(

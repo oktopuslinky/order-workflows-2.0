@@ -24,6 +24,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from workflow_compiler.execution.bundles import (
+    LEGACY_WORKER_ADDRESS,
+    worker_honors_address,
+)
 from workflow_compiler.interfaces.executor import ExecutorUnavailableError
 from workflow_compiler.logging import get_logger
 
@@ -106,6 +110,24 @@ class WorkerPool:
         if not script.is_file():
             raise ExecutorUnavailableError(
                 f"no worker.py in {directory!r} — the bundle is not on disk"
+            )
+
+        # A bundle predating TEMPORAL_ADDRESS support ignores the environment
+        # and connects to localhost:7233 regardless. Materialization re-renders,
+        # so this only happens to a directory that was already on disk — from an
+        # older `approve-spec --out-dir`, or an unzipped download. Refuse it:
+        # letting it start means a worker that silently serves a *different*
+        # server while the execution sits in `running` with nothing polling its
+        # queue. (Observed for real, and it took a history dump to spot.)
+        if self._address != LEGACY_WORKER_ADDRESS and not worker_honors_address(
+            Path(directory)
+        ):
+            raise ExecutorUnavailableError(
+                f"the bundle in {directory!r} predates TEMPORAL_ADDRESS support: its "
+                f"worker.py connects to {LEGACY_WORKER_ADDRESS}, not the configured "
+                f"{self._address}. It would silently serve a different server and this "
+                "run would never progress. Delete the directory to re-materialize a "
+                "current bundle (any hand-edited activities.py there will be lost)."
             )
 
         env = dict(os.environ)

@@ -11,12 +11,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from workflow_compiler.execution import (
     bundle_dir,
     describe_runnable,
     is_materialized,
     materialize_bundle,
 )
+from workflow_compiler.execution.bundles import (
+    LEGACY_WORKER_ADDRESS,
+    worker_honors_address,
+)
+from workflow_compiler.execution.workers import WorkerPool
+from workflow_compiler.interfaces.executor import ExecutorUnavailableError
 from workflow_compiler.models import (
     GeneratedFile,
     TemporalCodeBundle,
@@ -99,6 +107,55 @@ def test_materialize_rerenders_rather_than_replaying_stored_code(tmp_path: Path)
     worker = (tmp_path / "b" / "worker.py").read_text(encoding="utf-8")
     assert "stale" not in worker
     assert 'os.environ.get("TEMPORAL_ADDRESS"' in worker
+
+
+async def test_a_bundle_that_ignores_temporal_address_is_refused(tmp_path: Path) -> None:
+    """The worst failure mode this feature has: a stale worker.py connects to a
+    hardcoded localhost:7233, serves a *different* server, and the run sits in
+    `running` forever because nothing polls its queue. Materialization
+    re-renders, so this only reaches a directory that was already on disk — an
+    old `approve-spec --out-dir`, or an unzipped download.
+    """
+    directory = tmp_path / "old-bundle"
+    directory.mkdir()
+    for name in ("workflow.py", "activities.py", "shared.py"):
+        (directory / name).write_text("# placeholder\n", encoding="utf-8")
+    (directory / "worker.py").write_text(
+        'client = await Client.connect("localhost:7233")\n', encoding="utf-8"
+    )
+    assert not worker_honors_address(directory)
+
+    pool = WorkerPool(address="localhost:7234")
+    with pytest.raises(ExecutorUnavailableError) as caught:
+        await pool.ensure(bundle_dir=str(directory), task_queue="q")
+
+    message = str(caught.value)
+    assert "TEMPORAL_ADDRESS" in message
+    assert "localhost:7234" in message
+    # The message has to say what to actually do about it.
+    assert "Delete the directory" in message
+
+
+async def test_a_stale_bundle_is_allowed_when_the_address_matches_anyway(
+    tmp_path: Path,
+) -> None:
+    """Only the genuinely broken combination is blocked. A bundle hardcoding the
+    address the app is configured with connects to the right place regardless,
+    so refusing it would be gratuitous."""
+    directory = tmp_path / "old-bundle"
+    materialize_bundle(_state(), directory)
+    (directory / "worker.py").write_text(
+        'client = await Client.connect("localhost:7233")\n', encoding="utf-8"
+    )
+
+    pool = WorkerPool(address=LEGACY_WORKER_ADDRESS)
+    # Spawning is what would fail; the address guard must not be what stops it.
+    try:
+        await pool.ensure(bundle_dir=str(directory), task_queue="q")
+    except ExecutorUnavailableError as exc:
+        assert "TEMPORAL_ADDRESS" not in str(exc)
+    finally:
+        await pool.shutdown()
 
 
 def test_describe_runnable_exposes_form_fields_with_sample_defaults(tmp_path: Path) -> None:

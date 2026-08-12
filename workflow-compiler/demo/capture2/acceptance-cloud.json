@@ -6,7 +6,7 @@
       "id": 2,
       "name": "Related findings are grouped into questions",
       "passed": true,
-      "detail": "24 findings + 10 open questions = 34 sources → 9 questions"
+      "detail": "7 findings + 12 open questions = 19 sources → 13 questions"
     },
     {
       "id": 1,
@@ -18,7 +18,7 @@
       "id": 6,
       "name": "Spec tab shows the dialogue's changes; Approve is re-gated",
       "passed": true,
-      "detail": "spec_fresh=n/a introduced=0 missing=0 approve_disabled=true"
+      "detail": "spec_fresh=true introduced=1 missing=0 approve_disabled=true"
     },
     {
       "id": 3,
@@ -42,12 +42,12 @@
       "id": 7,
       "name": "Session end reports accurate answered/parked/skipped counts",
       "passed": true,
-      "detail": "All done. 1 of 9 answered, 2 parked as open questions, 6 skipped. | server={\"answered\":1,\"parked\":2,\"skipped\":6}"
+      "detail": "All done. 1 of 13 answered, 2 parked as open questions, 10 skipped. | server={\"answered\":1,\"parked\":2,\"skipped\":10}"
     }
   ],
   "counts": {
     "answered": 1,
     "parked": 2,
-    "skipped": 6
+    "skipped": 10
   }
 }

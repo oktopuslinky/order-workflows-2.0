@@ -75,6 +75,30 @@ Two codegen bugs had to be fixed first; both were invisible to every static chec
 are recorded in **`docs/RUN_WORKFLOWS_HANDOFF.md` §6**, which is also the design for
 running workflows from inside the app.
 
+### Cloud is now fully green (2026-08-12, final state)
+
+| Suite | Result |
+|---|---|
+| `dialogue-acceptance.mjs` | **7/7**, exit 0 |
+| `chat-acceptance.mjs` (new) | **7/7**, exit 0 |
+| `ui-compile-acceptance.mjs` (new) | **6/6**, exit 0 — compile via the browser, 258–312s |
+| Generated bundle on Temporal | `WorkflowExecutionCompleted`, result `"completed"` |
+
+Case 6 of the dialogue suite — the clobber check, and the highest-severity claim in
+this document — is now genuinely exercised, not passed by an escape clause:
+`spec_fresh=true introduced=1 missing=0`. Reading that buffer needed three things the
+first attempts got wrong: the editor is **CodeMirror, not a `<textarea>`**; `.cm-content`
+is **virtualised** so its `innerText` is only the visible lines; and React
+**double-buffers fibers**, so the current props may sit on `.alternate`. See
+`readSpecBuffer()` in the script.
+
+**Every harness bug this session produced a confident wrong answer, not an error** — a
+vacuous assertion that passed having tested nothing, a wrong denominator that scored real
+grouping as failure, two steady-state races that read the previous turn's DOM, a timeout
+in the wrong argument position, and a report path left percent-encoded so no report was
+ever written. Treat a green acceptance run as suspect until you have seen it go red for
+the right reason.
+
 ### Environment gotchas learned tonight (add to §2)
 
 - **A long-running `next dev` can serve 500s from a poisoned cache** while
@@ -103,7 +127,7 @@ corrections to this document are in **`docs/PIPELINE_RUN_LOG.md`** — read that
 
 | Stage | Local eGPU | Cloud | Notes |
 |---|---|---|---|
-| Ingestion (`.md`) | ✅ | ✅ | `.docx/.pdf/.html/.txt` paths still untested on both |
+| Ingestion (`.md`) | ✅ | ✅ | **`.docx` and `.pdf` now verified on cloud** (7/7 each, via the UI); `.html/.txt` still untested |
 | Segmentation (+3 review passes) | ✅ | ✅ | 90s local (was 113s) |
 | Fact extraction per workflow | ✅ | ✅ | 358–420s *per workflow* local |
 | Spec file render → human gate | ✅ | ✅ | 2 specs, cross-workflow dep detected |
@@ -112,7 +136,7 @@ corrections to this document are in **`docs/PIPELINE_RUN_LOG.md`** — read that
 | **Free-form spec chat** (new) | ❌ | ✅ | 7/7 browser + all 4 dispositions via API (§7.6) |
 | `approve-spec` → graph → CVPA → Temporal design → codegen | ❌ | ✅ | 9 files; needs the manual graph override when health < 0.9 (§0.0) |
 | **Generated bundle runs on Temporal** | ❌ | ✅ | reached `WorkflowExecutionCompleted`, result `"completed"` |
-| Compile **via the UI** | ❌ | 🟡 | cloud proven at the **API** layer the UI calls; browser click itself untested |
+| Compile **via the UI** | ❌ | ✅ | 6/6 browser cases, 258–312s; the click path, overlay and redirect all exercised |
 
 Measured this session:
 

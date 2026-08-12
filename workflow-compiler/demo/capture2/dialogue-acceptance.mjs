@@ -86,6 +86,90 @@ async function settled(page, prev = null) {
   );
 }
 
+/**
+ * Select a workflow tab in the Spec view's left rail.
+ *
+ * The tab is a button wrapping `<span class="truncate">slug</span>` plus an
+ * optional blocking-findings count badge, so its innerText is `"slug\n3"` for
+ * any spec that has findings. Matching the button's text exactly therefore
+ * silently fails on precisely the specs a dialogue has been working through —
+ * leaving the previous tab selected and the next read pointed at the wrong spec.
+ */
+async function selectSlugTab(page, slug) {
+  await page
+    .locator("aside button")
+    .filter({ has: page.locator(`span.truncate:text-is(${JSON.stringify(slug)})`) })
+    .first()
+    .click();
+  // Wait for the editor to actually show this spec rather than sleeping: the
+  // first line is always rendered, so it is a reliable settle signal.
+  await page.waitForFunction(
+    (s) => {
+      const c = document.querySelector(".cm-editor .cm-content");
+      if (!c) return false;
+      const first = (c.innerText || "").split("\n")[0].toLowerCase();
+      // Slugs are kebab-case renderings of the title, e.g.
+      // account-provisioning ⇢ "# Account Provisioning Workflow".
+      return s
+        .split("-")
+        .every((w) => first.includes(w));
+    },
+    slug,
+    { timeout: 30_000 },
+  );
+}
+
+/**
+ * The spec editor's full buffer — what Approve would actually POST.
+ *
+ * Three things make this harder than it looks, and all three previously made
+ * case 6 read the wrong bytes:
+ *   - There is no `<textarea>`. The editor is CodeMirror 6 (contenteditable).
+ *   - `.cm-content` is virtualised, so its innerText is only the visible lines
+ *     (measured: 2737 of 4202 chars on the reference spec).
+ *   - React double-buffers fibers. The DOM node's `__reactFiber$` may hold the
+ *     PREVIOUS render's props while the current ones sit on `.alternate`
+ *     (measured: fiber said 4202 for a spec whose real buffer was 2571).
+ *
+ * So: collect candidates from both fiber chains, then disambiguate against the
+ * text actually on screen. Returning the wrong-but-plausible buffer is worse
+ * than returning null, because this case exists to detect a stale buffer.
+ */
+async function readSpecBuffer(page) {
+  return page.evaluate(() => {
+    const ed = document.querySelector(".cm-editor");
+    if (!ed) return null; // Preview/diagram mode unmounts the editor entirely.
+    let host = ed;
+    let fiber = null;
+    for (let hop = 0; host && hop < 5 && !fiber; hop++) {
+      const key = Object.keys(host).find((k) => k.startsWith("__reactFiber$"));
+      if (key) fiber = host[key];
+      else host = host.parentElement;
+    }
+    const valueFrom = (start) => {
+      let f = start;
+      for (let i = 0; f && i < 40; i++) {
+        const p = f.memoizedProps;
+        if (p && typeof p.value === "string" && typeof p.onChange === "function") return p.value;
+        f = f.return;
+      }
+      return null;
+    };
+    const candidates = [...new Set([valueFrom(fiber), valueFrom(fiber?.alternate)])].filter(
+      (v) => typeof v === "string",
+    );
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0];
+    // Both chains yielded a value: keep the one whose first line matches the
+    // rendered first line.
+    const visibleFirst = (
+      document.querySelector(".cm-editor .cm-content")?.innerText || ""
+    ).split("\n")[0].trim();
+    const agreeing = candidates.filter((c) => c.split("\n")[0].trim() === visibleFirst);
+    return agreeing.length === 1 ? agreeing[0] : null;
+  });
+}
+
 /** The question currently on screen, with its severity/slug/follow-up state. */
 async function currentQuestion(page) {
   return page.evaluate(() => {
@@ -249,20 +333,20 @@ async function main() {
 
   await page.click("button:has-text('Spec')");
   await page.waitForTimeout(600);
-  // Preview renders straight from the editor buffer, and unlike CodeMirror it is
-  // not virtualised — so what it shows is exactly what Approve would post.
-  await page.click("button:has-text('Preview')");
-  await page.waitForTimeout(600);
+  // Stay in EDITOR mode, which is the default (`useState("editor")`). An earlier
+  // version clicked Preview here, but that view switch *unmounts* SpecEditor
+  // (`viewMode === "preview" ? <SpecPreview/> : <SpecEditor/>`), so every later
+  // attempt to read the editor buffer found no editor at all — and the case
+  // reported a stale buffer it had in fact never read.
 
   let staleness = { checked: false };
   if (changedSlug) {
-    // Select the tab for the spec the change landed in.
-    for (const t of await page.$$("button")) {
-      if ((await t.innerText()).trim() === changedSlug) {
-        await t.click();
-        await page.waitForTimeout(400);
-        break;
-      }
+    // Select the tab for the spec the change landed in. A failure here must fail
+    // case 6 rather than kill the run, or the remaining cases never report.
+    try {
+      await selectSlugTab(page, changedSlug);
+    } catch (e) {
+      staleness.selectError = String(e.message || e).slice(0, 80);
     }
     // Compare the RAW editor buffer against the server's rendering.
     //
@@ -272,12 +356,7 @@ async function main() {
     // Preview for a line of Markdown *source*, which cannot match: list
     // markers and emphasis do not survive rendering, so it reported a stale
     // buffer whenever the new line happened to be a bullet.
-    const buffer = await page.evaluate(() => {
-      const ta = document.querySelector("textarea");
-      if (ta) return ta.value;
-      const cm = document.querySelector(".cm-content");
-      return cm ? cm.innerText : null;
-    });
+    const buffer = await readSpecBuffer(page);
     if (buffer !== null) {
       const server = specsAfter1[changedSlug] || "";
       const norm = (t) => t.replace(/\s+/g, " ").trim();
@@ -315,7 +394,7 @@ async function main() {
       staleness.introduced ?? 0
     } missing=${staleness.missing ?? 0} approve_disabled=${approveDisabled !== null}${
       staleness.sample ? ` first_missing="${staleness.sample}"` : ""
-    }`,
+    }${staleness.selectError ? ` tab_select_error="${staleness.selectError}"` : ""}`,
   );
 
   await page.click("button:has-text('Resolve')");

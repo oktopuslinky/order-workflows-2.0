@@ -1,0 +1,47 @@
+{
+  "doc": "C:\\Users\\devag\\Documents\\Code (local)\\order-workflows-dialogue\\workflow-compiler\\examples\\multi_workflow.md",
+  "provider": "nemotron",
+  "project": "cc65cb4c-f1ce-40f5-bb77-d76206a5cb5d",
+  "elapsed": 312,
+  "results": [
+    {
+      "id": 1,
+      "name": "File input accepts the document and the UI confirms it",
+      "passed": true,
+      "detail": "multi_workflow.md"
+    },
+    {
+      "id": 2,
+      "name": "Provider select is set",
+      "passed": true,
+      "detail": "provider=nemotron"
+    },
+    {
+      "id": 3,
+      "name": "Compile completes through the browser and redirects to the project",
+      "passed": true,
+      "detail": "312s → cc65cb4c-f1ce-40f5-bb77-d76206a5cb5d (overlay_seen=true http=200)"
+    },
+    {
+      "id": 4,
+      "name": "Specs were drafted with real content",
+      "passed": true,
+      "detail": "stage=spec_drafted specs=2/2 [customer-onboarding:4a/2x/0c, account-provisioning:5a/2x/2c] empty=0"
+    },
+    {
+      "id": 5,
+      "name": "Project page renders the compiled specs",
+      "passed": true,
+      "detail": "2/2 slugs on screen"
+    },
+    {
+      "id": 6,
+      "name": "No unexpected browser console errors during the compile",
+      "passed": true,
+      "detail": "clean (1 benign Spark-probe 502s ignored)"
+    }
+  ],
+  "consoleErrors": [
+    "Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
+  ]
+}

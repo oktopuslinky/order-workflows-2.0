@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import type { NodeRunStatus } from "@/lib/runHighlights";
 
 let mermaidReady: Promise<typeof import("mermaid").default> | null = null;
 
@@ -18,9 +19,21 @@ function loadMermaid() {
   return mermaidReady;
 }
 
-export function MermaidView({ source }: { source: string }) {
+const STATUS_CLASSES = ["run-done", "run-active", "run-waiting", "run-failed"];
+
+export function MermaidView({
+  source,
+  nodeStatus,
+}: {
+  source: string;
+  /** Live-run highlighting: diagram node id → status (see lib/runHighlights). */
+  nodeStatus?: Record<string, NodeRunStatus>;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bumped after each successful render so highlighting re-applies to the new
+  // SVG — the innerHTML swap throws away any classes set on the old one.
+  const [renderTick, setRenderTick] = useState(0);
   const domId = `mmd-${useId().replace(/:/g, "")}`;
 
   useEffect(() => {
@@ -32,6 +45,7 @@ export function MermaidView({ source }: { source: string }) {
         if (!cancelled && ref.current) {
           ref.current.innerHTML = svg;
           setError(null);
+          setRenderTick((t) => t + 1);
         }
       })
       .catch((e) => !cancelled && setError(String(e?.message ?? e)));
@@ -39,6 +53,19 @@ export function MermaidView({ source }: { source: string }) {
       cancelled = true;
     };
   }, [source, domId]);
+
+  useEffect(() => {
+    const svg = ref.current?.querySelector("svg");
+    if (!svg) return;
+    // Mermaid ids each node's <g> as `<renderId>-flowchart-<nodeId>-<n>` (the
+    // render id is the container dom id passed to mermaid.render).
+    svg.querySelectorAll<SVGGElement>("g.node").forEach((g) => {
+      g.classList.remove(...STATUS_CLASSES);
+      const key = g.id.match(/flowchart-(.+)-\d+$/)?.[1];
+      const status = key ? nodeStatus?.[key] : undefined;
+      if (status) g.classList.add(`run-${status}`);
+    });
+  }, [nodeStatus, renderTick]);
 
   if (!source?.trim()) {
     return <p className="text-xs text-[var(--faint)]">No diagram yet.</p>;

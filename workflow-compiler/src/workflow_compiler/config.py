@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -111,6 +112,18 @@ class Settings(BaseSettings):
     review_stages: set[str] = Field(
         default_factory=lambda: {"discovery", "facts"},
         description="Which LLM stages get the sequential review pipeline.",
+    )
+
+    predraft_questions: Literal["off", "cloud", "always"] = Field(
+        default="cloud",
+        description=(
+            "When to draft the Resolve tab's questions in the background after "
+            "validation, so opening it is instant. 'cloud' (default) skips the local "
+            "Spark gateway, which is a single GPU with no queueing — a background "
+            "request there can push a concurrent compile past its timeout and kill "
+            "it. 'always' enables it on every provider; 'off' disables it and the "
+            "questions are drafted on demand as before."
+        ),
     )
 
     graph_health_threshold: float = Field(

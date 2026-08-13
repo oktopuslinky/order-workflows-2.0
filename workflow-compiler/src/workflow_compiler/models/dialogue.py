@@ -35,6 +35,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
+from workflow_compiler.models.edit import XrefOp
 from workflow_compiler.models.findings import Severity
 from workflow_compiler.models.patch import Patch
 
@@ -66,6 +67,28 @@ class QuestionStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class SuggestedOption(WorkflowBaseModel):
+    """One candidate answer the drafting agent proposes alongside a question.
+
+    Options are a shortcut, never a shortlist: the free-text answer box is always
+    present and an option is only ever *text the user could have typed*. Picking
+    one sends its ``label`` through the same interpretation path as typed prose,
+    so there is a single apply path and no stored patch that can go stale.
+
+    They must be **grounded** in the specification or source document — an actor
+    that exists, a state the workflow already has, a downstream workflow that was
+    really discovered — rather than invented. The gate's whole value is that the
+    human is the oracle; plausible-looking invented options quietly move authorship
+    back to the model while the result still records as ``HUMAN_PROVIDED``.
+    """
+
+    label: str = Field(..., description="The candidate answer, phrased as the user would say it.")
+    detail: str = Field(
+        default="",
+        description="One short clause on what choosing this implies. Empty when self-evident.",
+    )
+
+
 class DialogueQuestion(WorkflowBaseModel):
     """One question put to the user, plus how it was ultimately resolved.
 
@@ -95,15 +118,35 @@ class DialogueQuestion(WorkflowBaseModel):
         default_factory=list,
         description="Source finding messages / open-question texts this question speaks for.",
     )
+    options: list[SuggestedOption] = Field(
+        default_factory=list,
+        description="Candidate answers offered alongside the free-text box. May be empty.",
+    )
     status: QuestionStatus = Field(
         default=QuestionStatus.PENDING, description="How the question was resolved."
     )
     answer: str | None = Field(
         default=None, description="The user's prose answer, verbatim."
     )
+    chosen_option: str | None = Field(
+        default=None,
+        description=(
+            "Label of the suggested option the user accepted verbatim, when they took "
+            "one rather than writing their own. None for typed or edited answers. Kept "
+            "so the audit trail distinguishes what the user authored from what they "
+            "merely agreed to."
+        ),
+    )
     followups: list[str] = Field(
         default_factory=list,
         description="Clarifying questions asked when an answer could not be mapped.",
+    )
+    followup_options: list[SuggestedOption] = Field(
+        default_factory=list,
+        description=(
+            "Candidate answers for the open follow-up. Replaced each time a follow-up "
+            "is asked; since at most one is ever asked, that is at most once."
+        ),
     )
     changes: list[str] = Field(
         default_factory=list,
@@ -123,6 +166,16 @@ class DialogueQuestion(WorkflowBaseModel):
     def prompt(self) -> str:
         """The text actually awaiting an answer — the follow-up if one is open."""
         return self.followups[-1] if self.awaiting_followup else self.text
+
+    @property
+    def prompt_options(self) -> list[SuggestedOption]:
+        """The options belonging to :attr:`prompt`.
+
+        Mirrors ``prompt`` deliberately: the client is handed the exact text and
+        the exact options to show, and never has to work out for itself whether
+        it is displaying the question or its follow-up.
+        """
+        return self.followup_options if self.awaiting_followup else self.options
 
 
 class DialogueSession(WorkflowBaseModel):
@@ -182,6 +235,31 @@ class DialogueSession(WorkflowBaseModel):
         self.touch()
 
 
+class PreparedAgenda(WorkflowBaseModel):
+    """A question agenda drafted ahead of time, waiting for the user to open it.
+
+    Drafting is the slow half of the dialogue — one LLM call per spec, serially,
+    before the user sees anything. Doing it in the background when ``validate``
+    finishes turns "Start resolving" from a multi-minute wait into an instant one.
+
+    ``fingerprint`` is what makes that safe. It is taken over the exact inputs the
+    agenda was drafted from, so an agenda whose specs or findings have moved on is
+    detectably stale and is re-drafted rather than shown. Only a *completed* draft
+    is ever persisted: an interrupted one leaves nothing behind and simply runs
+    again, which is the whole of the crash-recovery story.
+    """
+
+    fingerprint: str = Field(
+        ..., description="Digest of the findings/specs this agenda was drafted from."
+    )
+    questions: list[DialogueQuestion] = Field(
+        default_factory=list, description="The drafted agenda, in the order it will be asked."
+    )
+    drafted_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="When drafting completed."
+    )
+
+
 # --------------------------------------------------------------------------- #
 # LLM output schemas — permissive on purpose (see module docstring)
 # --------------------------------------------------------------------------- #
@@ -199,6 +277,10 @@ class DraftedQuestion(BaseModel):
         description="Verbatim finding messages / open-question texts this covers.",
     )
     section: str | None = Field(default=None, description="Spec section concerned.")
+    options: list[SuggestedOption] = Field(
+        default_factory=list,
+        description="Candidate answers grounded in the spec. Empty when none can be.",
+    )
 
 
 class DraftedQuestions(BaseModel):
@@ -223,11 +305,23 @@ class AnswerPlan(BaseModel):
     patches: list[Patch] = Field(
         default_factory=list, description="Deterministic spec operations the answer implies."
     )
+    xref_ops: list[XrefOp] = Field(
+        default_factory=list,
+        description=(
+            "Cross-workflow dependency operations the answer implies. A dependency "
+            "belongs to the project rather than to one spec, so it cannot be a Patch; "
+            "this is the same typed operation the edit path uses."
+        ),
+    )
     needs_followup: bool = Field(
         default=False, description="True when the answer is too vague to map as given."
     )
     followup_question: str | None = Field(
         default=None, description="The clarifying question to ask, when needs_followup."
+    )
+    followup_options: list[SuggestedOption] = Field(
+        default_factory=list,
+        description="Candidate answers to the clarifying question, when needs_followup.",
     )
     park_note: str | None = Field(
         default=None,
@@ -238,3 +332,12 @@ class AnswerPlan(BaseModel):
     def has_patches(self) -> bool:
         """True when the plan carries at least one effective (non-no-op) patch."""
         return any(not p.is_noop() for p in self.patches)
+
+    def has_effect(self) -> bool:
+        """True when the plan asks to change anything at all.
+
+        Patches change a spec; dependency operations change the project. Either
+        counts as an answer that acted, and both must be checked before falling
+        through to a follow-up or a park.
+        """
+        return self.has_patches() or bool(self.xref_ops)

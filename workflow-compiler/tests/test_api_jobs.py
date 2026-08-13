@@ -262,3 +262,185 @@ def test_cancel_finished_job_is_a_no_op(client: TestClient) -> None:
 def test_unknown_job_is_404(client: TestClient) -> None:
     assert client.get("/jobs/nope").status_code == 404
     assert client.post("/jobs/nope/cancel").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Speculative runs: background question drafting must never obstruct the user
+# --------------------------------------------------------------------------- #
+
+
+def test_a_speculative_run_yields_to_real_work_rather_than_blocking_it() -> None:
+    """Pre-drafting is a nicety. It must never answer a user's click with a 409.
+
+    Starting real work on a project cancels an in-flight speculative run instead
+    of being refused by it, and because nothing is persisted until a run
+    finishes, that discards work in progress and no state.
+    """
+
+    async def scenario() -> None:
+        mgr = JobManager()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        reached_end = False
+
+        async def drafting() -> None:
+            nonlocal reached_end
+            started.set()
+            await release.wait()  # cancellation lands here, like an LLM await
+            reached_end = True  # stands in for "persist the agenda"
+
+        speculative = await mgr.start(
+            project_id="p1", kind="predraft", owner_id="u1", run=lambda: drafting()
+        )
+        await started.wait()
+
+        # Real work is admitted, not refused.
+        real = await mgr.start(
+            project_id="p1", kind="validate", owner_id="u1", run=lambda: asyncio.sleep(0)
+        )
+
+        assert speculative.status == "canceled"
+        assert not reached_end, "the cancelled draft must not have persisted anything"
+        assert real.active or real.status == "succeeded"
+        release.set()
+
+    asyncio.run(scenario())
+
+
+def test_a_speculative_run_is_refused_while_anything_is_in_flight() -> None:
+    """It is not worth contending for the project — a later call will retry."""
+
+    async def scenario() -> None:
+        mgr = JobManager()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def work() -> None:
+            started.set()
+            await release.wait()
+
+        await mgr.start(
+            project_id="p1", kind="validate", owner_id="u1", run=lambda: work()
+        )
+        await started.wait()
+
+        with pytest.raises(JobConflictError):
+            await mgr.start(
+                project_id="p1", kind="predraft", owner_id="u1", run=lambda: work()
+            )
+
+        release.set()
+
+    asyncio.run(scenario())
+
+
+def test_two_speculative_runs_do_not_stack_on_one_project() -> None:
+    async def scenario() -> None:
+        mgr = JobManager()
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def work() -> None:
+            started.set()
+            await release.wait()
+
+        await mgr.start(
+            project_id="p1", kind="predraft", owner_id="u1", run=lambda: work()
+        )
+        await started.wait()
+
+        with pytest.raises(JobConflictError):
+            await mgr.start(
+                project_id="p1", kind="predraft", owner_id="u1", run=lambda: work()
+            )
+
+        release.set()
+
+    asyncio.run(scenario())
+
+
+def test_the_after_hook_runs_once_the_job_is_no_longer_active() -> None:
+    """Chaining a follow-on job is the whole point: it must not collide with the
+    job that is calling it, and its failure must not fail that job."""
+
+    async def scenario() -> None:
+        mgr = JobManager()
+        chained: list[str] = []
+
+        async def follow_on() -> None:
+            # A speculative start here would be refused if the calling job were
+            # still active — this is exactly the validate → predraft chain.
+            job = await mgr.start(
+                project_id="p1",
+                kind="predraft",
+                owner_id="u1",
+                run=lambda: asyncio.sleep(0),
+            )
+            chained.append(job.kind)
+
+        job = await mgr.start(
+            project_id="p1",
+            kind="validate",
+            owner_id="u1",
+            run=lambda: asyncio.sleep(0),
+            after=follow_on,
+        )
+        assert job.task is not None
+        await job.task
+
+        assert job.status == "succeeded"
+        assert chained == ["predraft"]
+
+    asyncio.run(scenario())
+
+
+def test_the_after_hook_is_skipped_when_the_job_failed() -> None:
+    async def scenario() -> None:
+        mgr = JobManager()
+        ran: list[str] = []
+
+        async def boom() -> None:
+            raise RuntimeError("stage blew up")
+
+        async def follow_on() -> None:
+            ran.append("after")
+
+        job = await mgr.start(
+            project_id="p1",
+            kind="validate",
+            owner_id="u1",
+            run=lambda: boom(),
+            after=follow_on,
+        )
+        assert job.task is not None
+        await job.task
+
+        assert job.status == "failed"
+        assert ran == []
+
+    asyncio.run(scenario())
+
+
+def test_a_failing_after_hook_does_not_fail_the_job() -> None:
+    """The stage the user asked for did succeed; a warm-up failure is not theirs."""
+
+    async def scenario() -> None:
+        mgr = JobManager()
+
+        async def boom() -> None:
+            raise RuntimeError("drafting blew up")
+
+        job = await mgr.start(
+            project_id="p1",
+            kind="validate",
+            owner_id="u1",
+            run=lambda: asyncio.sleep(0),
+            after=boom,
+        )
+        assert job.task is not None
+        await job.task
+
+        assert job.status == "succeeded"
+        assert job.error is None
+
+    asyncio.run(scenario())

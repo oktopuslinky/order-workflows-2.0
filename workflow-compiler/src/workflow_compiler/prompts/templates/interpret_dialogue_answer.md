@@ -35,6 +35,13 @@ Pick exactly one:
    "followup_question". Ask for the missing specific, not a general re-ask:
    "which team picks it up?" rather than "can you clarify?". Use this only when
    a single short clarification would unlock a real patch.
+
+   Offer two to four likely answers to it in "followup_options", each
+   `{"label": ..., "detail": ...}`. This is where they matter most: the user was
+   vague because the specifics were not to hand, so naming the plausible ones is
+   the fastest way out. Ground them in the CURRENT SPECIFICATION — real actors,
+   real states, real steps — and phrase each as a complete answer the user could
+   have typed. Return an empty list rather than inventing a candidate.
 3. **The answer cannot become a spec change at all** — the user does not know,
    defers to someone else, or raises something outside this specification →
    leave "patches" empty, "needs_followup" false, and put a one-sentence
@@ -76,6 +83,27 @@ For "modify" on a scalar fact, copy the current statement char-for-char from
 the specification as "old" — a paraphrased "old" will not match and the
 operation is dropped.
 
+## Cross-workflow dependencies (the "xref_ops" list)
+
+A dependency between two workflows belongs to the project, not to either spec,
+so it is NOT a patch. When the question asks whether a detected hand-off is
+real, answer with "xref_ops" instead:
+
+Each op: {"action": "modify" | "remove" | "add", "reference": {"source_workflow": "...", "output_field": "...", "output_type": "...", "target_workflow": "...", "input_field": "...", "input_type": "...", "description": "..."}}
+
+- **The user confirms it is real** → "modify" carrying the dependency EXACTLY as
+  the specification already states it. Applying it marks the dependency
+  confirmed, which is what unblocks approval.
+- **The user corrects it** (wrong field, wrong target) → "modify" carrying the
+  corrected reference. Keep the source workflow the same.
+- **The user says it is not real** → "remove" carrying the dependency as stated.
+- Only use "add" when the user describes a hand-off the specification does not
+  list at all.
+
+Copy the field names and workflow slugs from the CURRENT SPECIFICATION's
+Cross-Workflow Dependencies section — an operation naming a workflow that does
+not exist is dropped.
+
 ## Worked examples
 
 Q: "When a payment is confirmed, what happens next?"
@@ -88,14 +116,22 @@ A: "Billing is a team, they handle the invoices"
 
 Q: "What happens when the payment is declined?"
 A: "depends on the customer"
-→ {"patches": [], "needs_followup": true, "followup_question": "Which customers get which treatment — for example, do repeat customers get a retry while new ones are cancelled?"}
+→ {"patches": [], "needs_followup": true, "followup_question": "Which customers get which treatment — for example, do repeat customers get a retry while new ones are cancelled?", "followup_options": [{"label": "Repeat customers get one retry; new customers are cancelled straight away.", "detail": "Two branches off the declined path."}, {"label": "Everyone gets one retry, and we only cancel if it fails twice.", "detail": "One retry step, no customer split."}, {"label": "Support decides case by case.", "detail": "Hands the declined path to Support."}]}
 
 Q: "What happens when the payment is declined?"
 A: "honestly not sure, ops owns that decision and they haven't told us yet"
 → {"patches": [], "needs_followup": false, "park_note": "The declined-payment path is owned by the ops team and has not been decided yet."}
 
+Q: "Does customer-onboarding really hand customer_record_id to account-provisioning, or did we detect that wrongly?"
+A: "yes that's right, provisioning can't start without the customer record"
+→ {"patches": [], "xref_ops": [{"action": "modify", "reference": {"source_workflow": "customer-onboarding", "output_field": "customer_record_id", "output_type": "str", "target_workflow": "account-provisioning", "input_field": "customer_record_id", "input_type": "str", "description": "Account Provisioning consumes the customer_record_id produced by Customer Onboarding"}}], "needs_followup": false}
+
+Q: "Does customer-onboarding really hand customer_record_id to account-provisioning?"
+A: "no, provisioning looks that up from the CRM itself"
+→ {"patches": [], "xref_ops": [{"action": "remove", "reference": {"source_workflow": "customer-onboarding", "output_field": "customer_record_id", "output_type": "str", "target_workflow": "account-provisioning", "input_field": "customer_record_id", "input_type": "str"}}], "needs_followup": false}
+
 Return ONLY a JSON object:
-{"patches": [...], "needs_followup": false, "followup_question": null, "park_note": null, "note": "..."}
+{"patches": [...], "xref_ops": [], "needs_followup": false, "followup_question": null, "followup_options": [], "park_note": null, "note": "..."}
 
 CURRENT SPECIFICATION:
 {{ current_spec }}

@@ -32,6 +32,7 @@ from workflow_compiler.dialogue.spec_ops import (
 from workflow_compiler.exceptions import CompilationError
 from workflow_compiler.interfaces.llm import BaseLLMProvider
 from workflow_compiler.models import CompilationProject, WorkflowSpec
+from workflow_compiler.models.dialogue import SuggestedOption
 from workflow_compiler.models.spec_chat import (
     ChatRole,
     ChatTurnStatus,
@@ -116,19 +117,33 @@ class SpecChatEngine:
         message: str,
         *,
         slug: str | None = None,
+        chosen_option: str | None = None,
     ) -> ChatOutcome:
         """Read one ``message`` and act on it.
 
         Mutates ``project`` and ``session`` in place (the caller persists). An
         unrecognised ``slug`` is an error rather than a silent fallback — the
         alternative is patching a specification the user was not looking at.
+
+        ``chosen_option`` names a suggested reply the user accepted verbatim.
+        It is recorded, not trusted: the text is interpreted exactly as typed
+        prose would be, and a label that was not actually offered is dropped
+        rather than stored.
         """
         text = message.strip()
         if not text:
             raise CompilationError("A message cannot be empty.")
 
         spec = self._resolve_spec(project, session, slug)
-        session.record(SpecChatTurn(role=ChatRole.USER, text=text, slug=spec.slug))
+        offered = {o.label for o in session.pending_options}
+        session.record(
+            SpecChatTurn(
+                role=ChatRole.USER,
+                text=text,
+                slug=spec.slug,
+                chosen_option=chosen_option if chosen_option in offered else None,
+            )
+        )
 
         pending_instruction = session.pending_instruction
         pending_question = session.pending_question
@@ -237,10 +252,14 @@ class SpecChatEngine:
         if plan.needs_clarification:
             question = (plan.clarifying_question or "").strip()
             if question:
+                options = [o for o in plan.clarifying_options if o.label.strip()]
                 session.pending_instruction = instruction
                 session.pending_question = question
                 session.pending_slug = spec.slug
-                return self._settle(session, spec, ChatTurnStatus.CLARIFYING, question)
+                session.pending_options = options
+                return self._settle(
+                    session, spec, ChatTurnStatus.CLARIFYING, question, options=options
+                )
 
         return self._park(
             project, session, spec, plan, instruction,
@@ -307,6 +326,7 @@ class SpecChatEngine:
         changes: list[str] | None = None,
         parked_as: str | None = None,
         warnings: list[str] | None = None,
+        options: list[SuggestedOption] | None = None,
     ) -> ChatOutcome:
         """Append the assistant turn and package the outcome."""
         turn = session.record(
@@ -318,6 +338,7 @@ class SpecChatEngine:
                 changes=changes or [],
                 parked_as=parked_as,
                 warnings=warnings or [],
+                options=options or [],
             )
         )
         return ChatOutcome(

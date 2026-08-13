@@ -128,7 +128,12 @@ from workflow_compiler.api.schemas import (
 from workflow_compiler.codegen.temporal.project_generator import generate_project_files
 from workflow_compiler.compiler import WorkflowCompiler
 from workflow_compiler.config import get_settings
-from workflow_compiler.dialogue import AnswerOutcome, ChatOutcome
+from workflow_compiler.dialogue import (
+    AnswerOutcome,
+    ChatOutcome,
+    has_anything_to_ask,
+    prepared_agenda_is_fresh,
+)
 from workflow_compiler.exceptions import (
     ApprovalError,
     CompilationError,
@@ -900,6 +905,48 @@ def create_app() -> FastAPI:
     # spec's patch version — so these are all plain synchronous calls. A single
     # answer is one LLM round trip, not a pipeline run.
 
+    def _predraft_allowed() -> bool:
+        """Whether background question drafting may run on this deployment.
+
+        ``cloud`` (the default) excludes the local Spark gateway: it is a single
+        GPU with no queueing, and an extra concurrent request there can push an
+        in-flight compile past its timeout and kill it. ``local-fallback`` counts
+        as local — it tries the gateway first.
+        """
+        settings = get_settings()
+        if settings.predraft_questions == "off":
+            return False
+        if settings.predraft_questions == "always":
+            return True
+        return not settings.llm_provider.startswith("local")
+
+    async def _maybe_predraft(
+        project: CompilationProject, compiler: ProjectCompiler, owner_id: str | None
+    ) -> Job | None:
+        """Start background question drafting, if it is wanted and possible.
+
+        Idempotent and entirely best-effort: it does nothing when the feature is
+        off, when there is nothing to ask, when a fresh agenda is already waiting,
+        or when any run is already in flight for this project. Callers treat a
+        ``None`` return as unremarkable — pre-drafting is a latency optimisation,
+        and every path still works without it.
+        """
+        if not _predraft_allowed():
+            return None
+        if prepared_agenda_is_fresh(project) or not has_anything_to_ask(project):
+            return None
+        try:
+            return await jobs.start(
+                project_id=project.project_id,
+                kind="predraft",
+                owner_id=owner_id,
+                run=lambda: compiler.prepare_dialogue(project.project_id),
+            )
+        except JobConflictError:
+            # Something is already running on this project. Either it is the
+            # pre-draft we wanted, or it is real work that will supersede it.
+            return None
+
     def _dialogue_response(
         project: CompilationProject,
         session: DialogueSession | None,
@@ -908,11 +955,15 @@ def create_app() -> FastAPI:
     ) -> DialogueResponse:
         """Wrap the dialogue state for the client, including what just changed."""
         question = session.current if session is not None else None
+        predraft = jobs.active_for_project(project.project_id, speculative=True)
         return DialogueResponse(
             project=project,
             session=session,
             question=question,
             prompt=question.prompt if question is not None else None,
+            options=question.prompt_options if question is not None else [],
+            prepared=prepared_agenda_is_fresh(project),
+            preparing=predraft is not None,
             answered=session.answered_count if session is not None else 0,
             total=len(session.questions) if session is not None else 0,
             remaining=(
@@ -957,10 +1008,47 @@ def create_app() -> FastAPI:
         """Open a session over the project's blocking/warning findings + questions.
 
         400 when there is nothing to resolve — validate first if the specs moved.
+
+        A background pre-draft still in flight is cancelled first. The user has
+        stopped waiting for it, and letting both run would draft the same agenda
+        twice against the model at once — wasted tokens on cloud, and on the
+        single-GPU local gateway the kind of concurrent request that pushes an
+        in-flight call past its timeout.
         """
         _check_owner(await _guard(compiler.load_project(project_id)), user)
+        stale = jobs.active_for_project(project_id, speculative=True)
+        if stale is not None:
+            await jobs.cancel(stale.job_id)
         project, session = await _guard(compiler.start_dialogue(project_id))
         return _dialogue_response(project, session)
+
+    @app.post(
+        "/projects/{project_id}/dialogue/prepare",
+        response_model=DialogueResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["dialogue"],
+    )
+    async def prepare_dialogue(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> DialogueResponse:
+        """Draft the dialogue's questions in the background, so opening is instant.
+
+        Safe to call whenever the Resolve tab is opened: it is a no-op when a
+        fresh agenda is already waiting, when one is already being drafted, when
+        there is nothing to ask, or when the feature is disabled for this
+        provider. The response reports ``prepared``/``preparing`` either way, so
+        the client learns which of those happened without a second call.
+
+        Nothing is persisted until drafting completes, so an interrupted run —
+        a cancelled job, a restarted server — simply leaves nothing prepared and
+        this call starts it again.
+        """
+        project = await _guard(compiler.load_project(project_id))
+        _check_owner(project, user)
+        await _maybe_predraft(project, compiler, user.user_id)
+        return _dialogue_response(project, project.dialogue_session)
 
     @app.post(
         "/projects/{project_id}/dialogue/answer",
@@ -976,7 +1064,9 @@ def create_app() -> FastAPI:
         """Answer the current question in prose; the spec is patched in place."""
         _check_owner(await _guard(compiler.load_project(project_id)), user)
         project, session, outcome = await _guard(
-            compiler.answer_dialogue(project_id, request.answer)
+            compiler.answer_dialogue(
+                project_id, request.answer, chosen_option=request.option
+            )
         )
         return _dialogue_response(project, session, outcome=outcome)
 
@@ -1033,6 +1123,7 @@ def create_app() -> FastAPI:
             changes=outcome.changes if outcome is not None else [],
             parked_as=outcome.parked_as if outcome is not None else None,
             warnings=outcome.warnings if outcome is not None else [],
+            options=session.pending_options if session is not None else [],
             awaiting_clarification=(
                 session.awaiting_clarification if session is not None else False
             ),
@@ -1076,7 +1167,12 @@ def create_app() -> FastAPI:
         """
         _check_owner(await _guard(compiler.load_project(project_id)), user)
         project, session, outcome = await _guard(
-            compiler.send_spec_chat(project_id, request.message, slug=request.slug)
+            compiler.send_spec_chat(
+                project_id,
+                request.message,
+                slug=request.slug,
+                chosen_option=request.option,
+            )
         )
         return _chat_response(project, session, outcome=outcome)
 
@@ -1144,6 +1240,20 @@ def create_app() -> FastAPI:
         """
         _check_owner(await _guard(compiler.load_project(project_id)), user)
 
+        async def warm_questions() -> object:
+            """Draft the Resolve tab's questions once a validate has succeeded.
+
+            Validation is what produces the findings the agenda is built from, so
+            this is the first moment pre-drafting *can* run — and the user is
+            usually heading for the Resolve tab next. It runs as a follow-on
+            rather than inside the validate job so that the validate reports done
+            when validation is done, and so the pre-draft is not blocked by the
+            job that is calling it.
+            """
+            return await _maybe_predraft(
+                await compiler.load_project(project_id), compiler, user.user_id
+            )
+
         def run() -> Awaitable[object]:
             if request.kind == "validate":
                 return compiler.validate_specs(
@@ -1164,6 +1274,7 @@ def create_app() -> FastAPI:
                 kind=request.kind,
                 owner_id=user.user_id,
                 run=run,
+                after=warm_questions if request.kind == "validate" else None,
             )
         except JobConflictError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

@@ -36,6 +36,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
+from workflow_compiler.models.dialogue import SuggestedOption
 from workflow_compiler.models.patch import Patch
 
 
@@ -87,6 +88,21 @@ class SpecChatTurn(WorkflowBaseModel):
     parked_as: str | None = Field(
         default=None, description="Text of the open question this became, when parked."
     )
+    options: list[SuggestedOption] = Field(
+        default_factory=list,
+        description=(
+            "Candidate replies to a clarifying question, on CLARIFYING turns. Empty "
+            "everywhere else."
+        ),
+    )
+    chosen_option: str | None = Field(
+        default=None,
+        description=(
+            "On a user turn: the label of a suggested reply accepted verbatim. None "
+            "when the user wrote their own. Kept so the audit trail distinguishes what "
+            "the user authored from what they agreed to."
+        ),
+    )
     warnings: list[str] = Field(
         default_factory=list, description="Non-fatal issues from the applier."
     )
@@ -118,6 +134,10 @@ class SpecChatSession(WorkflowBaseModel):
     )
     pending_question: str | None = Field(
         default=None, description="The clarifying question awaiting a reply."
+    )
+    pending_options: list[SuggestedOption] = Field(
+        default_factory=list,
+        description="Candidate replies to the pending clarifying question, if any.",
     )
     pending_slug: str | None = Field(
         default=None, description="Workflow the pending instruction concerns, if resolved."
@@ -151,6 +171,7 @@ class SpecChatSession(WorkflowBaseModel):
         self.pending_instruction = None
         self.pending_question = None
         self.pending_slug = None
+        self.pending_options = []
 
     def record(self, turn: SpecChatTurn) -> SpecChatTurn:
         """Append ``turn`` to the transcript and stamp the session."""
@@ -199,6 +220,10 @@ class InstructionPlan(BaseModel):
     )
     clarifying_question: str | None = Field(
         default=None, description="The question to ask, when needs_clarification."
+    )
+    clarifying_options: list[SuggestedOption] = Field(
+        default_factory=list,
+        description="Candidate replies to that question, grounded in the specification.",
     )
     park_note: str | None = Field(
         default=None,

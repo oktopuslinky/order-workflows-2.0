@@ -10,8 +10,213 @@ Two jobs, in this order:
 2. **Finish the natural-language spec editing tool** (the "Resolve" chat). The code is built
    and committed; it has never been executed once, against any provider.
 
+> **Both jobs are now done on cloud** (§0.0, §0.-1): the whole pipeline runs end to end,
+> including the browser compile and all five ingestion formats, and the Resolve chat passes
+> 7/7 in a real browser. **Everything that remains is the `local`/Spark half**, which needs
+> the eGPU. The framing above is the original 2026-08-11 statement; read §0 for live status.
+
 Everything below is measured, not assumed. Where something is a *suspicion* it says so —
 please do not act on those without confirming first.
+
+---
+
+## 0.-2 Session 2026-08-12 later — suggested answers + pre-drafted questions
+
+Two additions to the Resolve chat, built and verified on cloud in this session. Full
+design, phases and measurements: **`docs/DIALOGUE_OPTIONS_HANDOFF.md`**.
+
+- **Questions now carry suggested answers.** The drafting agent proposes 2–4 grounded
+  candidate answers per question; the panel shows them above the answer box. Picking one
+  **fills the box rather than sending** — a misclick must not be able to patch a spec — and
+  the label is then interpreted through the *same* path as typed prose. No pre-computed
+  patches, no second apply path, nothing stored that can go stale. `chosen_option` records
+  what the user accepted versus authored, because the suggestions come from the model while
+  the result is stamped `HUMAN_PROVIDED` either way.
+- **The agenda is drafted in the background when `validate` succeeds.** Drafting is one LLM
+  call per spec and was the whole of the wait: **`dialogue:start` measured 364s** on a
+  project drafted live. It is now a `predraft` job chained off the validate job's success,
+  and "Start resolving" measured **0.1s**. Nothing half-drafted is ever persisted, so an
+  interrupted run leaves no trace and simply restarts — which is also how the panel
+  recovers after a server restart.
+
+Three things worth carrying forward:
+
+1. **`JobManager` gained a speculative kind and an `after` hook.** `predraft` is exempt from
+   the one-run-per-project rule and is auto-cancelled when real work arrives, so background
+   drafting can never answer a user's click with a 409. The chain could not be written
+   inline inside the validate job — the job is still `active` when its own coroutine
+   returns, so a speculative start would always be refused by it.
+2. **Pre-drafting is off on `local` by default** (`WORKFLOW_COMPILER_PREDRAFT_QUESTIONS` =
+   `off`|`cloud`|`always`, default `cloud`). §3.2 is the reason: the Spark gateway is a
+   single GPU with no queueing and a concurrent request has already killed a compile once.
+   **This means the `local` half of this feature is unverified and gated off** — enabling it
+   on the eGPU is a deliberate decision, not an oversight.
+3. **New cloud failure mode:** `nemotron transport error: Server disconnected without
+   sending a response.` Killed a pre-draft after 12.7 min; an identical retry succeeded in
+   433s. Add it to the 504 and "Already borrowed" already recorded below.
+
+**Also fixed: unconfirmed cross-workflow dependencies were a silent hard blocker.**
+`approve_spec` raises on them, but nothing emitted a finding, so validate reported green and
+the dialogue never asked — you could answer every question and still be refused at Approve.
+They now raise a WARNING (attributed to the source workflow, asked once), and the dialogue
+can confirm / correct / remove one conversationally via the edit path's `XrefOp`, whose
+applier moved to the shared `spec/wiring.py`. See `DIALOGUE_OPTIONS_HANDOFF.md` Phase 7.
+
+Gates: `pytest` **554 passed** (was 505), `ruff check src tests` clean, `mypy src` **35
+errors — the documented baseline, unchanged**. Browser on project `8896fe13`:
+`ui-compile-acceptance` **7/7** (366s), `dialogue-acceptance` **10/10** (the 7 cases below
+plus three new ones).
+
+*Method note, and the third time this document has recorded a version of it: a compile was
+killed on the belief that "no request ever reached the backend", read from `uvicorn > log
+2>&1`. That log block-buffers, **and** uvicorn only writes an access line when a request
+completes — so a healthy long compile is indistinguishable from silence twice over. Use
+`PYTHONUNBUFFERED=1`, and confirm a click by listening for the request in Playwright rather
+than by reading a log.*
+
+---
+
+## 0.-1 Session 2026-08-12 — the UI compile and the ingestion formats
+
+Spark was still unavailable, so this session was cloud-only again. It closed the two
+rows that had never been proven anywhere, and fixed the one acceptance case that was
+scoring itself wrongly.
+
+### The browser UI compile now works — the last ❌ row in §0
+
+Proven by clicking, not by calling the API the click calls:
+
+| Document | Compile | Result |
+|---|---|---|
+| `examples/multi_workflow.md` | **393s** | project `23a9c973`, HTTP 200, redirect to the project page |
+| `customer_lifecycle.docx` | **281s** | project `11f67c89` |
+| `customer_lifecycle.pdf` | **230s** | project `7b027384` |
+| `customer_lifecycle.html` | **286s** | project `024db04f` |
+| `customer_lifecycle.txt` | **594s** | project `b8ab0ad2` — slow because of a cloud 504 retry, see below |
+
+All five runs produced **2 specs with real content**, **2 surviving compensations**, and
+the `customer-onboarding.customer_record_id → account-provisioning.customer_record_id`
+cross-reference, UNCONFIRMED as designed. 7/7 cases each.
+
+New harness: **`demo/capture2/ui-compile-acceptance.mjs`**. It is parameterised by
+document (`--doc`), so the same proven click path covers every ingestion format rather
+than needing a second harness:
+
+```bash
+cd demo/capture2
+node ui-compile-acceptance.mjs --provider=nemotron --label=md \
+  --expect-specs=2 --expect-compensations=1 --expect-xref=true
+```
+
+### `.docx / .pdf / .html / .txt` ingestion is no longer untested
+
+This row was listed as untested because `tests/test_ingestion.py`, while it covers all
+four parsers, only feeds them toy inputs (a two-line `drawString` PDF, a
+three-paragraph DOCX). That proves the parsers run; it does not prove a real workflow
+document survives them.
+
+**`demo/capture2/make_format_fixtures.py`** authors the reference document once,
+structurally, and renders it into all four formats (Word paragraphs + heading styles, a
+`platypus`-flowed paginated PDF, semantic HTML, plain text), then asserts the ingestion
+layer recovers the content the compiler actually depends on — both workflow families,
+`customer_record_id`, every named exception, and both compensation pairs:
+
+```
+OK   customer_lifecycle.txt    3849B  format=txt   chars=3766 sections=34
+OK   customer_lifecycle.html   4490B  format=html  chars=3681 sections=49
+OK   customer_lifecycle.docx  37822B  format=docx  chars=3729 sections=49
+OK   customer_lifecycle.pdf    4419B  format=pdf   chars=3734 sections= 2
+```
+
+Worth knowing: **the PDF parser emits PAGE sections, not heading sections** (2 vs 49) —
+a PDF carries no heading structure. Segmentation works off `content.text` rather than
+the section tree, so it still found both workflows, but anything new that depends on
+`sections` will behave differently for PDF input than for every other format.
+
+### Case 6 was scoring itself wrongly — three defects, not one
+
+The prior session made case 6 fail loudly instead of passing silently, and recorded that
+"the dialogue-panel selector needs fixing". Measured against the live DOM, it had
+**three** independent defects, each sufficient on its own to make the case meaningless:
+
+1. **It clicked *Preview* before reading the editor.** The view switch *unmounts*
+   `SpecEditor` (`viewMode === "preview" ? <SpecPreview/> : <SpecEditor/>`), so there
+   was no editor left to read. Editor is already the default view — the click was pure
+   harm.
+2. **Its tab selector exact-matched the button's `innerText`.** The tab is
+   `<span class="truncate">{slug}</span>` plus a blocking-findings count badge, so
+   innerText is `"slug\n3"` for exactly the specs a dialogue has been working through.
+   The click silently no-oped, leaving the previous tab selected and the read pointed at
+   the wrong spec.
+3. **Its buffer read could not return the buffer.** It tried `<textarea>` (CodeMirror 6
+   has none — it is contenteditable), then `.cm-content` innerText, which is
+   **virtualised**: measured 2737 of 4202 chars. And the obvious fix — reading React's
+   `value` prop off the fiber — is *also* wrong on its own, because React double-buffers
+   fibers: measured, the DOM node's `__reactFiber$` reported 4202 for a spec whose real
+   buffer was 2571, with the current value sitting on `.alternate`.
+
+The replacement (`selectSlugTab` + `readSpecBuffer` in `dialogue-acceptance.mjs`) selects
+the tab by its `span.truncate` text, waits for the editor's first line to match rather
+than sleeping, and reads **both** fiber chains, disambiguating against the text actually
+on screen — returning `null` rather than a plausible-but-wrong buffer, since detecting a
+stale buffer is the entire point of the case. Verified exact for every slug in both
+directions.
+
+**Re-run result — 7/7 on a fresh project.** Driven against `23a9c973`, the project
+compiled *through the browser* earlier in this session (so the UI compile and the dialogue
+are proven on the same artifact), after a `validate` that produced 16 warning findings:
+
+```
+2. Related findings are grouped into questions — 16 findings + 3 open questions
+                                                 = 19 sources → 8 questions
+1. A concrete answer applies immediately and bumps the patch version
+                                               — applied=true changes=4 bumped=[customer-onboarding]
+6. Spec tab shows the dialogue's changes; Approve is re-gated
+                — spec_fresh=true introduced=1 missing=0 approve_disabled=true
+3. A vague answer gets at most one follow-up per question, then acts
+                — follow-up=true second_follow-up=false resolved=parked
+4. An unmappable answer parks as an unresolved open question
+                — ref=dialogue:46464302 provenance=human_provided unresolved=true
+5. Skip leaves the spec untouched
+7. All done. 1 of 8 answered, 2 parked as open questions, 5 skipped
+                — server={"answered":1,"parked":2,"skipped":5}
+```
+
+Case 6 now reports `checked=true`, so the clobber check actually **ran**: the Spec tab
+held the dialogue's change and Approve was re-gated. That is the §6.1.3 fix confirmed by
+observation rather than by reading code — the thing §6.1.3 was originally flagged for
+lacking.
+
+*Generalisable lesson, and the second time this document has recorded a version of it:
+a test that locates UI by Tailwind classes or by exact `innerText` fails silently when
+the component adds a badge or a wrapper. Prefer a stable inner element
+(`span.truncate:text-is(...)`), and make a check that could not run report `null`, never
+pass.*
+
+### Two cloud failure modes seen tonight
+
+- **HTTP 504** from the NVIDIA API, mid-compile: `nemotron.chat failed (attempt 1/3):
+  Provider returned HTTP 504. Retrying in 0.33s.` It recovered on retry, but it roughly
+  doubled that compile (594s vs a 230–286s norm). Already flagged in §0.0; now measured.
+- **HTTP 500 `{"error":{"message":"Already borrowed","type":"InternalServerError"}}`** —
+  **new, not previously recorded.** An NVIDIA-side internal error (it reads like a Rust
+  borrow conflict), not anything this codebase caused. It also recovered on retry and
+  the affected run still passed 7/7.
+
+Both are incidental confirmation that the §6.1.1 retry work holds up under genuine
+upstream flakiness.
+
+### Gates
+
+`pytest` **505 passed**; `ruff check src tests` clean; `mypy src` **35 errors — exactly
+the documented baseline**, unchanged (this session touched no files under `src/`).
+
+### Still blocked, and not closable without hardware
+
+Every `local` / Spark row in §0 and the first checkbox of §7.5. The eGPU was unavailable
+for this entire session. Nothing here substitutes for it: §1 is explicit that
+`local-fallback` will succeed via cloud and "prove" something that never touched the
+Spark.
 
 ---
 
@@ -81,8 +286,18 @@ running workflows from inside the app.
 |---|---|
 | `dialogue-acceptance.mjs` | **7/7**, exit 0 |
 | `chat-acceptance.mjs` (new) | **7/7**, exit 0 |
-| `ui-compile-acceptance.mjs` (new) | **6/6**, exit 0 — compile via the browser, 258–312s |
+| `ui-compile-acceptance.mjs` (new) | ⚠️ **see the correction below** — superseded by §0.-1 |
 | Generated bundle on Temporal | `WorkflowExecutionCompleted`, result `"completed"` |
+
+> **Correction (§0.-1 session).** The row above originally read "**6/6**, exit 0 — compile
+> via the browser, 258–312s". That figure is not supported by the evidence committed
+> alongside it: `ui-compile-cloud.json` in the same commit records a **6-case run whose
+> case 6 failed** (`"The project page renders the compiled specs | 85 chars rendered"`) —
+> 5/6, not 6/6 — and it comes from a *different* harness than the one named here (different
+> case titles, different JSON schema, `doc`/`elapsed` absent). No run at 258–312s exists in
+> any committed artifact. The UI compile **is** now genuinely proven, five documents deep,
+> but by the measurements in §0.-1 (230–594s), not by this row. Left in place rather than
+> deleted so the discrepancy is auditable.
 
 Case 6 of the dialogue suite — the clobber check, and the highest-severity claim in
 this document — is now genuinely exercised, not passed by an escape clause:
@@ -127,16 +342,16 @@ corrections to this document are in **`docs/PIPELINE_RUN_LOG.md`** — read that
 
 | Stage | Local eGPU | Cloud | Notes |
 |---|---|---|---|
-| Ingestion (`.md`) | ✅ | ✅ | **`.docx` and `.pdf` now verified on cloud** (7/7 each, via the UI); `.html/.txt` still untested |
+| Ingestion — **all five formats** | ✅ (`.md`) | ✅ | `.md/.docx/.pdf/.html/.txt` all verified on cloud, 7/7 each via the UI (§0.-1). Parser-level content checks too. Local: only `.md` |
 | Segmentation (+3 review passes) | ✅ | ✅ | 90s local (was 113s) |
 | Fact extraction per workflow | ✅ | ✅ | 358–420s *per workflow* local |
 | Spec file render → human gate | ✅ | ✅ | 2 specs, cross-workflow dep detected |
 | `validate` | 🟡 | ✅ | cloud: 1.5–3.8m via the jobs API |
-| **Dialogue / Resolve chat** | ❌ | ✅ | 6/7 acceptance cases in a real browser |
+| **Dialogue / Resolve chat** | ❌ | ✅ | **7/7** in a real browser, twice, on two independent projects — case 6 genuinely exercised (§0.-1) |
 | **Free-form spec chat** (new) | ❌ | ✅ | 7/7 browser + all 4 dispositions via API (§7.6) |
 | `approve-spec` → graph → CVPA → Temporal design → codegen | ❌ | ✅ | 9 files; needs the manual graph override when health < 0.9 (§0.0) |
 | **Generated bundle runs on Temporal** | ❌ | ✅ | reached `WorkflowExecutionCompleted`, result `"completed"` |
-| Compile **via the UI** | ❌ | ✅ | 6/6 browser cases, 258–312s; the click path, overlay and redirect all exercised |
+| Compile **via the UI** | ❌ | ✅ | 7/7 browser cases × 5 documents, **230–594s**; click path, provider select, overlay and redirect all exercised (§0.-1) |
 
 Measured this session:
 
@@ -171,21 +386,37 @@ PYTHONUTF8=1 .venv/Scripts/workflow-compiler validate 3978f39e-85de-46a7-a55c-92
 ```
 
 Then, in order: the 8 acceptance cases (§7.4) → re-validate → `approve-spec` → run the
-generated bundle against Temporal → a browser compile to clear the UI row.
+generated bundle against Temporal. (**The browser-compile step is done** — cloud only; see
+§0.-1. Re-running it on `local` is the remaining half.)
 
 The acceptance run is scripted and drives the **real browser**:
 
 ```bash
 cd demo/capture2      # playwright + chromium already installed here
 node dialogue-acceptance.mjs 3978f39e-85de-46a7-a55c-92d859082739 --provider-label=local
-# → acceptance-local.json ; exit 0 = all 8 cases passed
+# → acceptance-local.json ; exit 0 = all 7 cases passed
+```
+
+The UI compile has its own harness, parameterised by document — run it on `local` to close
+that half of the row (expect ~16 min per compile on the current Spark model, not 4):
+
+```bash
+node ui-compile-acceptance.mjs --provider=local --label=local-md \
+  --expect-specs=2 --expect-compensations=1 --expect-xref=true --budget-ms=2400000
+```
+
+Regenerate the non-Markdown fixtures first if they are not on disk:
+
+```bash
+PYTHONUTF8=1 .venv/Scripts/python demo/capture2/make_format_fixtures.py --out-dir <dir>
 ```
 
 Stack needed for that: backend on :8000 (`WORKFLOW_COMPILER_LLM_PROVIDER=local`, **not**
 `local-fallback` — see §1), frontend on :3000, and for the last step
 `temporal server start-dev --headless --port 7233`.
 
-Est. remaining: ~45 min on Spark, mostly unattended.
+Est. remaining: ~45 min on Spark for the dialogue cases, plus ~16 min per UI compile —
+mostly unattended. **Nothing is left on cloud.**
 
 ---
 
@@ -367,7 +598,7 @@ Pay particular attention to whether **compensations** (`rollback provisioning`,
 `deconfigure account`) survive into the generated saga — that is the field most at risk
 (§5).
 
-### 4.2 UI path (this is the one that has never succeeded)
+### 4.2 UI path (✅ proven on cloud — §0.-1; still unproven on `local`)
 
 <http://localhost:3000> → upload `examples/multi_workflow.md` → **Provider: "Spark (local
 only)"**, **Model: the one model that works** → Compile. Expect ~16 min on the current
@@ -479,8 +710,12 @@ POST   /projects/{id}/dialogue/skip     pass, spec untouched
 DELETE /projects/{id}/dialogue          close; applied answers stay applied
 ```
 
-**It has never been executed.** Unit tests pass (462 green) but no live run, no browser
-session, no LLM provider has ever seen a dialogue prompt.
+~~**It has never been executed.** Unit tests pass (462 green) but no live run, no browser
+session, no LLM provider has ever seen a dialogue prompt.~~
+
+**Superseded.** All four endpoints are exercised live on cloud, 7/7 in a real browser on
+two independent projects (§0.0, §0.-1). Suite is now **505 green**. Never executed on
+`local`.
 
 ### 7.2 Locked design decisions — do not re-litigate
 1. Surface: frontend chat panel + FastAPI endpoints (not CLI).
@@ -560,13 +795,29 @@ Still to do: drive it **through the browser** (only the API path is proven), and
 run it on **Spark**.
 
 ### 7.5 Definition of done
-- [ ] All 8 cases in §7.4 pass on **provider `local`**
-- [ ] All 8 cases pass on **provider `nemotron`**
-- [ ] §6.1 item 3 confirmed or refuted, and fixed if confirmed
-- [ ] A dialogue-modified spec survives `validate` → `approve-spec` → generated bundle
-- [ ] Generated bundle runs against a Temporal dev server (§4.1)
-- [ ] `pytest`, `ruff check src tests`, `mypy src` all green
-- [ ] Full pipeline table in §0 has no ❌ or ❔ left
+
+Status as of the §0.-1 session (2026-08-12). Cloud is complete; everything still open is
+open **only** for want of the eGPU.
+
+- [ ] All 8 cases in §7.4 pass on **provider `local`** — ⛔ **blocked, not attempted.**
+      The Spark gateway was unavailable for this entire session. Do not substitute
+      `local-fallback`: §1 is explicit that it succeeds via cloud and "proves" something
+      that never touched the eGPU.
+- [x] All 8 cases pass on **provider `nemotron`** — 7/7 twice, on two independent
+      projects. (The suite reports 7 cases, not 8: §7.4 case 8 is *re-validate → approve →
+      bundle*, which is not a browser case and is covered by the row below.)
+- [x] §6.1 item 3 confirmed or refuted, and fixed if confirmed — confirmed, fixed, and now
+      **observed green** in a browser (case 6, §0.-1).
+- [x] A dialogue-modified spec survives `validate` → `approve-spec` → generated bundle —
+      §0.0; all three chat-made changes reached the generated code.
+- [x] Generated bundle runs against a Temporal dev server (§4.1) —
+      `WorkflowExecutionCompleted`, result `"completed"`.
+- [x] `pytest`, `ruff check src tests` green — **505 passed**, ruff clean.
+      ⚠️ `mypy src` is **35 errors**, which is exactly the pre-existing baseline and
+      unchanged by this work — but it does **not** pass, contrary to `CLAUDE.md`. That gate
+      is still unresolved (see §8); this session did not touch `src/`.
+- [ ] Full pipeline table in §0 has no ❌ left — **cloud column has none. The Local eGPU
+      column is still almost entirely ❌**, and cannot change without the hardware.
 
 ---
 

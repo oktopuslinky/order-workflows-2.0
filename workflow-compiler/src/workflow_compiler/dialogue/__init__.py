@@ -15,7 +15,22 @@ on resetting the approval gate.
 
 from __future__ import annotations
 
+from workflow_compiler.dialogue.agenda import (
+    agenda_fingerprint,
+    askable_findings,
+    has_anything_to_ask,
+    prepared_agenda_is_fresh,
+)
 from workflow_compiler.dialogue.chat import ChatOutcome, SpecChatEngine
 from workflow_compiler.dialogue.engine import AnswerOutcome, DialogueEngine
 
-__all__ = ["AnswerOutcome", "ChatOutcome", "DialogueEngine", "SpecChatEngine"]
+__all__ = [
+    "AnswerOutcome",
+    "ChatOutcome",
+    "DialogueEngine",
+    "SpecChatEngine",
+    "agenda_fingerprint",
+    "askable_findings",
+    "has_anything_to_ask",
+    "prepared_agenda_is_fresh",
+]

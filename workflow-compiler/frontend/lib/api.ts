@@ -266,10 +266,23 @@ export const api = {
       method: "POST",
     }),
 
-  answerDialogue: (id: string, answer: string) =>
+  answerDialogue: (id: string, answer: string, option?: string | null) =>
     request<DialogueResponse>(
       `/projects/${encodeURIComponent(id)}/dialogue/answer`,
-      { method: "POST", headers: jsonHeaders, body: JSON.stringify({ answer }) },
+      {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ answer, option: option ?? null }),
+      },
+    ),
+
+  // Draft the questions in the background so opening Resolve is instant. Safe to
+  // call whenever the tab opens: the server no-ops when an agenda is already
+  // waiting, already being drafted, or there is nothing to ask.
+  prepareDialogue: (id: string) =>
+    request<DialogueResponse>(
+      `/projects/${encodeURIComponent(id)}/dialogue/prepare`,
+      { method: "POST" },
     ),
 
   skipDialogue: (id: string) =>
@@ -288,11 +301,20 @@ export const api = {
   getSpecChat: (id: string) =>
     request<SpecChatResponse>(`/projects/${encodeURIComponent(id)}/chat`),
 
-  sendSpecChat: (id: string, message: string, slug?: string | null) =>
+  sendSpecChat: (
+    id: string,
+    message: string,
+    slug?: string | null,
+    option?: string | null,
+  ) =>
     request<SpecChatResponse>(`/projects/${encodeURIComponent(id)}/chat`, {
       method: "POST",
       headers: jsonHeaders,
-      body: JSON.stringify({ message, slug: slug ?? null }),
+      body: JSON.stringify({
+        message,
+        slug: slug ?? null,
+        option: option ?? null,
+      }),
     }),
 
   endSpecChat: (id: string) =>

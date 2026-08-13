@@ -10,6 +10,7 @@ visible in the returned spec Markdown without a second request.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +20,7 @@ from workflow_compiler.api.app import app
 from workflow_compiler.api.auth import get_user_store
 from workflow_compiler.api.dependencies import get_compiler, get_project_compiler
 from workflow_compiler.compiler import ReviewConfig
+from workflow_compiler.config import get_settings
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import (
     AnswerPlan,
@@ -28,6 +30,7 @@ from workflow_compiler.models import (
     PatchAction,
     Severity,
     SpecFinding,
+    SuggestedOption,
 )
 from workflow_compiler.storage import InMemoryStateStore
 from workflow_compiler.storage.project_store import InMemoryProjectStore
@@ -339,3 +342,168 @@ def test_severity_is_carried_onto_the_question(harness: _Harness) -> None:
     body = harness.client.post(f"/projects/{project_id}/dialogue").json()
 
     assert body["question"]["severity"] == "blocking"
+
+
+# --------------------------------------------------------------------------- #
+# Suggested options + the pre-drafted agenda
+# --------------------------------------------------------------------------- #
+
+
+def _agenda_with_options(question: str, *options: str) -> DraftedQuestions:
+    return DraftedQuestions(
+        questions=[
+            DraftedQuestion(
+                slug="demo-order-workflow",
+                question=question,
+                section="Outputs",
+                options=[SuggestedOption(label=o) for o in options],
+            )
+        ]
+    )
+
+
+def test_options_ride_alongside_the_prompt(harness: _Harness) -> None:
+    """The client is handed the exact text AND the exact options to show."""
+    project_id = _compile(harness)
+    harness.seed_findings(project_id, SpecFinding(message="Outputs are unconsumed."))
+    harness.queue(_agenda_with_options("Where do outputs go?", "To shipping.", "To billing."))
+
+    body = harness.client.post(f"/projects/{project_id}/dialogue").json()
+
+    assert [o["label"] for o in body["options"]] == ["To shipping.", "To billing."]
+    assert [o["label"] for o in body["question"]["options"]] == ["To shipping.", "To billing."]
+
+
+def test_a_chosen_option_is_recorded_on_the_answered_question(harness: _Harness) -> None:
+    project_id = _compile(harness)
+    harness.seed_findings(project_id, SpecFinding(message="Outputs are unconsumed."))
+    harness.queue(
+        _agenda_with_options("Where do outputs go?", "To shipping."),
+        AnswerPlan(
+            patches=[
+                Patch(
+                    action=PatchAction.ADD,
+                    target="activity",
+                    payload={"name": "Hand off to shipping"},
+                )
+            ]
+        ),
+    )
+    harness.client.post(f"/projects/{project_id}/dialogue")
+
+    body = harness.client.post(
+        f"/projects/{project_id}/dialogue/answer",
+        json={"answer": "To shipping.", "option": "To shipping."},
+    ).json()
+
+    assert body["changes"], "the option text must apply like any other answer"
+    answered = body["session"]["questions"][0]
+    assert answered["chosen_option"] == "To shipping."
+    assert answered["answer"] == "To shipping."
+
+
+def test_an_unoffered_option_label_is_not_recorded(harness: _Harness) -> None:
+    """The audit trail must not claim a suggestion the user never saw."""
+    project_id = _compile(harness)
+    harness.seed_findings(project_id, SpecFinding(message="Outputs are unconsumed."))
+    harness.queue(
+        _agenda_with_options("Where do outputs go?", "To shipping."),
+        AnswerPlan(
+            patches=[
+                Patch(action=PatchAction.ADD, target="activity", payload={"name": "Something"})
+            ]
+        ),
+    )
+    harness.client.post(f"/projects/{project_id}/dialogue")
+
+    body = harness.client.post(
+        f"/projects/{project_id}/dialogue/answer",
+        json={"answer": "Something else.", "option": "Something else."},
+    ).json()
+
+    assert body["session"]["questions"][0]["chosen_option"] is None
+
+
+def test_prepare_drafts_the_agenda_so_start_is_instant(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id = _compile(harness)
+    harness.seed_findings(project_id, SpecFinding(message="Outputs are unconsumed."))
+    harness.queue(_agenda_with_options("Where do outputs go?", "To shipping."))
+    # Explicit, not ambient: this worktree's .env selects a local provider, which
+    # the default `cloud` setting deliberately excludes. Gating has its own tests
+    # below; this one is about the drafting itself.
+    monkeypatch.setattr(get_settings(), "predraft_questions", "always")
+
+    prepared = harness.client.post(f"/projects/{project_id}/dialogue/prepare")
+    assert prepared.status_code == 202
+
+    # The run is a background job; wait for it to land.
+    for _ in range(200):
+        body = harness.client.get(f"/projects/{project_id}/dialogue").json()
+        if body["prepared"]:
+            break
+        time.sleep(0.01)
+    assert body["prepared"] is True
+    assert body["preparing"] is False
+
+    # Starting now consumes the prepared agenda. The mock's queue is empty, so a
+    # re-draft would raise rather than quietly returning a scripted default.
+    started = harness.client.post(f"/projects/{project_id}/dialogue")
+    assert started.status_code == 200
+    assert started.json()["prompt"] == "Where do outputs go?"
+    assert [o["label"] for o in started.json()["options"]] == ["To shipping."]
+    assert started.json()["prepared"] is False, "the agenda was consumed"
+
+
+def test_prepare_is_a_noop_when_there_is_nothing_to_ask(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id = _compile(harness)
+    harness.clear_open_items(project_id)
+    # Enabled, so this asserts the "nothing to ask" guard rather than the gate.
+    monkeypatch.setattr(get_settings(), "predraft_questions", "always")
+
+    response = harness.client.post(f"/projects/{project_id}/dialogue/prepare")
+
+    assert response.status_code == 202
+    assert response.json()["prepared"] is False
+    assert response.json()["preparing"] is False
+
+
+def test_prepare_is_disabled_by_configuration(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`off` means the questions are drafted on demand, as before."""
+    project_id = _compile(harness)
+    harness.seed_findings(project_id, SpecFinding(message="Outputs are unconsumed."))
+    settings = get_settings()
+    monkeypatch.setattr(settings, "predraft_questions", "off")
+
+    body = harness.client.post(f"/projects/{project_id}/dialogue/prepare").json()
+
+    assert body["preparing"] is False
+    assert body["prepared"] is False
+
+
+def test_prepare_skips_the_local_gateway_by_default(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Spark gateway is one GPU with no queueing — background work can kill a
+    concurrent compile (PIPELINE_HANDOFF §3.2), so `cloud` excludes it."""
+    project_id = _compile(harness)
+    harness.seed_findings(project_id, SpecFinding(message="Outputs are unconsumed."))
+    settings = get_settings()
+    monkeypatch.setattr(settings, "predraft_questions", "cloud")
+    monkeypatch.setattr(settings, "llm_provider", "local-fallback")
+
+    body = harness.client.post(f"/projects/{project_id}/dialogue/prepare").json()
+
+    assert body["preparing"] is False
+    assert body["prepared"] is False
+
+
+def test_prepare_requires_authentication(harness: _Harness) -> None:
+    harness.client.post("/auth/logout")
+
+    assert harness.client.post("/projects/whatever/dialogue/prepare").status_code == 401

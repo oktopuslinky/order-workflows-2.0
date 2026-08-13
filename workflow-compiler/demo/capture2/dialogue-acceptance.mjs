@@ -15,8 +15,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const APP = "http://localhost:3000";
-const API = "http://localhost:8000";
+// Overridable so a run can target an isolated stack instead of the default
+// :3000/:8000 pair — two sessions share this worktree and a `next dev` /
+// `uvicorn --reload` on the default ports restarts under a long run.
+const APP = process.env.ACC_APP_URL || "http://localhost:3000";
+const API = process.env.ACC_API_URL || "http://localhost:8000";
 const CRED = { email: "acceptance@demo.local", password: "acceptance123" };
 
 const PROJECT = process.argv[2];
@@ -210,6 +213,46 @@ async function answer(page, text) {
   await settled(page, prev);
 }
 
+/** The suggested-answer buttons currently on screen, in order. */
+async function optionLabels(page) {
+  return page.evaluate(() => {
+    const box = document.querySelector("[data-testid='dialogue-options']");
+    if (!box) return [];
+    return [...box.querySelectorAll("button")].map(
+      (b) => b.querySelector("span")?.innerText.trim() ?? "",
+    );
+  });
+}
+
+/** Whatever is in the answer box right now. It is a plain textarea, not CodeMirror. */
+async function draftText(page) {
+  return page.evaluate(
+    () => document.querySelector("textarea[placeholder*='own words']")?.value ?? null,
+  );
+}
+
+/** Click the nth suggestion. By index, not by text: `:has-text` is a SUBSTRING
+ *  match, so two options sharing a prefix would either pick the wrong one or
+ *  trip strict mode, and option text is model-written and may contain quotes. */
+async function clickOption(page, index) {
+  await page.click(
+    `[data-testid='dialogue-options'] button >> nth=${index}`,
+  );
+}
+
+/** Answer by clicking a suggestion and sending it, rather than typing. */
+async function answerByOption(page, index) {
+  const prev = await promptText(page);
+  await clickOption(page, index);
+  await page.click("button:has-text('Answer')");
+  await settled(page, prev);
+}
+
+async function serverSession(ctx) {
+  const r = await ctx.request.get(`${API}/projects/${PROJECT}/dialogue`);
+  return r.ok() ? await r.json() : null;
+}
+
 async function main() {
   const browser = await chromium.launch({ headless: true });
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 1100 } });
@@ -242,13 +285,49 @@ async function main() {
     projBefore.specs.map((s) => [s.slug, s.metadata?.version ?? ""]),
   );
 
-  await page.goto(`${APP}/projects/${PROJECT}`, { waitUntil: "networkidle" });
+  // Not `networkidle`: a Next dev server holds an HMR connection open, so idle
+  // may never arrive and the run dies before it starts. The explicit
+  // waitForSelector below is what actually gates readiness.
+  await page.goto(`${APP}/projects/${PROJECT}`, { waitUntil: "domcontentloaded" });
   await page.click("button:has-text('Resolve')");
   await page.waitForSelector("button:has-text('Start resolving')", { timeout: 60_000 });
 
+  // ------------------------------------------------------------------ case 9
+  // The questions should already be drafted — either by the validate that ran
+  // before this script, or by the panel asking for a draft when the tab opened.
+  // This script never calls /dialogue/prepare itself, so a `prepared` here was
+  // not solicited by the test.
+  //
+  // Poll rather than sample once: if a draft is still in flight the panel says
+  // "Preparing questions…", and the honest result is to wait for it to land,
+  // not to score the race.
+  let prepState = await serverSession(ctx);
+  const prepDeadline = Date.now() + 900_000;
+  while (prepState?.preparing && Date.now() < prepDeadline) {
+    await sleep(3000);
+    prepState = await serverSession(ctx);
+  }
+  const sawPreparingUi = await page.evaluate(() =>
+    document.body.innerText.includes("Preparing questions"),
+  );
+  const wasPrepared = prepState?.prepared === true;
+
   // ---------------------------------------------------------------- case 2/1
+  const startedAt = Date.now();
   await page.click("button:has-text('Start resolving')");
   await settled(page);
+  const startSeconds = (Date.now() - startedAt) / 1000;
+
+  // A prepared agenda must make this fast — that is the entire point of the
+  // feature. Drafting live takes minutes; consuming a prepared agenda is a
+  // single request. 30s is generous enough to absorb a slow round trip and far
+  // below anything that involves an LLM call per spec.
+  record(
+    9,
+    "Questions are pre-drafted, so opening the session is instant",
+    wasPrepared && startSeconds < 30,
+    `prepared=${wasPrepared} preparing_ui=${sawPreparingUi} start=${startSeconds.toFixed(1)}s`,
+  );
 
   const q1 = await currentQuestion(page);
   if (q1.done) {
@@ -300,15 +379,77 @@ async function main() {
       "account_ready event when it finishes.",
   ];
 
+  // ------------------------------------------------------------------ case 8
+  // Suggested answers. Two claims: the drafting agent produces them at all, and
+  // clicking one FILLS the box rather than sending — a misclick must not be able
+  // to patch the specification.
+  const sessionAtStart = await serverSession(ctx);
+  const withOptions = (sessionAtStart?.session?.questions ?? []).filter(
+    (q) => (q.options ?? []).length > 0,
+  );
+  const onScreenOptions = await optionLabels(page);
+  let fillCheck = null; // null = could not run; never silently "passed"
+  if (onScreenOptions.length > 0) {
+    await clickOption(page, 0);
+    await page.waitForTimeout(200);
+    const filled = await draftText(page);
+    const stillAsking = (await promptText(page)) !== null;
+    // optionLabels trims; the textarea holds the label verbatim. Compare
+    // trimmed, or a model-emitted trailing space fails the case for nothing.
+    fillCheck = (filled ?? "").trim() === onScreenOptions[0] && stillAsking;
+    // Put the box back as it was so the agenda walk below is unaffected.
+    await page.fill("textarea[placeholder*='own words']", "");
+  }
+  record(
+    8,
+    "Questions offer suggested answers; picking one fills the box, not the spec",
+    withOptions.length > 0 && fillCheck === true,
+    `questions_with_options=${withOptions.length}/${
+      sessionAtStart?.session?.questions?.length ?? 0
+    } on_screen=${onScreenOptions.length} fills_without_sending=${fillCheck}`,
+  );
+
   let out1 = { applied: false, changes: [] };
   let attempts = 0;
+  let optionAnswer = null; // set when a question was answered by clicking one
   for (const text of CONCRETE) {
     const q = await currentQuestion(page);
     if (q.done) break;
     attempts += 1;
-    await answer(page, text);
+    // Prefer answering the FIRST option-bearing question by clicking, so the
+    // pick-to-apply path is exercised end to end rather than only the fill.
+    const here = await optionLabels(page);
+    if (optionAnswer === null && here.length > 0) {
+      optionAnswer = here[0];
+      await answerByOption(page, 0);
+    } else {
+      await answer(page, text);
+    }
     out1 = await lastOutcome(page);
     if (out1.applied) break;
+  }
+
+  // ----------------------------------------------------------------- case 10
+  // A picked option is recorded as picked. It still goes through the same
+  // interpreter as typed prose — what is asserted here is only that the audit
+  // trail can tell an accepted suggestion from an authored answer.
+  const sessionAfterPick = await serverSession(ctx);
+  const pickedQuestion = (sessionAfterPick?.session?.questions ?? []).find(
+    (q) => q.chosen_option !== null && q.chosen_option !== undefined,
+  );
+  if (optionAnswer === null) {
+    record(10, "A picked suggestion is recorded as picked", false,
+      "no question offered options during the walk — could not run");
+  } else {
+    record(
+      10,
+      "A picked suggestion is recorded as picked",
+      pickedQuestion?.chosen_option === optionAnswer &&
+        pickedQuestion?.answer === optionAnswer,
+      `picked=${JSON.stringify(optionAnswer)} recorded=${JSON.stringify(
+        pickedQuestion?.chosen_option ?? null,
+      )}`,
+    );
   }
 
   const projAfter1 = await serverProject(ctx);

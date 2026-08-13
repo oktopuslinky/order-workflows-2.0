@@ -129,8 +129,32 @@ picture before changing pipeline behavior.
   aborts). `validation_findings` is deliberately kept during a session — it is the agenda's source —
   and cleared by `finish()` only for the specs that actually changed, which is what forces a
   re-validate. Session state lives on `CompilationProject.dialogue_session`; the API is
-  `GET/POST/DELETE /projects/{id}/dialogue` plus `/dialogue/answer` and `/dialogue/skip`, and the
-  UI is the project page's **Resolve** tab.
+  `GET/POST/DELETE /projects/{id}/dialogue` plus `/dialogue/answer`, `/dialogue/skip` and
+  `/dialogue/prepare`, and the UI is the project page's **Resolve** tab.
+  Two refinements sit on top, both about the *drafting* half. **Suggested answers**: a question
+  may carry 2–4 candidate answers grounded in the spec; picking one *fills the answer box rather
+  than sending it*, and its text is then interpreted through the same path as typed prose —
+  there is deliberately **no** stored patch per option, so there is one apply path and nothing
+  that can go stale. `chosen_option` records what the user accepted rather than authored, since
+  the suggestions come from the model while the result is `HUMAN_PROVIDED` either way.
+  **Pre-drafting**: `DialogueEngine.prepare()` runs the same per-spec drafting without opening a
+  session, chained off a successful `validate` job as a `predraft` job (a *speculative* job kind
+  — exempt from one-run-per-project and auto-cancelled by real work, so it can never 409 a
+  user's click); `start()` then consumes the result when `dialogue/agenda.py::agenda_fingerprint`
+  still matches, and drafts live when it does not. Two more load-bearing rules: only a
+  **completed** draft is persisted (an interrupted one leaves nothing and simply re-runs — that
+  is the whole crash-recovery story), and `ProjectCompiler.prepare_dialogue` **re-loads the
+  project and re-checks the fingerprint before saving**, because drafting takes minutes and the
+  chat or a hand edit can move the specs underneath it. Gated by `predraft_questions`
+  (`off`/`cloud`/`always`, default `cloud`), which excludes the local gateway on purpose —
+  it is one GPU with no queueing.
+  Answers also carry `xref_ops`, because a **cross-workflow dependency belongs to the project
+  rather than to a spec** and so cannot be a `Patch`. An unconfirmed dependency is a hard stop
+  at approval (`approve_spec` raises), so `_validate_triggers_and_dependencies` raises a
+  WARNING for one — attributed to `source_workflow`, hence asked once — and the answer
+  confirms/corrects/removes it through `spec/wiring.py::apply_xref_op`, shared with the edit
+  path. A dependency op that cannot be applied is reported and skipped, never raised; if an
+  answer's every op is dropped it parks rather than reporting a change it did not make.
 
 - **HTTP auth + time-saved metric.** The API uses local accounts (`api/auth.py`: scrypt +
   HMAC-signed session cookie, users under `<state-root>/users/`); project routes require

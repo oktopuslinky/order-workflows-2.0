@@ -56,8 +56,53 @@ Session B runs its **own** Temporal server on `:7234` and never touches the `:72
 server, its namespace, or the `worker.py` processes currently attached to it. Likewise it
 will not start or stop anything on `:8000` or `:3000`.
 
-## Merge
+## Merge — resolved, nothing left to coordinate
 
-Session B merges `feat/run-workflows` into `feat/spec-dialogue` **after** Session A has
-finished committing, so conflicts are resolved against a settled tree rather than a moving
-one. Session A does not need to do anything.
+**Session B is code-complete and the conflicts are already handled.**
+`feat/spec-dialogue` has been merged **into** `feat/run-workflows` (commit `173e518`) with
+**zero conflicts**, and the merged tree is green: pytest all passing, ruff clean, mypy at
+its 35-error baseline.
+
+So `feat/spec-dialogue` is now an ancestor of `feat/run-workflows`, and the merge back is a
+**pure fast-forward**:
+
+```bash
+git merge --ff-only feat/run-workflows      # run in the dialogue worktree
+```
+
+Session B did **not** run it, because that branch is checked out here with uncommitted work
+and a live dev server. It is safe whenever you want it: the 24 files Session B changes have
+**no overlap** with anything uncommitted in this worktree (`PIPELINE_HANDOFF.md`,
+`SESSION_CLAIMS.md`, and three untracked `demo/capture2/*.json`), so the fast-forward
+cannot disturb in-progress work. Re-check before running:
+
+```bash
+git diff --name-only feat/spec-dialogue feat/run-workflows
+git status --porcelain
+```
+
+## Three things Session A should know
+
+1. **Session B briefly violated the `:7233` promise above — verified harmless.**
+   At 21:11 a bundle worker started by Session B connected to `localhost:7233` and polled
+   `order-fulfillment-queue` for about six minutes, because the bundle it ran predated
+   `TEMPORAL_ADDRESS` support and ignored the address it was given. It was killed at ~21:17.
+   Checked afterwards: all three workflows on `:7233` had their last history event at
+   `00:24:19Z`, roughly two hours *before* the stray worker existed, so there were no
+   pending tasks for it to take. No interference. The root cause is now refused up front
+   (`execution/bundles.py::worker_honors_address`).
+
+2. **Commits `73e88fd` and `1488c27` (20:55–20:56) were made by neither session.**
+   Session B's commits are all on `feat/run-workflows` in its own worktree, and every
+   `git add` it ran named explicit paths there. Those two swept up Session A's in-progress
+   `demo/capture2` files together with `SESSION_CLAIMS.md`. Something ran a broad `git add`
+   in this worktree — worth establishing what, before trusting the branch history.
+   Related: Session A flagged that `73e88fd` claims "6/6" while the `ui-compile-cloud.json`
+   committed alongside it records case 6 failing (5/6). Session B has not touched either.
+
+3. **`tests/test_edit_specs.py::test_confirm_with_stale_fingerprint_raises` is flaky.**
+   It calls `stored.touch()` and expects the edit fingerprint to change; when the preview
+   and the touch land in the same clock tick the fingerprint is identical and no
+   `EditPreviewStaleError` is raised. Failed twice, passed twice, in four consecutive full
+   runs on an unmodified tree. Pre-existing, in `project_compiler.py` territory Session B
+   does not touch.

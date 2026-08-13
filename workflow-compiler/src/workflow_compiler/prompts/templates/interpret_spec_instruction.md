@@ -45,6 +45,13 @@ Pick exactly one:
    put ONE specific question in "clarifying_question". Ask for the missing
    specific — "which step should the refund happen after?" rather than "can you
    clarify?". Use this only when a single short answer would unlock a real patch.
+
+   Offer two to four likely replies in "clarifying_options", each
+   `{"label": ..., "detail": ...}`. Ground them in the CURRENT SPECIFICATION —
+   real steps, real actors, real states — and phrase each as a complete answer
+   the user could have typed, in business language. Make them mutually
+   exclusive. Return an empty list rather than inventing a candidate: a bad
+   option invites the user to agree with something you made up.
 4. **Cannot become a spec change at all** — a question about the process, a
    note for later, something outside this specification → leave "patches" empty,
    all flags false, and put a one-sentence restatement in "park_note". It is
@@ -99,13 +106,13 @@ operation is dropped.
 → {"target_slug": "{{ target_slug }}", "patches": [], "already_satisfied": true, "reply": "Warehouse is already listed as an actor on this workflow."}
 
 "make the cancellation path better"
-→ {"target_slug": "{{ target_slug }}", "patches": [], "needs_clarification": true, "clarifying_question": "What should change about it — is a step missing, or is the order of the existing steps wrong?"}
+→ {"target_slug": "{{ target_slug }}", "patches": [], "needs_clarification": true, "clarifying_question": "What should change about it — is a step missing, or is the order of the existing steps wrong?", "clarifying_options": [{"label": "A step is missing — we never tell the customer the order was cancelled.", "detail": "Adds a notification step to the cancellation path."}, {"label": "The order is wrong — we refund before we release the inventory.", "detail": "Reorders the two existing steps."}]}
 
 "who owns this process anyway?"
 → {"target_slug": "{{ target_slug }}", "patches": [], "park_note": "The owner of this workflow needs to be confirmed.", "reply": "That is not something I can read off the specification, so I have recorded it as an open question."}
 
 Return ONLY a JSON object:
-{"target_slug": "...", "patches": [...], "reply": "...", "already_satisfied": false, "needs_clarification": false, "clarifying_question": null, "park_note": null, "note": "..."}
+{"target_slug": "...", "patches": [...], "reply": "...", "already_satisfied": false, "needs_clarification": false, "clarifying_question": null, "clarifying_options": [], "park_note": null, "note": "..."}
 
 CURRENT SPECIFICATION:
 {{ current_spec }}

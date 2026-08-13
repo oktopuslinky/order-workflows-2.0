@@ -18,6 +18,14 @@ a new spec is returned and swapped in, never mutated in place.
 The agenda is a snapshot taken at ``start``. Answers applied mid-session change
 the specs underneath it, but the agenda does not grow, so a session always
 terminates. Re-validating afterwards produces the next round.
+
+Drafting that agenda is the slow half — one LLM call per spec, serially, before
+the user sees anything — so :meth:`DialogueEngine.prepare` runs the same drafting
+without opening a session, for the background pre-draft that fires when
+validation finishes. ``start`` then consumes the prepared agenda if it still
+matches the material it was drafted from (see
+:mod:`workflow_compiler.dialogue.agenda`) and drafts live if it does not. The two
+paths produce the same questions; only the waiting differs.
 """
 
 from __future__ import annotations
@@ -26,8 +34,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from workflow_compiler.agents.dialogue import DialogueAgent
+from workflow_compiler.dialogue.agenda import (
+    SEVERITY_ORDER as _SEVERITY_ORDER,
+)
+from workflow_compiler.dialogue.agenda import (
+    agenda_fingerprint,
+    askable_findings,
+)
 from workflow_compiler.dialogue.spec_ops import (
     apply_patches,
+    bump_patch_version,
     park_as_open_question,
     replace_spec,
     reset_to_spec_gate,
@@ -44,24 +60,16 @@ from workflow_compiler.models.dialogue import (
     DialogueQuestion,
     DialogueSession,
     DraftedQuestion,
+    PreparedAgenda,
     QuestionOrigin,
     QuestionStatus,
+    SuggestedOption,
 )
 from workflow_compiler.models.findings import Severity, SpecFinding
 from workflow_compiler.prompts import PromptManager
 from workflow_compiler.spec.edit_applier import EditPatchApplier
 from workflow_compiler.spec.renderer import render_spec
-
-#: Severities that earn a question. INFO records non-problems (e.g. a folded-in
-#: edit) and would only pad the agenda.
-_ASKED_SEVERITIES = frozenset({Severity.BLOCKING, Severity.WARNING})
-
-#: Blocking findings sort ahead of warnings within a workflow's agenda.
-_SEVERITY_ORDER: dict[Severity, int] = {
-    Severity.BLOCKING: 0,
-    Severity.WARNING: 1,
-    Severity.INFO: 2,
-}
+from workflow_compiler.spec.wiring import apply_xref_op
 
 
 @dataclass
@@ -72,6 +80,8 @@ class AnswerOutcome:
     question: DialogueQuestion
     #: Set when a clarifying follow-up is now awaiting an answer.
     followup: str | None = None
+    #: Candidate answers to that follow-up, when it carries any.
+    followup_options: list[SuggestedOption] = field(default_factory=list)
     #: Human-readable lines describing the spec changes applied.
     changes: list[str] = field(default_factory=list)
     #: Set when the answer was recorded as a new open question instead.
@@ -104,14 +114,53 @@ class DialogueEngine:
     # ------------------------------------------------------------------ #
 
     async def start(self, project: CompilationProject) -> DialogueSession:
-        """Draft the question agenda for every spec with unresolved items.
+        """Open a session over every spec with unresolved items.
+
+        Uses the project's pre-drafted agenda when one is present and still
+        matches the material it was drafted from; drafts live otherwise. Either
+        way the prepared agenda is consumed — it has become a session, and a
+        second session must be drafted against whatever the first one left behind.
 
         Raises :class:`CompilationError` when there is nothing to ask about, so
         the caller can say so rather than opening an empty session.
         """
-        session = DialogueSession()
+        prepared = project.prepared_dialogue
+        project.prepared_dialogue = None
+        if prepared is not None and prepared.fingerprint == agenda_fingerprint(project):
+            questions = [q.model_copy(deep=True) for q in prepared.questions]
+        else:
+            questions = await self._draft_agenda(project)
+        if not questions:
+            raise CompilationError(
+                "Nothing to resolve: no blocking or warning findings and no open "
+                "questions. Run validate first if the specs have changed."
+            )
+        session = DialogueSession(questions=questions)
+        session.touch()
+        return session
+
+    async def prepare(self, project: CompilationProject) -> PreparedAgenda | None:
+        """Draft the agenda ahead of time, without opening a session.
+
+        Returns ``None`` when there is nothing to ask — the caller records
+        nothing rather than persisting an empty agenda that would look prepared.
+
+        The fingerprint is taken **before** drafting, over the material actually
+        fed to the model. Taking it afterwards would fold in any change that
+        happened during the (minutes-long) drafting run and stamp a stale agenda
+        as fresh.
+        """
+        fingerprint = agenda_fingerprint(project)
+        questions = await self._draft_agenda(project)
+        if not questions:
+            return None
+        return PreparedAgenda(fingerprint=fingerprint, questions=questions)
+
+    async def _draft_agenda(self, project: CompilationProject) -> list[DialogueQuestion]:
+        """One drafting call per spec that has anything unresolved, in order."""
+        agenda: list[DialogueQuestion] = []
         for spec in project.specs:
-            findings = self._askable_findings(project, spec.slug)
+            findings = askable_findings(project, spec.slug)
             questions = spec.unresolved_questions()
             if not findings and not questions:
                 continue
@@ -121,26 +170,10 @@ class DialogueEngine:
                 questions_block=self._questions_block(questions),
                 current_spec=render_spec(spec, project.cross_references, project.triggers),
             )
-            session.questions.extend(
+            agenda.extend(
                 self._to_questions(spec.slug, drafted.questions, findings, questions)
             )
-        if not session.questions:
-            raise CompilationError(
-                "Nothing to resolve: no blocking or warning findings and no open "
-                "questions. Run validate first if the specs have changed."
-            )
-        session.touch()
-        return session
-
-    @staticmethod
-    def _askable_findings(project: CompilationProject, slug: str) -> list[SpecFinding]:
-        """Blocking + warning findings for ``slug``, most severe first."""
-        found = [
-            f
-            for f in project.validation_findings.get(slug, [])
-            if f.severity in _ASKED_SEVERITIES
-        ]
-        return sorted(found, key=lambda f: _SEVERITY_ORDER[f.severity])
+        return agenda
 
     @staticmethod
     def _findings_block(findings: list[SpecFinding]) -> str:
@@ -194,6 +227,7 @@ class DialogueEngine:
                     severity=severity,
                     section=item.section,
                     covers=covers,
+                    options=[o for o in item.options if o.label.strip()],
                 )
             )
         built.sort(key=lambda q: _SEVERITY_ORDER[q.severity])
@@ -204,13 +238,26 @@ class DialogueEngine:
     # ------------------------------------------------------------------ #
 
     async def answer(
-        self, project: CompilationProject, session: DialogueSession, answer: str
+        self,
+        project: CompilationProject,
+        session: DialogueSession,
+        answer: str,
+        *,
+        chosen_option: str | None = None,
     ) -> AnswerOutcome:
         """Apply one prose ``answer`` to the current question.
 
         Mutates ``project`` and ``session`` in place (the caller persists). The
         spec itself is replaced wholesale with a new validated instance rather
         than edited, so a failed apply cannot leave a half-changed spec.
+
+        ``chosen_option`` names a suggested option the user accepted verbatim, if
+        they took one. It is **recorded, not trusted**: the answer still goes
+        through the same interpretation path as typed prose, and a label that
+        does not match an option actually offered is dropped rather than stored.
+        The record exists so the audit trail can tell what the user wrote from
+        what they merely agreed to — the suggestions come from the model, and the
+        applied result is stamped ``HUMAN_PROVIDED`` either way.
         """
         question = session.current
         if question is None:
@@ -229,6 +276,7 @@ class DialogueEngine:
                 warnings=[f"workflow '{question.slug}' no longer exists — question skipped"],
             )
 
+        offered = {o.label for o in question.prompt_options}
         prior_followup = question.followups[-1] if question.followups else None
         plan = await self._agent.interpret_answer(
             slug=question.slug,
@@ -238,6 +286,7 @@ class DialogueEngine:
             prior_followup=prior_followup,
         )
         question.answer = text
+        question.chosen_option = chosen_option if chosen_option in offered else None
         return self._dispose(project, session, question, spec, plan, text)
 
     def _dispose(
@@ -255,36 +304,84 @@ class DialogueEngine:
         and a follow-up is only ever asked once (the agent enforces the same
         rule, but the engine does not depend on it doing so).
         """
-        if plan.has_patches():
-            return self._apply(project, session, question, spec, plan)
+        if plan.has_effect():
+            summary, warnings = self._apply_changes(project, spec, plan)
+            if summary:
+                self._mark_dirty(project, session, question.slug)
+                question.status = QuestionStatus.ANSWERED
+                question.changes = summary
+                session.advance()
+                return AnswerOutcome(
+                    question=question, changes=summary, warnings=warnings
+                )
+            # Everything the plan asked for was dropped — an unknown workflow, a
+            # dependency that is not there. Reporting "applied" with no changes
+            # would be a lie, so fall through and park, carrying the reasons.
+            return self._park(
+                project, session, question, spec, plan, answer, warnings=warnings
+            )
 
         if plan.needs_followup and not question.followups:
             followup = (plan.followup_question or "").strip()
             if followup:
                 question.followups.append(followup)
+                question.followup_options = [
+                    o for o in plan.followup_options if o.label.strip()
+                ]
                 session.touch()
-                return AnswerOutcome(question=question, followup=followup)
+                return AnswerOutcome(
+                    question=question,
+                    followup=followup,
+                    followup_options=question.followup_options,
+                )
 
         return self._park(project, session, question, spec, plan, answer)
 
-    def _apply(
+    def _apply_changes(
         self,
         project: CompilationProject,
-        session: DialogueSession,
-        question: DialogueQuestion,
         spec: WorkflowSpec,
         plan: AnswerPlan,
-    ) -> AnswerOutcome:
-        """Fold the answer's patches into the spec and bump its patch version."""
-        _, summary, warnings = apply_patches(project, spec, plan.patches, self._applier)
-        self._mark_dirty(project, session, question.slug)
+    ) -> tuple[list[str], list[str]]:
+        """Carry out an answer's changes; return ``(summary, warnings)``.
 
-        question.status = QuestionStatus.ANSWERED
-        question.changes = summary
-        session.advance()
-        return AnswerOutcome(
-            question=question, changes=summary, warnings=warnings
-        )
+        Two kinds of change, and the split is structural rather than incidental:
+        patches act on the spec, dependency operations act on the *project*,
+        because a cross-workflow reference belongs to no single workflow.
+
+        A dependency operation that cannot be carried out is reported and
+        skipped, never raised. A session must survive an operation the project
+        will not accept (decision 8) — the alternative loses the user's answer
+        to a 500.
+        """
+        summary: list[str] = []
+        warnings: list[str] = []
+        current = spec
+        if plan.has_patches():
+            current, patch_summary, patch_warnings = apply_patches(
+                project, spec, plan.patches, self._applier
+            )
+            summary.extend(patch_summary)
+            warnings.extend(patch_warnings)
+        wired = 0
+        for op in plan.xref_ops:
+            try:
+                summary.append(apply_xref_op(project, op))
+                wired += 1
+            except CompilationError as exc:
+                warnings.append(f"dependency change skipped — {exc}")
+        if wired and not plan.has_patches():
+            # Dependencies render into the spec, so its Markdown changed even
+            # though no patch touched it. The version has to move with it, or a
+            # prepared agenda fingerprinted against it would still look fresh.
+            bumped = bump_patch_version(current.metadata.version)
+            if bumped is not None:
+                current.metadata = current.metadata.model_copy(
+                    update={"version": bumped}
+                )
+                replace_spec(project, current)
+                summary.append(f"version bumped to {bumped}")
+        return summary, warnings
 
     def _park(
         self,
@@ -294,6 +391,8 @@ class DialogueEngine:
         spec: WorkflowSpec,
         plan: AnswerPlan,
         answer: str,
+        *,
+        warnings: list[str] | None = None,
     ) -> AnswerOutcome:
         """Record an unmappable answer as a new open question on the spec.
 
@@ -310,7 +409,9 @@ class DialogueEngine:
         question.status = QuestionStatus.PARKED
         question.parked_as = note
         session.advance()
-        return AnswerOutcome(question=question, parked_as=note)
+        return AnswerOutcome(
+            question=question, parked_as=note, warnings=warnings or []
+        )
 
     def skip(self, session: DialogueSession) -> DialogueQuestion:
         """Pass on the current question, leaving the spec untouched."""

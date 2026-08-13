@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
+import { SuggestedAnswers } from "@/components/SuggestedAnswers";
 import type { SpecChatResponse, SpecChatTurn } from "@/lib/types";
 
 /**
@@ -36,6 +37,8 @@ export function SpecChatPanel({
 }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState("");
+  // The suggestion the draft came from, cleared as soon as the user edits it.
+  const [picked, setPicked] = useState<string | null>(null);
   const [slug, setSlug] = useState<string>(slugs[0] ?? "");
   const [error, setError] = useState<string | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -49,6 +52,7 @@ export function SpecChatPanel({
   const session = state.data?.session ?? null;
   const turns = session?.turns ?? [];
   const awaiting = state.data?.awaiting_clarification ?? false;
+  const options = state.data?.options ?? [];
 
   // Keep the chosen workflow valid if the project's specs change underneath us.
   useEffect(() => {
@@ -58,6 +62,7 @@ export function SpecChatPanel({
   const settle = (data: SpecChatResponse) => {
     queryClient.setQueryData(["spec-chat", projectId], data);
     setDraft("");
+    setPicked(null);
     setError(null);
     queryClient.invalidateQueries({ queryKey: ["project", projectId] });
     // Only on a real change — merely reading the transcript back must not
@@ -75,7 +80,12 @@ export function SpecChatPanel({
       // While a clarification is open the server already knows which spec it
       // concerns; re-sending the picker's value would let a stray click
       // redirect the reply to a different workflow.
-      api.sendSpecChat(projectId, text, awaiting ? null : slug || null),
+      api.sendSpecChat(
+        projectId,
+        text,
+        awaiting ? null : slug || null,
+        text === picked ? picked : null,
+      ),
     onSuccess: settle,
     onError: fail,
   });
@@ -172,10 +182,27 @@ export function SpecChatPanel({
 
       {error && <p className="text-xs tone-block rounded-md px-2.5 py-2">{error}</p>}
 
+      {/* Only ever populated on a clarifying question — the same vague-answer
+          moment where concrete choices help most in the guided panel. */}
+      <SuggestedAnswers
+        options={options}
+        picked={picked}
+        disabled={busy}
+        hint="Some likely answers — pick one to edit and send, or just write your own."
+        onPick={(option) => {
+          setDraft(option.label);
+          setPicked(option.label);
+          box.current?.focus();
+        }}
+      />
+
       <textarea
         ref={box}
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          if (picked !== null && e.target.value !== picked) setPicked(null);
+        }}
         onKeyDown={(e) => {
           // Enter sends; Shift+Enter is a newline — same as the guided panel.
           if (e.key === "Enter" && !e.shiftKey) {

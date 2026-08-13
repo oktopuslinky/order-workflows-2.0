@@ -26,7 +26,9 @@ from workflow_compiler.models import (
     ProjectStage,
     Provenance,
     Severity,
+    SpecChatSession,
     SpecFinding,
+    SuggestedOption,
     WorkflowMetadata,
     WorkflowSpec,
 )
@@ -370,3 +372,120 @@ async def test_a_forbidden_second_clarification_does_not_reply_with_a_question()
     assert outcome.status is ChatTurnStatus.PARKED
     assert "recorded it" in outcome.reply
     assert "Please specify" not in outcome.reply
+
+
+# --------------------------------------------------------------------------- #
+# Suggested replies to a clarifying question
+# --------------------------------------------------------------------------- #
+
+
+async def test_clarifying_question_carries_suggested_replies() -> None:
+    """The chat asks one clarifying question per instruction, and that is exactly
+    where concrete choices help — the user was vague because the specifics were
+    not to hand."""
+    project = _project()
+    provider = MockProvider(
+        structured=[
+            _plan(
+                needs_clarification=True,
+                clarifying_question="Which step is missing?",
+                clarifying_options=[
+                    SuggestedOption(label="We never tell the customer.", detail="Adds a step."),
+                    SuggestedOption(label="We never release the inventory."),
+                    SuggestedOption(label="   "),
+                ],
+            )
+        ]
+    )
+    session = SpecChatSession()
+
+    outcome = await _engine(provider).send(project, session, "the cancel path needs work")
+
+    assert outcome.status is ChatTurnStatus.CLARIFYING
+    # Blank labels are dropped rather than rendered as empty buttons.
+    assert [o.label for o in session.pending_options] == [
+        "We never tell the customer.",
+        "We never release the inventory.",
+    ]
+    assert [o.label for o in outcome.turn.options] == [
+        "We never tell the customer.",
+        "We never release the inventory.",
+    ]
+
+
+async def test_choosing_a_suggested_reply_is_recorded_and_interpreted_normally() -> None:
+    project = _project()
+    provider = MockProvider(
+        structured=[
+            _plan(
+                needs_clarification=True,
+                clarifying_question="Which step is missing?",
+                clarifying_options=[SuggestedOption(label="We never tell the customer.")],
+            ),
+            _plan(patches=[_add_actor()]),
+        ]
+    )
+    engine = _engine(provider)
+    session = SpecChatSession()
+    await engine.send(project, session, "the cancel path needs work")
+
+    outcome = await engine.send(
+        project,
+        session,
+        "We never tell the customer.",
+        chosen_option="We never tell the customer.",
+    )
+
+    assert outcome.applied
+    user_turn = next(t for t in reversed(session.turns) if t.role is ChatRole.USER)
+    assert user_turn.chosen_option == "We never tell the customer."
+    # The reply still went through the interpreter, exactly as typed prose would.
+    assert "We never tell the customer." in provider.calls[1][1]
+
+
+async def test_a_reply_that_was_never_offered_is_not_recorded_as_chosen() -> None:
+    project = _project()
+    provider = MockProvider(
+        structured=[
+            _plan(
+                needs_clarification=True,
+                clarifying_question="Which step is missing?",
+                clarifying_options=[SuggestedOption(label="We never tell the customer.")],
+            ),
+            _plan(patches=[_add_actor()]),
+        ]
+    )
+    engine = _engine(provider)
+    session = SpecChatSession()
+    await engine.send(project, session, "the cancel path needs work")
+
+    await engine.send(
+        project, session, "Something else.", chosen_option="Something else."
+    )
+
+    user_turn = next(t for t in reversed(session.turns) if t.role is ChatRole.USER)
+    assert user_turn.chosen_option is None
+
+
+async def test_pending_options_are_cleared_once_the_clarification_is_answered() -> None:
+    """A spent question's suggestions must not linger and be re-offered."""
+    project = _project()
+    provider = MockProvider(
+        structured=[
+            _plan(
+                needs_clarification=True,
+                clarifying_question="Which step is missing?",
+                clarifying_options=[SuggestedOption(label="We never tell the customer.")],
+            ),
+            _plan(patches=[_add_actor()]),
+        ]
+    )
+    engine = _engine(provider)
+    session = SpecChatSession()
+    await engine.send(project, session, "the cancel path needs work")
+    assert session.pending_options
+
+    await engine.send(project, session, "We never tell the customer.")
+
+    assert session.pending_options == []
+    assert not session.awaiting_clarification

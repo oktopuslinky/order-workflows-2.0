@@ -42,6 +42,7 @@ from workflow_compiler.dialogue import (
     ChatOutcome,
     DialogueEngine,
     SpecChatEngine,
+    agenda_fingerprint,
 )
 from workflow_compiler.exceptions import (
     ApprovalError,
@@ -88,6 +89,7 @@ from workflow_compiler.spec import (
     render_spec,
 )
 from workflow_compiler.spec.edit_ingest import EditRequestDoc, parse_edit_request
+from workflow_compiler.spec.wiring import apply_xref_op
 from workflow_compiler.storage.project_store import FileProjectStore, ProjectStore
 
 
@@ -473,6 +475,25 @@ class ProjectCompiler:
                     suggestion="fix the target name or remove the dependency",
                 ))
                 continue
+            if not ref.user_confirmed:
+                # An unconfirmed dependency is a HARD STOP at approval
+                # (``approve_spec`` raises rather than warning), but until this
+                # finding existed nothing said so: validate reported green and
+                # the dialogue, whose agenda is built from findings, never asked.
+                # A user could answer every question and still be refused.
+                findings.append(SpecFinding(
+                    severity=Severity.WARNING, workflow=ref.source_workflow,
+                    section="Cross-Workflow Dependencies",
+                    message=(
+                        f"the dependency '{ref.output_field}' -> "
+                        f"'{ref.target_workflow}.{ref.input_field}' was detected "
+                        "automatically and has not been confirmed"
+                    ),
+                    suggestion=(
+                        "confirm the hand-off is real, correct it, or remove it — "
+                        "approval is refused while it is unconfirmed"
+                    ),
+                ))
             if ref.output_type != ref.input_type:
                 findings.append(SpecFinding(
                     severity=Severity.WARNING, workflow=ref.source_workflow,
@@ -527,6 +548,41 @@ class ProjectCompiler:
             self._dialogue = DialogueEngine(self._llm, prompt_manager=self._prompts)
         return self._dialogue
 
+    async def prepare_dialogue(
+        self, project_id: str, *, persist: bool = True
+    ) -> CompilationProject:
+        """Draft the dialogue's questions ahead of the user asking for them.
+
+        Runs the same per-spec drafting ``start_dialogue`` would, but stores the
+        result on ``project.prepared_dialogue`` instead of opening a session, so
+        the Resolve tab opens instantly rather than waiting minutes for the first
+        question.
+
+        Drafting takes as long as an LLM call per spec, and the specs can change
+        underneath it in that time — the free-form chat and hand edits both write
+        to the same project. So the project is **re-loaded** afterwards and the
+        agenda is only attached if its fingerprint still describes what is now on
+        disk. Saving the in-memory copy instead would silently roll back whatever
+        happened during the run. A superseded agenda is discarded, not stored: a
+        stale agenda that looks prepared is worse than none.
+        """
+        project = await self._projects.load(project_id)
+        started = time.perf_counter()
+        prepared = await self.dialogue.prepare(project)
+        elapsed = time.perf_counter() - started
+        if prepared is None:
+            return project
+
+        current = await self._projects.load(project_id)
+        if agenda_fingerprint(current) != prepared.fingerprint:
+            return current
+        current.prepared_dialogue = prepared
+        self._record_timing(current, "dialogue:prepare", elapsed)
+        current.touch()
+        if persist:
+            await self._projects.save(current)
+        return current
+
     async def start_dialogue(
         self, project_id: str, *, persist: bool = True
     ) -> tuple[CompilationProject, DialogueSession]:
@@ -546,13 +602,20 @@ class ProjectCompiler:
         return project, session
 
     async def answer_dialogue(
-        self, project_id: str, answer: str, *, persist: bool = True
+        self,
+        project_id: str,
+        answer: str,
+        *,
+        chosen_option: str | None = None,
+        persist: bool = True,
     ) -> tuple[CompilationProject, DialogueSession, AnswerOutcome]:
         """Apply one prose answer to the open session's current question."""
         project = await self._projects.load(project_id)
         session = self._require_session(project)
         started = time.perf_counter()
-        outcome = await self.dialogue.answer(project, session, answer)
+        outcome = await self.dialogue.answer(
+            project, session, answer, chosen_option=chosen_option
+        )
         self._record_timing(project, "dialogue:answer", time.perf_counter() - started)
         if session.complete:
             self.dialogue.finish(project, session)
@@ -636,6 +699,7 @@ class ProjectCompiler:
         message: str,
         *,
         slug: str | None = None,
+        chosen_option: str | None = None,
         persist: bool = True,
     ) -> tuple[CompilationProject, SpecChatSession, ChatOutcome]:
         """Send one free-form instruction; the spec is patched in place.
@@ -646,7 +710,9 @@ class ProjectCompiler:
         project = await self._projects.load(project_id)
         session = project.spec_chat or self.spec_chat.start(project)
         started = time.perf_counter()
-        outcome = await self.spec_chat.send(project, session, message, slug=slug)
+        outcome = await self.spec_chat.send(
+            project, session, message, slug=slug, chosen_option=chosen_option
+        )
         self._record_timing(project, "spec_chat:send", time.perf_counter() - started)
         project.spec_chat = session
         project.touch()
@@ -1268,67 +1334,13 @@ class ProjectCompiler:
 
     @staticmethod
     def _apply_xref_op(project: CompilationProject, op: XrefOp) -> str:
-        """Apply one cross-reference operation; return a summary line."""
-        if op.reference is None:
-            raise CompilationError(
-                f"Dependency {op.action.value} operation carries no reference payload."
-            )
-        ref = op.reference
-        slugs = {spec.slug for spec in project.specs}
-        for endpoint in (ref.source_workflow, ref.target_workflow):
-            if endpoint not in slugs:
-                raise CompilationError(
-                    f"Dependency operation references unknown workflow '{endpoint}'. "
-                    f"Known: {sorted(slugs)}."
-                )
-        label = (
-            f"{ref.source_workflow}.{ref.output_field} → "
-            f"{ref.target_workflow}.{ref.input_field}"
-        )
+        """Apply one cross-reference operation; return a summary line.
 
-        def key(r: CrossReference) -> tuple[str, str, str, str]:
-            return (r.source_workflow, r.output_field, r.target_workflow, r.input_field)
-
-        exact = next(
-            (i for i, r in enumerate(project.cross_references) if key(r) == key(ref)),
-            -1,
-        )
-        if op.action is WiringAction.ADD:
-            if exact != -1:
-                raise CompilationError(f"Dependency {label} already exists.")
-            project.cross_references.append(
-                ref.model_copy(update={"user_confirmed": True})
-            )
-            return f"added dependency {label}"
-        if op.action is WiringAction.REMOVE:
-            if exact == -1:
-                raise CompilationError(f"No dependency {label} to remove.")
-            project.cross_references.pop(exact)
-            return f"removed dependency {label}"
-        # MODIFY: replace the reference between the same workflow pair. When the
-        # pair has several links, disambiguate by matching either endpoint field.
-        candidates = [
-            i
-            for i, r in enumerate(project.cross_references)
-            if r.source_workflow == ref.source_workflow
-            and r.target_workflow == ref.target_workflow
-        ]
-        if len(candidates) > 1:
-            candidates = [
-                i
-                for i in candidates
-                if project.cross_references[i].output_field == ref.output_field
-                or project.cross_references[i].input_field == ref.input_field
-            ]
-        if len(candidates) != 1:
-            raise CompilationError(
-                f"Cannot identify which dependency between {ref.source_workflow} "
-                f"and {ref.target_workflow} to modify — remove and re-add it instead."
-            )
-        project.cross_references[candidates[0]] = ref.model_copy(
-            update={"user_confirmed": True}
-        )
-        return f"modified dependency {label}"
+        Delegates to :func:`workflow_compiler.spec.wiring.apply_xref_op` so the
+        edit path and the conversational path clear an unconfirmed dependency in
+        exactly the same way.
+        """
+        return apply_xref_op(project, op)
 
     # ------------------------------------------------------------------ #
     # Spec-review diagrams (deterministic preview + on-demand CVPA)

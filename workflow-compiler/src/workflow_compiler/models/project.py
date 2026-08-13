@@ -17,7 +17,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
-from workflow_compiler.models.dialogue import DialogueSession
+from workflow_compiler.models.dialogue import DialogueSession, PreparedAgenda
 from workflow_compiler.models.edit import EditRecord
 from workflow_compiler.models.enums import ApprovalStatus
 from workflow_compiler.models.findings import Severity, SpecFinding
@@ -104,6 +104,15 @@ class CompilationProject(WorkflowBaseModel):
         description=(
             "The active conversational spec-resolution session, if one is open. "
             "None for projects that have never run one (including legacy projects)."
+        ),
+    )
+    prepared_dialogue: PreparedAgenda | None = Field(
+        default=None,
+        description=(
+            "A question agenda drafted in the background after validation, so opening "
+            "the Resolve tab is instant. Consumed (and cleared) by the next session "
+            "start when its fingerprint still matches; ignored and re-drafted when it "
+            "does not. None for legacy projects and whenever nothing is prepared."
         ),
     )
     spec_chat: SpecChatSession | None = Field(

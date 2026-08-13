@@ -20,8 +20,10 @@ from workflow_compiler.models.dialogue import (
     DialogueSession,
     DraftedQuestion,
     DraftedQuestions,
+    PreparedAgenda,
     QuestionOrigin,
     QuestionStatus,
+    SuggestedOption,
 )
 from workflow_compiler.models.edit import (
     EditPlan,
@@ -196,8 +198,10 @@ __all__ = [
     "DialogueSession",
     "DraftedQuestion",
     "DraftedQuestions",
+    "PreparedAgenda",
     "QuestionOrigin",
     "QuestionStatus",
+    "SuggestedOption",
     # free-form spec chat
     "ChatRole",
     "ChatTurnStatus",

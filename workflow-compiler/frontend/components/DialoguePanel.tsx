@@ -5,16 +5,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api";
 import { SEVERITY_STYLE, SEVERITY_TAG } from "@/lib/format";
+import { SuggestedAnswers } from "@/components/SuggestedAnswers";
 import type { DialogueResponse } from "@/lib/types";
+
+/** How often to re-check while questions are being drafted in the background. */
+const PREPARING_POLL_MS = 3000;
 
 /**
  * Conversational spec resolution: the compiler asks about its findings, the
  * user answers in ordinary prose, and each answer patches the spec immediately.
  *
  * The panel is deliberately thin — the server decides what to ask, when an
- * answer needs a clarifying follow-up, and when one gets parked. `prompt` is
- * always the exact text to show, so the client never has to work out whether it
- * is displaying a question or a follow-up.
+ * answer needs a clarifying follow-up, and when one gets parked. `prompt` and
+ * `options` are always the exact text and the exact suggestions to show, so the
+ * client never has to work out whether it is displaying a question or a
+ * follow-up.
+ *
+ * Drafting the agenda is the slow part, so the server does it in the background
+ * when validation finishes. This panel closes the remaining gap: on open it asks
+ * for a draft if none is waiting (which is also how an interrupted one restarts,
+ * since nothing half-drafted is ever persisted) and polls while one is running.
  */
 export function DialoguePanel({
   projectId,
@@ -32,15 +42,25 @@ export function DialoguePanel({
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<DialogueResponse | null>(null);
+  // The suggestion the draft came from, so the server can be told the user
+  // accepted it rather than composed it. Cleared the moment they edit the text —
+  // an edited suggestion is their sentence, not ours.
+  const [picked, setPicked] = useState<string | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
 
   const state = useQuery({
     queryKey: ["dialogue", projectId],
     queryFn: () => api.getDialogue(projectId),
+    // Only while a background draft is running; idle otherwise.
+    refetchInterval: (query) =>
+      query.state.data?.preparing ? PREPARING_POLL_MS : false,
   });
 
   const session = state.data?.session ?? null;
   const prompt = state.data?.prompt ?? null;
+  const options = state.data?.options ?? [];
+  const preparing = state.data?.preparing ?? false;
+  const prepared = state.data?.prepared ?? false;
 
   // After each answer the spec changed underneath the rest of the page.
   const refreshProject = () =>
@@ -50,6 +70,7 @@ export function DialoguePanel({
     queryClient.setQueryData(["dialogue", projectId], data);
     setLast(data);
     setDraft("");
+    setPicked(null);
     setError(null);
     refreshProject();
     // Refetching the project is not enough: the workspace keeps the spec in
@@ -77,9 +98,19 @@ export function DialoguePanel({
   });
 
   const answer = useMutation({
-    mutationFn: (text: string) => api.answerDialogue(projectId, text),
+    mutationFn: (text: string) =>
+      api.answerDialogue(projectId, text, text === picked ? picked : null),
     onSuccess: settle,
     onError: fail,
+  });
+
+  const prepare = useMutation({
+    mutationFn: () => api.prepareDialogue(projectId),
+    onSuccess: (data) => queryClient.setQueryData(["dialogue", projectId], data),
+    // Silent on failure: pre-drafting is a latency optimisation, and "Start
+    // resolving" still works without it. An error banner here would report a
+    // problem the user does not have.
+    onError: () => {},
   });
 
   const skip = useMutation({
@@ -106,6 +137,20 @@ export function DialoguePanel({
     if (prompt && !busy) box.current?.focus();
   }, [prompt, busy]);
 
+  // Ask for a draft once per project when the tab opens with nothing waiting.
+  // This is also the recovery path: a run interrupted by a server restart
+  // persisted nothing, so it simply starts again here rather than leaving the
+  // user in front of a Start button that will make them wait minutes.
+  const asked = useRef<string | null>(null);
+  useEffect(() => {
+    if (state.isLoading || session || prepared || preparing) return;
+    if (asked.current === projectId) return;
+    asked.current = projectId;
+    prepare.mutate();
+    // `prepare` is a stable mutation object; re-running on it would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, state.isLoading, session, prepared, preparing]);
+
   if (state.isLoading) {
     return <p className="text-sm text-[var(--muted)]">Loading…</p>;
   }
@@ -120,7 +165,7 @@ export function DialoguePanel({
           in and nothing to save.
         </p>
         {error && <p className="text-xs tone-block rounded-md px-2.5 py-2">{error}</p>}
-        <div>
+        <div className="flex items-center gap-2">
           <button
             onClick={() => start.mutate()}
             disabled={busy}
@@ -128,6 +173,20 @@ export function DialoguePanel({
           >
             {start.isPending ? "Reading the findings…" : "Start resolving"}
           </button>
+          {/* Say which it will be. Waiting a beat is fine; waiting minutes with
+              no explanation reads as a hang. */}
+          {preparing && (
+            <span className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+              <span
+                aria-hidden
+                className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]"
+              />
+              Preparing questions…
+            </span>
+          )}
+          {!preparing && prepared && (
+            <span className="text-xs text-[var(--muted)]">Questions ready.</span>
+          )}
         </div>
       </div>
     );
@@ -212,10 +271,30 @@ export function DialoguePanel({
       {last && <Outcome data={last} />}
       {error && <p className="text-xs tone-block rounded-md px-2.5 py-2">{error}</p>}
 
+      {options.length > 0 && (
+        <SuggestedAnswers
+          options={options}
+          picked={picked}
+          disabled={busy}
+          onPick={(option) => {
+            // Fill and focus rather than send. A misclick would otherwise patch
+            // the spec, and a suggestion is usually most useful as a starting
+            // point the user adjusts.
+            setDraft(option.label);
+            setPicked(option.label);
+            box.current?.focus();
+          }}
+        />
+      )}
+
       <textarea
         ref={box}
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          // Edited past the suggestion: this is their sentence now.
+          if (picked !== null && e.target.value !== picked) setPicked(null);
+        }}
         onKeyDown={(e) => {
           // Enter sends; Shift+Enter is a newline. Answers are usually a sentence.
           if (e.key === "Enter" && !e.shiftKey && draft.trim() && !busy) {

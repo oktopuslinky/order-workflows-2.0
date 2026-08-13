@@ -249,6 +249,16 @@ export interface ProjectResponse {
 
 export type QuestionStatus = "pending" | "answered" | "parked" | "skipped";
 
+/**
+ * A candidate answer offered alongside a question. Picking one is a shortcut for
+ * typing it: the label is sent as the answer and interpreted the same way, so
+ * there is no second apply path and nothing stored that can go stale.
+ */
+export interface SuggestedOption {
+  label: string;
+  detail: string;
+}
+
 export interface DialogueQuestion {
   question_id: string;
   slug: string;
@@ -257,9 +267,13 @@ export interface DialogueQuestion {
   severity: Severity;
   section: string | null;
   covers: string[];
+  options: SuggestedOption[];
   status: QuestionStatus;
   answer: string | null;
+  /** Label of a suggestion accepted verbatim; null when the user wrote their own. */
+  chosen_option: string | null;
   followups: string[];
+  followup_options: SuggestedOption[];
   changes: string[];
   parked_as: string | null;
 }
@@ -279,6 +293,12 @@ export interface DialogueResponse {
   question: DialogueQuestion | null;
   /** Exact text to show: the open clarifying follow-up, else the question. */
   prompt: string | null;
+  /** The options belonging to `prompt`. Often empty. */
+  options: SuggestedOption[];
+  /** Questions are drafted and waiting, so starting a session is instant. */
+  prepared: boolean;
+  /** A background drafting run is in flight — say so rather than showing nothing. */
+  preparing: boolean;
   answered: number;
   total: number;
   remaining: number;
@@ -299,6 +319,10 @@ export interface SpecChatTurn {
   status: ChatTurnStatus | null;
   changes: string[];
   parked_as: string | null;
+  /** Candidate replies, on CLARIFYING assistant turns. */
+  options: SuggestedOption[];
+  /** On a user turn: the suggestion accepted verbatim, if any. */
+  chosen_option: string | null;
   warnings: string[];
   created_at: string;
 }
@@ -323,6 +347,8 @@ export interface SpecChatResponse {
   changes: string[];
   parked_as: string | null;
   warnings: string[];
+  /** Candidate replies to the open clarifying question. Empty unless one is open. */
+  options: SuggestedOption[];
   /** True when the next message is read as a reply to a clarifying question. */
   awaiting_clarification: boolean;
   applied: number;

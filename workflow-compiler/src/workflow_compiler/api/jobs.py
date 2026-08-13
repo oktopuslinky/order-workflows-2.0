@@ -33,14 +33,21 @@ frontend treats a vanished job as "ended" and refetches the project.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
-JobKind = Literal["validate", "approve"]
+JobKind = Literal["validate", "approve", "predraft"]
 JobStatus = Literal["running", "succeeded", "failed", "canceled"]
+
+#: Speculative work: started by the system rather than the user, and never worth
+#: making the user wait for. It is exempt from the one-run-per-project rule and
+#: is cancelled the instant real work arrives for the same project (see
+#: :meth:`JobManager.start`).
+_SPECULATIVE: frozenset[str] = frozenset({"predraft"})
 
 #: How long a finished job is retained so the UI can read its terminal state
 #: (status + any error) before it is pruned.
@@ -101,10 +108,23 @@ class JobManager:
         ]:
             self._jobs.pop(jid, None)
 
-    def active_for_project(self, project_id: str) -> Job | None:
-        """The in-flight run for ``project_id``, if any."""
+    def active_for_project(
+        self, project_id: str, *, speculative: bool | None = None
+    ) -> Job | None:
+        """The in-flight run for ``project_id``, if any.
+
+        ``speculative`` filters by whether the run is system-started background
+        work: ``False`` finds only user-initiated runs, ``True`` only speculative
+        ones, ``None`` (the default) either.
+        """
         return next(
-            (j for j in self._jobs.values() if j.project_id == project_id and j.active),
+            (
+                j
+                for j in self._jobs.values()
+                if j.project_id == project_id
+                and j.active
+                and (speculative is None or (j.kind in _SPECULATIVE) is speculative)
+            ),
             None,
         )
 
@@ -115,17 +135,35 @@ class JobManager:
         kind: JobKind,
         owner_id: str | None,
         run: Callable[[], Awaitable[object]],
+        after: Callable[[], Awaitable[object]] | None = None,
     ) -> Job:
         """Register and launch a run. Raises :class:`JobConflictError` if the
         project already has one in flight.
 
         ``run`` is a zero-argument factory that returns the stage coroutine when
-        called (so the coroutine is created inside the task, not before)."""
+        called (so the coroutine is created inside the task, not before).
+
+        Speculative kinds bend the rule in both directions, and deliberately:
+        starting one while *anything* is in flight is refused (it is a nicety, not
+        worth contending for the project), and starting real work first **cancels**
+        any speculative run rather than being refused by it. Background
+        pre-drafting must never be able to answer a user's click with a 409.
+        """
         async with self._lock:
             self._prune()
-            existing = self.active_for_project(project_id)
-            if existing is not None:
-                raise JobConflictError(project_id, existing.job_id)
+            if kind in _SPECULATIVE:
+                existing = self.active_for_project(project_id)
+                if existing is not None:
+                    raise JobConflictError(project_id, existing.job_id)
+            else:
+                speculative = self.active_for_project(project_id, speculative=True)
+                if speculative is not None:
+                    # Nothing is persisted until a run finishes, so this discards
+                    # work in progress and no state.
+                    await self._cancel(speculative)
+                existing = self.active_for_project(project_id, speculative=False)
+                if existing is not None:
+                    raise JobConflictError(project_id, existing.job_id)
             job = Job(
                 job_id=uuid.uuid4().hex,
                 project_id=project_id,
@@ -133,27 +171,47 @@ class JobManager:
                 owner_id=owner_id,
             )
             self._jobs[job.job_id] = job
-            job.task = asyncio.create_task(self._run(job, run))
+            job.task = asyncio.create_task(self._run(job, run, after))
             return job
 
     @staticmethod
-    async def _run(job: Job, run: Callable[[], Awaitable[object]]) -> None:
+    async def _run(
+        job: Job,
+        run: Callable[[], Awaitable[object]],
+        after: Callable[[], Awaitable[object]] | None = None,
+    ) -> None:
         """Execute the stage and record the terminal status.
 
         Cancellation is swallowed on purpose: it is a normal terminal outcome for
         a background job, and nothing was persisted, so there is nothing to undo.
+
+        ``after`` is a follow-on step run only when the stage succeeded, and only
+        **once the job is no longer active** — which is the point of it. A chained
+        step that starts its own job (background question drafting after a
+        validate) would otherwise collide with the very job that is calling it.
+        Its outcome is not the job's: a failure there is swallowed, because the
+        stage the user asked for did succeed.
         """
         try:
-            await run()
-            job.status = "succeeded"
-        except asyncio.CancelledError:
-            job.status = "canceled"
-        except Exception as exc:
-            job.status = "failed"
-            job.error = str(exc) or exc.__class__.__name__
-        finally:
-            job.task = None
+            try:
+                await run()
+                job.status = "succeeded"
+            except asyncio.CancelledError:
+                job.status = "canceled"
+            except Exception as exc:
+                job.status = "failed"
+                job.error = str(exc) or exc.__class__.__name__
             job.updated_at = _now()
+            if after is not None and job.status == "succeeded":
+                with contextlib.suppress(Exception):
+                    await after()
+        finally:
+            # Cleared last, not when the status was set: the loop keeps only a
+            # weak reference to a task, so dropping this one mid-``after`` would
+            # let the follow-on step be garbage collected. ``cancel`` guards on
+            # ``active`` first, so a terminal job with a task still attached is
+            # never cancellable.
+            job.task = None
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
@@ -179,6 +237,12 @@ class JobManager:
         job = self._jobs.get(job_id)
         if job is None:
             return None
+        await self._cancel(job)
+        return job
+
+    @staticmethod
+    async def _cancel(job: Job) -> None:
+        """Stop ``job`` and wait until it has recorded a terminal status."""
         task = job.task
         if job.active and task is not None:
             task.cancel()
@@ -191,4 +255,3 @@ class JobManager:
                 pass
             except Exception:
                 pass
-        return job

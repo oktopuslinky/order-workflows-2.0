@@ -18,6 +18,7 @@ from workflow_compiler.models import (
     ProjectStage,
     ResolvedEdit,
     SpecChatSession,
+    SuggestedOption,
     WorkflowState,
 )
 from workflow_compiler.models.user import UserPreferences
@@ -363,6 +364,15 @@ class DialogueAnswerRequest(BaseModel):
         min_length=1,
         description="The user's answer, in ordinary prose — no particular format.",
     )
+    option: str | None = Field(
+        default=None,
+        description=(
+            "Label of the suggested option the user accepted verbatim, when they took "
+            "one instead of writing their own. Recorded for the audit trail only: the "
+            "answer is interpreted the same way either way, and a label that was not "
+            "actually offered is ignored."
+        ),
+    )
 
 
 class SpecChatRequest(BaseModel):
@@ -379,6 +389,14 @@ class SpecChatRequest(BaseModel):
             "Workflow the instruction concerns. Send the one the user is looking "
             "at; omit to let the interpreter choose. An unknown slug is rejected "
             "rather than silently redirected."
+        ),
+    )
+    option: str | None = Field(
+        default=None,
+        description=(
+            "Label of the suggested reply the user accepted verbatim, when answering "
+            "a clarifying question by picking rather than typing. Recorded for the "
+            "audit trail only; a label that was not offered is ignored."
         ),
     )
 
@@ -414,6 +432,13 @@ class SpecChatResponse(BaseModel):
     warnings: list[str] = Field(
         default_factory=list, description="Non-fatal issues from applying the last message."
     )
+    options: list[SuggestedOption] = Field(
+        default_factory=list,
+        description=(
+            "Candidate replies to the open clarifying question. Empty unless one is "
+            "awaiting an answer; the free-text box is always the real interface."
+        ),
+    )
     awaiting_clarification: bool = Field(
         default=False,
         description="True when the next message will be read as a reply to a question.",
@@ -447,6 +472,28 @@ class DialogueResponse(BaseModel):
         description=(
             "Exact text to show the user: the pending clarifying follow-up when "
             "one is open, else the current question."
+        ),
+    )
+    options: list[SuggestedOption] = Field(
+        default_factory=list,
+        description=(
+            "Candidate answers belonging to ``prompt`` — the follow-up's when one is "
+            "open, else the question's. Often empty; the free-text box is always the "
+            "real interface."
+        ),
+    )
+    prepared: bool = Field(
+        default=False,
+        description=(
+            "True when questions are already drafted and waiting, so starting a "
+            "session is instant."
+        ),
+    )
+    preparing: bool = Field(
+        default=False,
+        description=(
+            "True when a background drafting run is in flight for this project. The "
+            "client should say so and poll rather than showing an empty panel."
         ),
     )
     answered: int = Field(

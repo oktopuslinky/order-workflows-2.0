@@ -28,6 +28,9 @@ dependencies = [
     # Document ingestion
     "python-docx>=1.1",
     "pypdf>=4.2",
+    # Knowledge bases (vendored Context Hub reads curated domain YAML + xlsx corpora)
+    "pyyaml>=6.0",
+    "openpyxl>=3.1",
     "beautifulsoup4>=4.12",
     "charset-normalizer>=3.3",
 ]
@@ -68,6 +71,8 @@ asyncio_mode = "auto"
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
+# examples/knowledge_bases/* are verbatim third-party corpora (never linted or collected).
+extend-exclude = ["examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
@@ -79,9 +84,18 @@ select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
 "src/workflow_compiler/cli/main.py" = ["B008"]
 # __all__ is grouped by domain area on purpose rather than sorted alphabetically.
 "src/workflow_compiler/models/__init__.py" = ["RUF022"]
+# Vendored Context Hub subset (kg/contexthub/VENDORED.md): upstream style is kept
+# verbatim so the pinned diff stays reviewable; only correctness rules apply.
+"src/workflow_compiler/kg/contexthub/**" = ["E501", "I001", "SIM102", "UP", "RUF", "C420", "F401", "F841"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
 ignore_missing_imports = true
+
+# The vendored Context Hub subset is untyped upstream code pinned at a SHA; the
+# typed surface workflow-compiler relies on is kg/service.py.
+[[tool.mypy.overrides]]
+module = "workflow_compiler.kg.contexthub.*"
+ignore_errors = true

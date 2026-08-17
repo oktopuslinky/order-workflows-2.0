@@ -20,6 +20,7 @@ from workflow_compiler.models import (
     ReviewReport,
     ReviewSeverity,
     WorkflowGraph,
+    WorkflowNode,
 )
 
 _REVIEWER = "workflow-review"
@@ -103,7 +104,7 @@ class GraphReviewer:
         return index
 
     @staticmethod
-    def _reachable(nx_graph: nx.MultiDiGraph, starts: list) -> set[str]:
+    def _reachable(nx_graph: nx.MultiDiGraph, starts: list[WorkflowNode]) -> set[str]:
         reachable: set[str] = set()
         for start in starts:
             reachable.add(start.id)
@@ -113,7 +114,9 @@ class GraphReviewer:
     # -- checks -------------------------------------------------------------
 
     @staticmethod
-    def _check_start_end(issues: list[ReviewIssue], starts: list, ends: list) -> None:
+    def _check_start_end(
+        issues: list[ReviewIssue], starts: list[WorkflowNode], ends: list[WorkflowNode]
+    ) -> None:
         if not starts:
             issues.append(
                 ReviewIssue(
@@ -221,7 +224,7 @@ class GraphReviewer:
     def _check_unreachable(
         issues: list[ReviewIssue],
         graph: WorkflowGraph,
-        starts: list,
+        starts: list[WorkflowNode],
         reachable: set[str],
         isolated: set[str],
         orphans: set[str],

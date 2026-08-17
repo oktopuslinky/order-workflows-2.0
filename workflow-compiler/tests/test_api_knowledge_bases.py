@@ -98,9 +98,13 @@ def test_upload_creates_kb_and_runs_ingest_job(client: TestClient, corpus_zip: b
     listed = client.get("/knowledge-bases").json()["knowledge_bases"]
     assert [k["kb_id"] for k in listed] == [body["kb_id"]]
 
-    jobs = client.get("/jobs", params={"scope_kind": "knowledge_base"}).json()
-    assert [j["job_id"] for j in jobs] == [job["job_id"]]
-    assert client.get("/jobs", params={"scope_kind": "project"}).json() == []
+    # The JobManager lives on the shared app instance, so other test modules'
+    # jobs may still be visible here; assert on scope filtering, not emptiness.
+    kb_jobs = client.get("/jobs", params={"scope_kind": "knowledge_base"}).json()
+    assert job["job_id"] in [j["job_id"] for j in kb_jobs]
+    assert all(j["scope_kind"] == "knowledge_base" for j in kb_jobs)
+    project_jobs = client.get("/jobs", params={"scope_kind": "project"}).json()
+    assert job["job_id"] not in [j["job_id"] for j in project_jobs]
 
 
 def test_upload_with_enrichment_uses_selected_provider(

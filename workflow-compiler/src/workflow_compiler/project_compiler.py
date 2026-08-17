@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1664,7 +1665,7 @@ class ProjectCompiler:
         project.specs = [spec if s.slug == spec.slug else s for s in project.specs]
 
     @staticmethod
-    def _sub_reporter(progress: ProgressCallback | None) -> object:
+    def _sub_reporter(progress: ProgressCallback | None) -> Callable[..., None]:
         return WorkflowCompiler._sub_reporter(progress)
 
     # ------------------------------------------------------------------ #

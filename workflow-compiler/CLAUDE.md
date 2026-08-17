@@ -156,6 +156,20 @@ picture before changing pipeline behavior.
   path. A dependency op that cannot be applied is reported and skipped, never raised; if an
   answer's every op is dropped it parks rather than reporting a change it did not make.
 
+- **Knowledge bases ground the change pipeline (`kg/`).** A zipped corpus becomes a Context Hub
+  graph via the vendored subset `kg/contexthub/` (pinned SHA + local edits in its `VENDORED.md`;
+  excluded from `mypy --strict`; never imported outside `workflow_compiler.kg`). Everything goes
+  through `kg/service.py::KgService`: `create_from_zip` (safe extraction, `kg/ingest.py`) →
+  `index` (static ingest, optional LLM enrichment through the app's `BaseLLMProvider` via
+  `kg/llm_bridge.py`, run in a worker thread; stats + business-id `catalog` recorded) →
+  `retrieve` (BM25 → traversal → file spans, a `KgPacket` with `coverage`), `impact`
+  (deterministic BFS), `search`, `read_file`. Node ids are corpus-relative POSIX
+  (`mod:existing_Codebase/workflows/order_workflow.py`); store ids are validated at the boundary.
+  Indexing is a `kb_ingest` job — `JobManager` is keyed by `scope_id`+`scope_kind`
+  (`project` | `knowledge_base`), `project_id` remains an alias. KB routes take `provider`/`model`
+  per request with a **cloud default** (enrichment must never hit the single-GPU gateway unasked).
+  Phase plan + handoff: `docs/kg-plan/`.
+
 - **HTTP auth + time-saved metric.** The API uses local accounts (`api/auth.py`: scrypt +
   HMAC-signed session cookie, users under `<state-root>/users/`); project routes require
   `get_current_user`, projects carry `owner_id` (recorded for attribution). By default

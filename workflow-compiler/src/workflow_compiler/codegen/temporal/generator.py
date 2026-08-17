@@ -41,6 +41,7 @@ from workflow_compiler.models import (
     StepKind,
     TemporalActivityDesign,
     TemporalChildWorkflowDesign,
+    TemporalCodeBundle,
     TemporalCompensationDesign,
     TemporalParam,
     TemporalStep,
@@ -309,10 +310,8 @@ class TemporalPythonCodeGenerator:
         design: TemporalWorkflowDesign,
         *,
         graph: WorkflowGraph | None = None,
-    ) -> TemporalCodeBundle:  # noqa: F821 (imported lazily below)
+    ) -> TemporalCodeBundle:
         """Render ``design`` (ordered by ``graph`` when available) into files."""
-        from workflow_compiler.models import TemporalCodeBundle
-
         workflow_class = _pascal(design.workflow_name)
         package_name = _snake(design.workflow_name)
 
@@ -1303,6 +1302,6 @@ def to_temporal_python(
     *,
     graph: WorkflowGraph | None = None,
     stepwise: bool = False,
-) -> TemporalCodeBundle:  # noqa: F821
+) -> TemporalCodeBundle:
     """Convenience wrapper around :class:`TemporalPythonCodeGenerator`."""
     return TemporalPythonCodeGenerator(stepwise=stepwise).generate(design, graph=graph)

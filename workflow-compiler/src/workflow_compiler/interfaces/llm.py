@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TypeVar
+from typing import ClassVar, TypeVar
 
 from pydantic import BaseModel
 
@@ -19,7 +19,7 @@ class BaseLLMProvider(ABC):
     """
 
     #: Short, unique name for the provider implementation.
-    name: str = "base"
+    name: ClassVar[str] = "base"
 
     @abstractmethod
     async def complete(

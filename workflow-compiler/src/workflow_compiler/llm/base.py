@@ -254,7 +254,8 @@ class HttpChatProvider(BaseLLMProvider):
         if response.status_code >= 400:
             raise ProviderHTTPError(response.status_code, response.text[:500])
         try:
-            return response.json()
+            body: dict[str, Any] = response.json()
+            return body
         except json.JSONDecodeError as exc:
             raise ProviderResponseError(f"{self.name} returned non-JSON body: {exc}") from exc
 

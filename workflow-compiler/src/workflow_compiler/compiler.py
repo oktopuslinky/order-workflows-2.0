@@ -12,7 +12,7 @@ import contextlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from workflow_compiler.agents import (
     FACTS_REVIEW_SPEC,
@@ -169,7 +169,7 @@ class WorkflowCompiler:
         llm_provider: BaseLLMProvider | None = None,
         settings: Settings | None = None,
         state_store: StateStore | None = None,
-        **kwargs: object,
+        **kwargs: Any,
     ) -> WorkflowCompiler:
         """Build a fully wired compiler from application settings / ``.env``.
 
@@ -185,7 +185,7 @@ class WorkflowCompiler:
         store = state_store or FileStateStore(resolved.state_store_path)
         review = kwargs.pop("review", None) or ReviewConfig.from_settings(resolved)
         stepwise = bool(kwargs.pop("stepwise", None) or resolved.stepwise)
-        return cls(  # type: ignore[arg-type]
+        return cls(
             llm_provider=provider,
             state_store=store,
             review=review,

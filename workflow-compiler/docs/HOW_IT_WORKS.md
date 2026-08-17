@@ -899,6 +899,49 @@ mocked) and prints those queries — run it to see exactly which branch a condit
 Opt into interactive gating with `WORKFLOW_COMPILER_STEPWISE=1`: every top-level plan step then
 waits on an `advance` signal (`wait_condition` + signal, so determinism is preserved).
 
+## 8c. Knowledge bases (`kg/`) — a corpus indexed into a graph
+
+A **knowledge base** is a zipped corpus (business docs, mermaid diagrams, source code, tests)
+turned into a Context Hub graph that later phases use to *ground* change requests and specs in
+the real modules, activities, stories and test cases of an existing system. Phase 0 of the
+KG change pipeline (`docs/kg-plan/`) ships the foundation: upload → index → query.
+
+**Engine.** `kg/contexthub/` is a vendored subset of the KG-Context / Context Hub project
+(`model/`, `bootstrap/`, `retrieval/`; pinned SHA and every local edit are listed in
+`kg/contexthub/VENDORED.md`). It is untyped upstream code excluded from `mypy --strict`; the app
+never imports it outside `workflow_compiler.kg`.
+
+**Façade.** `kg/service.py::KgService(store, provider_factory)` is the only surface the rest of the
+app uses:
+
+| Method | What it does |
+|---|---|
+| `create_from_zip(name, bytes)` / `create_from_path(name, dir)` | Safe extraction (`kg/ingest.py`: zip-slip / symlink rejection, size + count caps, one top-level folder stripped) into `<state-root>/knowledge_bases/<kb_id>/corpus/`; record saved with `status="ingesting"`. |
+| `index(kb_id, enrich, provider, model, progress)` | Runs `init_repo(corpus, out=…/.contexthub)` in a worker thread. Static ingest is instant; with `enrich` each Document/Module gets one LLM call (summary, topics, entities) plus a clustering pass — through the app's own `BaseLLMProvider` via `kg/llm_bridge.py::ProviderJsonClient` (results cached by content hash under `.contexthub/llm_cache/`). Records `stats` (nodes/edges by type), the business-id `catalog` (Epic/UserStory/TestCase/Requirement ids), `status="ready"` — or `failed` + `error`. |
+| `retrieve(kb_id, prompt, budget, max_hops)` | BM25 anchors → bounded traversal → dereferenced file spans, as a `KgPacket` (`rendered` text for prompts, `sections`, `files` with line spans, `coverage`, `low_confidence`). |
+| `impact(kb_id, seeds, max_hops)` | Deterministic BFS over dependency-shaped edges (`DEPENDS_ON`, `CALLS`, `IMPORTS`, `IMPLEMENTS`, `RELATES_TO`, `DOCUMENTED_BY`, …; `CONTAINS` only downwards from file nodes). Seeds may be node ids or search terms. Rows are ordered by hops then id. |
+| `search`, `catalog`, `graph_summary`, `list_files`, `read_file` | Debug/UI surfaces; `read_file` is path-traversal safe and text-extracts docx/xlsx/pdf. |
+
+Node ids are relative to `corpus/` and POSIX (`mod:existing_Codebase/workflows/order_workflow.py`,
+`doc:Business_Docs/epics/EPIC-001-….docx`, `US-003`, `TC-05`, `BR-02`), so a graph built on Windows
+dereferences anywhere. Ids crossing the store boundary are validated against `[A-Za-z0-9_-]+`.
+
+**Jobs.** Indexing runs as a `kb_ingest` background job. `JobManager` is keyed by
+`scope_id` + `scope_kind` (`project` | `knowledge_base`); `project_id` stays as an alias so
+existing callers are unchanged, and jobs carry a `progress` (`message`, `done`, `total`) that the
+worker updates per file.
+
+**Config.** `kg_enrich_default` (True), `kg_retrieve_budget` (4000), `kg_max_upload_mb` (50).
+KB routes take `provider`/`model` per request like `/projects/compile`; the default is cloud
+Nemotron on purpose (enrichment is one call per file and must not land on the single-GPU
+gateway unasked).
+
+**Example corpus.** `examples/knowledge_bases/order-lifecycle/` is a verbatim copy of the
+manager's `Existing_KG` (BRD, EPIC-001, US-001..005, TDD, test plan, TC matrix, three mermaid
+diagrams, the Temporal `OrderWorkflow` code + tests); `scripts/make_kb_zip.py` zips it, and
+`examples/change_requests/BCR-001-partial-shipment-support.docx` is the change request the later
+phases consume.
+
 ## 9. The three entry points (same engine, three faces)
 
 ### 9.1 Library
@@ -1133,6 +1176,16 @@ This is a console-rendering issue only — it does not affect the generated code
 reasoning models can also be slow; bump `--timeout` (e.g. `300.0`) to avoid
 `ProviderTimeoutError` on a slow request.
 
+**`kb …` — knowledge bases** (`cli/kb.py`; same file store as the API, no login):
+
+| Command | Purpose |
+|---|---|
+| `kb init <zip-or-folder> [--name] [--enrich/--no-enrich] [--provider] [--model] [--id]` | Create + index (progress printed per file). |
+| `kb list` / `kb show <kb-id>` | List; stats by type, catalog ids, warnings. |
+| `kb ask <kb-id> "<prompt>" [--budget] [--hops] [--json]` | Print the retrieved packet + sources with line spans. |
+| `kb impact <kb-id> <seed>… [--hops]` | Deterministic impact table. |
+| `kb search <kb-id> "<query>"` / `kb delete <kb-id>` | Anchor candidates; remove. |
+
 ### 9.3 HTTP API (`api/app.py`, FastAPI)
 
 Run it with `python -m uvicorn workflow_compiler.api.app:app --reload` from the virtual environment
@@ -1212,6 +1265,25 @@ persisted, so the project simply stays in its pre-run state).
 | GET    | `/jobs`                     | `?project_id=` (optional)                   | List the caller's runs, newest first (all users' when `projects_shared`). |
 | GET    | `/jobs/{job_id}`            | —                                           | One run's status; the finished project is embedded when `status == "succeeded"`. |
 | POST   | `/jobs/{job_id}/cancel`     | —                                           | Cancel a run, leaving the project untouched (no-op once terminal). |
+
+`GET /jobs` also accepts `?scope_id=` (alias of `project_id`) and `?scope_kind=project|knowledge_base`;
+every job carries `scope_id`, `scope_kind` and, for long runs, `progress {message, done, total}`.
+
+Knowledge bases (§8c). Uploading a corpus answers `202` with the knowledge base **and** its
+`kb_ingest` job; poll the job or the KB until `status == "ready"`. Same visibility rule as projects.
+
+| Method | Path                                   | Body / Params                                              | Purpose |
+|--------|----------------------------------------|------------------------------------------------------------|---------|
+| POST   | `/knowledge-bases`                     | multipart `file` (zip), `name?`, `enrich?`, `provider?`, `model?` | Extract the corpus (400 on a bad/unsafe zip) and start indexing. |
+| GET    | `/knowledge-bases`                     | —                                                          | List knowledge bases (stats, catalog, status). |
+| GET    | `/knowledge-bases/{id}`                | —                                                          | One knowledge base (+ the running job, if any). |
+| DELETE | `/knowledge-bases/{id}`                | —                                                          | Remove record, corpus and graph (cancels a running ingest). |
+| POST   | `/knowledge-bases/{id}/reindex`        | `{enrich?, provider?, model?}`                             | Rebuild the graph as a job (enrichment cache reused). |
+| POST   | `/knowledge-bases/{id}/retrieve`       | `{prompt, budget?, max_hops?}`                             | Grounded context packet (`rendered`, `sections`, `files`, `coverage`). |
+| GET    | `/knowledge-bases/{id}/impact`         | `?seed=…` (repeatable) `&max_hops=`                        | Deterministic impact table. |
+| GET    | `/knowledge-bases/{id}/search`         | `?q=…&k=`                                                  | BM25 anchor candidates. |
+| GET    | `/knowledge-bases/{id}/files`          | `?path=` (optional)                                        | Corpus file list, or one file as text. |
+| GET    | `/knowledge-bases/{id}/graph/summary`  | `?top=`                                                    | Counts by node/edge type + best-connected nodes. |
 
 Project responses include `time_saved`: each pipeline step's measured wall-clock seconds
 (persisted per project as `stage_timings`) compared against configurable human-team estimates

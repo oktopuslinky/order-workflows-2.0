@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol, cast
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from workflow_compiler.exceptions import CompilationError
 from workflow_compiler.interfaces.agent import BaseAgent
@@ -237,7 +237,8 @@ class MetadataPatchApplier:
             items[idx] = new
             return True
         if patch.action == PatchAction.MERGE:
-            sources = [_norm(v) for v in patch.payload.get("values", []) if _norm(v)]
+            values = cast("Iterable[object]", patch.payload.get("values", []))
+            sources = [_norm(v) for v in values if _norm(v)]
             canonical = _payload_value(patch, "into", "canonical") or (
                 sources[0] if sources else ""
             )
@@ -437,14 +438,15 @@ class FactsPatchApplier:
     # -- structure entities -------------------------------------------------
 
     @staticmethod
-    def _entity_list(kind: str, structure: WorkflowStructure) -> list:
-        return {
+    def _entity_list(kind: str, structure: WorkflowStructure) -> list[Any]:
+        lists: dict[str, list[Any]] = {
             "activity": structure.activities,
             "decision": structure.decisions,
             "exception": structure.exceptions,
             "compensation": structure.compensations,
             "event": structure.events,
-        }[kind]
+        }
+        return lists[kind]
 
     @staticmethod
     def _entity_label(kind: str, node: object) -> str:
@@ -764,6 +766,11 @@ class ReviewPipelineAgent(BaseAgent):
 # --------------------------------------------------------------------------- #
 
 
+def _serialize_artifact(artifact: object) -> str:
+    assert isinstance(artifact, BaseModel)
+    return artifact.model_dump_json(indent=2, exclude_none=True)
+
+
 def _metadata_apply(state: WorkflowState, artifact: object) -> None:
     assert isinstance(artifact, WorkflowMetadata)
     state.workflow_metadata = artifact
@@ -777,7 +784,7 @@ def _facts_apply(state: WorkflowState, artifact: object) -> None:
 METADATA_REVIEW_SPEC = ReviewSpec(
     note_key="metadata_review",
     extract=lambda s: s.workflow_metadata,
-    serialize=lambda a: a.model_dump_json(indent=2, exclude_none=True),
+    serialize=_serialize_artifact,
     apply_to_state=_metadata_apply,
     applier=MetadataPatchApplier(),
     passes=(
@@ -790,7 +797,7 @@ METADATA_REVIEW_SPEC = ReviewSpec(
 FACTS_REVIEW_SPEC = ReviewSpec(
     note_key="facts_review",
     extract=lambda s: s.workflow_facts,
-    serialize=lambda a: a.model_dump_json(indent=2, exclude_none=True),
+    serialize=_serialize_artifact,
     apply_to_state=_facts_apply,
     applier=FactsPatchApplier(),
     passes=(

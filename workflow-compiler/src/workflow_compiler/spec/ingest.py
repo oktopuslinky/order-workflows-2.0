@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from workflow_compiler.agents.review_pipeline import _grounded, _norm, rebuild_facts
 from workflow_compiler.exceptions import CompilationError
@@ -42,6 +43,7 @@ from workflow_compiler.models import (
     WorkflowStructure,
     WorkflowTrigger,
 )
+from workflow_compiler.models.base import WorkflowBaseModel
 from workflow_compiler.spec.renderer import (
     ACTIVITIES_SECTION,
     BINDING_SOURCE_TEXT,
@@ -344,14 +346,14 @@ def _merge_scalar_facts(
             )
             changes.append(f"added {category.value} '{statement}' ({prov.value})")
     # Note removals per category for sections that were present.
-    for (category, key), fact in old_by_key.items():
-        title = next(t for t, c in SCALAR_SECTIONS.items() if c == category)
-        if title in sections and (category, key) not in seen:
-            changes.append(f"removed {category.value} '{fact.statement}'")
+    for (old_category, old_key), fact in old_by_key.items():
+        title = next(t for t, c in SCALAR_SECTIONS.items() if c == old_category)
+        if title in sections and (old_category, old_key) not in seen:
+            changes.append(f"removed {old_category.value} '{fact.statement}'")
     return merged
 
 
-def _entity_lists(structure: WorkflowStructure) -> dict[str, list]:
+def _entity_lists(structure: WorkflowStructure) -> dict[str, list[Any]]:
     return {
         "activity": structure.activities,
         "decision": structure.decisions,
@@ -371,7 +373,7 @@ def _build_entity(
     label: str,
     fields: dict[str, str | None],
     warnings: list[str] | None = None,
-):
+) -> WorkflowBaseModel:
     common: dict[str, object] = {"id": entity_id, _entity_label_field(kind): label}
     for key, field_name in _TAIL_FIELDS[kind].items():
         common[field_name] = fields.get(key)
@@ -394,14 +396,14 @@ def _build_entity(
                         f"(expected one of: {', '.join(k.value for k in EventKind)})."
                     )
                 common.pop("kind", None)
-    factory = {
+    factories: dict[str, type[WorkflowBaseModel]] = {
         "activity": ActivityNode,
         "decision": DecisionNode,
         "exception": ExceptionNode,
         "compensation": CompensationNode,
         "event": EventNode,
-    }[kind]
-    return factory(**common)  # type: ignore[arg-type]
+    }
+    return factories[kind](**common)
 
 
 def _merge_structure(
@@ -471,7 +473,7 @@ def _carry_provenance(
     old_spec: WorkflowSpec,
     provenance: dict[str, Provenance],
     kind: str,
-    items: list,
+    items: list[Any],
 ) -> None:
     for item in items:
         ref = f"{kind}:{item.id}"

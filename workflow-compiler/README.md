@@ -135,9 +135,29 @@ workflow-compiler approve-spec <project-id> --spec-dir ./specs   # compile throu
 
 Generated bundles land under `./generated/<project-id>/<slug>/`. Other commands: `init` (write the
 `.env` configuration — see Install), `edit` (apply an edit-request document to a compiled project),
-`approve` / `reject` (manual override for a below-threshold graph), `show`, `models`. `workflow-compiler <command> --help` is the
+`approve` / `reject` (manual override for a below-threshold graph), `show`, `models`, and
+`kb init|list|show|ask|impact|search|delete` (knowledge bases — see below). `workflow-compiler <command> --help` is the
 authoritative flag reference; the full command guide is in
 [`docs/HOW_IT_WORKS.md` §9.2](docs/HOW_IT_WORKS.md).
+
+### Knowledge bases (business-change pipeline, phase 0)
+
+A knowledge base is a zipped corpus — business docs, diagrams, code, tests — indexed into a graph
+that later grounds change requests and specs in the *real* modules, stories and test cases of an
+existing system. Upload one on the **Knowledge** page (provider picker + LLM-enrichment toggle,
+indexing runs as a background job), or from the CLI:
+
+```bash
+python scripts/make_kb_zip.py                       # → examples/knowledge_bases/order-lifecycle.zip
+workflow-compiler kb init examples/knowledge_bases/order-lifecycle --no-enrich --id order-lifecycle
+workflow-compiler kb ask order-lifecycle "how does dispatch compensate provisioning"
+workflow-compiler kb impact order-lifecycle complete_order
+```
+
+`--enrich` (the UI default) adds per-file summaries/topics/entities and process clusters through
+the selected LLM provider (one call per document/module; cached). Design and routes:
+[`docs/HOW_IT_WORKS.md` §8c / §9.3](docs/HOW_IT_WORKS.md); the multi-phase plan lives in
+`docs/kg-plan/`.
 
 ### Running a generated bundle
 

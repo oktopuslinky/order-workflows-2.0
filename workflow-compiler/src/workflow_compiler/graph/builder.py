@@ -24,7 +24,11 @@ from workflow_compiler.models import (
     WorkflowNode,
     WorkflowStructure,
 )
-from workflow_compiler.models.structure import TERMINAL_TARGETS
+from workflow_compiler.models.structure import (
+    TERMINAL_TARGETS,
+    CompensationNode,
+    EventNode,
+)
 
 _PARALLEL_RE = re.compile(
     r"\b(in\s+parallel|parallel|concurrent(?:ly)?|simultaneous(?:ly)?|at the same time)\b",
@@ -203,12 +207,13 @@ class WorkflowGraphBuilder:
             self._weave_structure_decision(
                 specs,
                 dmap[decision.id],
-                amap.get(decision.after) or default_anchor,
+                (amap.get(decision.after) if decision.after is not None else None)
+                or default_anchor,
                 self._resolve_target(decision.yes_target, target_map),
                 self._resolve_target(decision.no_target, target_map),
             )
         for exc in structure.exceptions:
-            source = amap.get(exc.raised_by)
+            source = amap.get(exc.raised_by) if exc.raised_by is not None else None
             if source is not None:
                 specs.append(_EdgeSpec(source, xmap[exc.id], EdgeType.ERROR, label="on error"))
         for comp in structure.compensations:
@@ -329,7 +334,7 @@ class WorkflowGraphBuilder:
     def _attach_structure_compensation(
         self,
         specs: list[_EdgeSpec],
-        comp,  # type: ignore[no-untyped-def]
+        comp: CompensationNode,
         cmap: dict[str, str],
         xmap: dict[str, str],
         amap: dict[str, str],
@@ -352,7 +357,7 @@ class WorkflowGraphBuilder:
     def _attach_structure_event(
         self,
         specs: list[_EdgeSpec],
-        event,  # type: ignore[no-untyped-def]
+        event: EventNode,
         event_node: str,
         amap: dict[str, str],
         ordered: list[tuple[str, str | None]],
@@ -370,7 +375,9 @@ class WorkflowGraphBuilder:
         emitter = event.emitted_by
 
         if kind is EventKind.SIGNAL_WAIT:
-            source = amap.get(emitter) or (ordered[0][0] if ordered else _START)
+            source = (amap.get(emitter) if emitter is not None else None) or (
+                ordered[0][0] if ordered else _START
+            )
             following = self._next_in_order(source, ordered)
             specs.append(_EdgeSpec(source, event_node, EdgeType.SIGNAL, label="waits for"))
             specs.append(_EdgeSpec(event_node, following, EdgeType.SEQUENCE, label="then"))

@@ -5,7 +5,8 @@ pipeline. One pipeline: ``compile <doc> --spec-dir`` writes editable spec files,
 iterates ``validate`` until satisfied, and ``approve-spec`` compiles every
 workflow through to Temporal code. ``approve`` / ``reject`` remain as the manual
 override for workflows whose graph health fell below the auto-approve threshold,
-and ``show`` displays a stored workflow state.
+and ``show`` displays a stored workflow state. ``kb …`` (``cli/kb.py``) creates
+and queries knowledge bases.
 """
 
 from __future__ import annotations
@@ -33,6 +34,11 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+# Knowledge bases live in their own module; registered as the ``kb`` sub-command.
+from workflow_compiler.cli.kb import kb_app  # noqa: E402
+
+app.add_typer(kb_app, name="kb")
 
 
 def _version_callback(value: bool) -> None:

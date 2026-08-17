@@ -7,6 +7,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from workflow_compiler.kg.models import (
+    KbCatalog,
+    KbSource,
+    KbStats,
+    KgGraphSummary,
+    KgImpactRow,
+    KgPacket,
+    KgSearchHit,
+)
 from workflow_compiler.metrics import TimeSavedReport
 from workflow_compiler.models import (
     ChatTurnStatus,
@@ -278,13 +287,28 @@ class JobStartRequest(BaseModel):
     )
 
 
+class JobProgressSchema(BaseModel):
+    """Progress a long run reports while running (``total == 0`` = indeterminate)."""
+
+    message: str = ""
+    done: int = 0
+    total: int = 0
+
+
 class JobResponse(BaseModel):
     """A background run's status. ``project`` is embedded only when the run has
-    succeeded, so a single ``GET /jobs/{id}`` yields the finished result."""
+    succeeded, so a single ``GET /jobs/{id}`` yields the finished result.
+    ``project_id`` is the job's scope id (an alias of ``scope_id``) — for a
+    knowledge-base job it holds the kb id and ``scope_kind`` says so."""
 
     job_id: str
     project_id: str
+    scope_id: str = Field(default="", description="What the job belongs to (= project_id).")
+    scope_kind: str = Field(default="project", description="project | knowledge_base.")
     kind: str
+    progress: JobProgressSchema | None = Field(
+        default=None, description="Live progress for long runs (knowledge-base ingest)."
+    )
     status: str = Field(
         ..., description="running | succeeded | failed | canceled."
     )
@@ -652,3 +676,89 @@ class RunResponse(BaseModel):
             "never overwritten, which is why runs execute from disk."
         ),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Knowledge bases
+# --------------------------------------------------------------------------- #
+
+
+class KnowledgeBaseResponse(BaseModel):
+    """A knowledge base as the API exposes it (the on-disk root is not leaked)."""
+
+    kb_id: str
+    name: str
+    owner_id: str | None = None
+    source: KbSource
+    status: str = Field(..., description="ingesting | ready | failed.")
+    error: str | None = None
+    stats: KbStats
+    indexed_at: datetime | None = None
+    llm_enriched: bool = False
+    provider_used: str | None = None
+    model_used: str | None = None
+    catalog: KbCatalog
+    warnings: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+    job: JobResponse | None = Field(
+        default=None, description="The ingest job just started, when the call started one."
+    )
+
+
+class KnowledgeBaseListResponse(BaseModel):
+    knowledge_bases: list[KnowledgeBaseResponse]
+
+
+class KbReindexRequest(BaseModel):
+    """Body for ``POST /knowledge-bases/{id}/reindex``."""
+
+    enrich: bool | None = Field(
+        default=None, description="Run LLM enrichment; defaults to the server setting."
+    )
+    provider: str | None = Field(default=None, description="Per-request provider selection.")
+    model: str | None = Field(default=None, description="Model pin for local providers.")
+
+
+class KbRetrieveRequest(BaseModel):
+    """Body for ``POST /knowledge-bases/{id}/retrieve``."""
+
+    prompt: str = Field(..., min_length=1)
+    budget: int | None = Field(default=None, gt=0, description="Token budget (server default).")
+    max_hops: int = Field(default=2, ge=0, le=4)
+
+
+class KbRetrieveResponse(BaseModel):
+    kb_id: str
+    packet: KgPacket
+
+
+class KbImpactResponse(BaseModel):
+    kb_id: str
+    seeds: list[str]
+    max_hops: int
+    rows: list[KgImpactRow]
+
+
+class KbSearchResponse(BaseModel):
+    kb_id: str
+    query: str
+    hits: list[KgSearchHit]
+
+
+class KbFileResponse(BaseModel):
+    kb_id: str
+    path: str
+    size: int
+    text: str
+    extracted: bool
+
+
+class KbFileListResponse(BaseModel):
+    kb_id: str
+    files: list[str]
+
+
+class KbGraphSummaryResponse(BaseModel):
+    kb_id: str
+    summary: KgGraphSummary

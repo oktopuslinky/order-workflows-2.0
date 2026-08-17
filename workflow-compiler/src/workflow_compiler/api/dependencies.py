@@ -16,6 +16,7 @@ from workflow_compiler.compiler import WorkflowCompiler
 if TYPE_CHECKING:
     from workflow_compiler.interfaces.executor import WorkflowExecutor
     from workflow_compiler.interfaces.llm import BaseLLMProvider
+    from workflow_compiler.kg.service import KgService
     from workflow_compiler.project_compiler import ProjectCompiler
 
 
@@ -95,22 +96,20 @@ def project_compiler_for_model(model: str) -> ProjectCompiler:
 SELECTABLE_PROVIDERS = ("local", "nemotron", "local-fallback")
 
 
-def project_compiler_for_selection(
-    provider_name: str, model: str | None
-) -> ProjectCompiler:
-    """Build a project compiler for an explicit per-compile provider choice.
+def provider_for_selection(provider_name: str, model: str | None) -> BaseLLMProvider:
+    """Build the LLM provider for an explicit per-request provider choice.
 
     ``local`` runs the eGPU gateway alone (fails fast when it is down),
     ``nemotron`` the hosted NVIDIA API, and ``local-fallback`` the gateway with
     automatic Nemotron fallback. ``model`` pins a gateway model for the local
     providers (else the gateway's advertised default is used); it is ignored
-    for ``nemotron``.
+    for ``nemotron``. Shared by the compile routes and the knowledge-base
+    routes so "selectable per request" means the same thing everywhere.
     """
     from workflow_compiler.config import get_settings
     from workflow_compiler.exceptions import LLMProviderError
     from workflow_compiler.llm.factory import build_fallback_provider, build_local_provider
     from workflow_compiler.llm.providers.nemotron import NemotronProvider
-    from workflow_compiler.project_compiler import ProjectCompiler
 
     settings = get_settings()
     provider: BaseLLMProvider
@@ -129,4 +128,47 @@ def project_compiler_for_selection(
             f"Unknown compile provider '{provider_name}'. "
             f"Available: {', '.join(SELECTABLE_PROVIDERS)}."
         )
-    return ProjectCompiler.from_settings(llm_provider=provider, settings=settings)
+    return provider
+
+
+def project_compiler_for_selection(
+    provider_name: str, model: str | None
+) -> ProjectCompiler:
+    """Build a project compiler for an explicit per-compile provider choice
+    (see :func:`provider_for_selection` for the provider semantics)."""
+    from workflow_compiler.config import get_settings
+    from workflow_compiler.project_compiler import ProjectCompiler
+
+    provider = provider_for_selection(provider_name, model)
+    return ProjectCompiler.from_settings(llm_provider=provider, settings=get_settings())
+
+
+#: Provider the knowledge-base routes use when a request names none. Cloud on
+#: purpose: enrichment is ~one call per corpus file and must never land on the
+#: single-GPU local gateway by default (plan D6 / cross-cutting rule).
+KB_DEFAULT_PROVIDER = "nemotron"
+
+
+def kb_provider_factory(provider_name: str | None, model: str | None) -> BaseLLMProvider:
+    """The ``KgService`` provider factory: per-request selection, cloud default."""
+    return provider_for_selection(provider_name or KB_DEFAULT_PROVIDER, model)
+
+
+@lru_cache(maxsize=1)
+def get_kg_service() -> KgService:
+    """Provide the process-wide :class:`KgService` (file store under the state root).
+
+    Tests override this with a service on an in-memory store and a mock
+    provider factory, exactly like ``get_project_compiler``.
+    """
+    from workflow_compiler.config import get_settings
+    from workflow_compiler.kg.service import KgService
+    from workflow_compiler.kg.store import FileKnowledgeBaseStore
+
+    settings = get_settings()
+    return KgService(
+        FileKnowledgeBaseStore(settings.state_store_path),
+        kb_provider_factory,
+        max_upload_bytes=settings.kg_max_upload_mb * 1024 * 1024,
+        default_budget=settings.kg_retrieve_budget,
+    )

@@ -31,6 +31,20 @@ projects; canceling never persists a partial result):
 - ``GET  /jobs/{job_id}``           — one run's status (+ project when done).
 - ``POST /jobs/{job_id}/cancel``    — cancel a run, leaving the project untouched.
 
+Knowledge bases (a corpus of business docs + code indexed into a Context Hub
+graph that later grounds change requests and specs; see ``kg/``):
+
+- ``POST   /knowledge-bases``                 — upload a corpus zip; starts a ``kb_ingest`` job.
+- ``GET    /knowledge-bases``                 — list knowledge bases.
+- ``GET    /knowledge-bases/{id}``            — one knowledge base (stats, catalog, status).
+- ``DELETE /knowledge-bases/{id}``            — remove it (record + corpus + graph).
+- ``POST   /knowledge-bases/{id}/reindex``    — rebuild the graph (job).
+- ``POST   /knowledge-bases/{id}/retrieve``   — grounded context packet for a prompt.
+- ``GET    /knowledge-bases/{id}/impact``     — deterministic impact table (``?seed=…``).
+- ``GET    /knowledge-bases/{id}/search``     — BM25 anchor candidates (``?q=…``).
+- ``GET    /knowledge-bases/{id}/files``      — corpus file list, or one file (``?path=``).
+- ``GET    /knowledge-bases/{id}/graph/summary`` — counts by type + best-connected nodes.
+
 Per-workflow endpoints (viewing plus the manual override for workflows whose
 graph health fell below the auto-approve threshold):
 
@@ -61,7 +75,17 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
@@ -78,12 +102,13 @@ from workflow_compiler.api.dependencies import (
     SELECTABLE_PROVIDERS,
     get_compiler,
     get_executor,
+    get_kg_service,
     get_local_provider,
     get_project_compiler,
     project_compiler_for_model,
     project_compiler_for_selection,
 )
-from workflow_compiler.api.jobs import Job, JobConflictError, JobManager
+from workflow_compiler.api.jobs import Job, JobConflictError, JobManager, JobProgress
 from workflow_compiler.api.schemas import (
     ApproveRequest,
     CvpaPreviewRequest,
@@ -91,8 +116,19 @@ from workflow_compiler.api.schemas import (
     DialogueAnswerRequest,
     DialogueResponse,
     EditPreviewResponse,
+    JobProgressSchema,
     JobResponse,
     JobStartRequest,
+    KbFileListResponse,
+    KbFileResponse,
+    KbGraphSummaryResponse,
+    KbImpactResponse,
+    KbReindexRequest,
+    KbRetrieveRequest,
+    KbRetrieveResponse,
+    KbSearchResponse,
+    KnowledgeBaseListResponse,
+    KnowledgeBaseResponse,
     LocalModel,
     LocalModelList,
     LoginRequest,
@@ -160,6 +196,8 @@ from workflow_compiler.interfaces.executor import (
     RunStatus,
     WorkflowExecutor,
 )
+from workflow_compiler.kg.models import KnowledgeBase
+from workflow_compiler.kg.service import KgService
 from workflow_compiler.llm.types import ChatMessage
 from workflow_compiler.metrics import compute_time_saved
 from workflow_compiler.models import (
@@ -1192,6 +1230,272 @@ def create_app() -> FastAPI:
         return _chat_response(project, None)
 
     # ------------------------------------------------------------------ #
+    # Knowledge bases: upload a corpus → graph, then query it
+    # ------------------------------------------------------------------ #
+
+    def _check_kb_owner(kb: KnowledgeBase, user: User) -> None:
+        """Same visibility rule as projects: shared by default, else per owner."""
+        if get_settings().projects_shared:
+            return
+        if kb.owner_id is not None and kb.owner_id != user.user_id:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"No knowledge base with id {kb.kb_id!r}."
+            )
+
+    def _kb_response(kb: KnowledgeBase, job: Job | None = None) -> KnowledgeBaseResponse:
+        return KnowledgeBaseResponse(
+            kb_id=kb.kb_id,
+            name=kb.name,
+            owner_id=kb.owner_id,
+            source=kb.source,
+            status=kb.status,
+            error=kb.error,
+            stats=kb.stats,
+            indexed_at=kb.indexed_at,
+            llm_enriched=kb.llm_enriched,
+            provider_used=kb.provider_used,
+            model_used=kb.model_used,
+            catalog=kb.catalog,
+            warnings=kb.warnings,
+            created_at=kb.created_at,
+            updated_at=kb.updated_at,
+            job=_job_response(job) if job is not None else None,
+        )
+
+    def _validate_provider(provider: str | None) -> None:
+        if provider and provider not in SELECTABLE_PROVIDERS:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Unknown provider '{provider}'. "
+                f"Available: {', '.join(SELECTABLE_PROVIDERS)}.",
+            )
+
+    async def _start_kb_ingest(
+        kg: KgService,
+        kb: KnowledgeBase,
+        *,
+        enrich: bool,
+        provider: str | None,
+        model: str | None,
+        user: User,
+    ) -> Job:
+        """Kick the (re)index of ``kb`` as a ``kb_ingest`` job with live progress."""
+        progress = JobProgress(message="queued")
+
+        def run() -> Awaitable[object]:
+            return kg.index(
+                kb.kb_id,
+                enrich=enrich,
+                provider=provider,
+                model=model,
+                progress=progress.update,
+            )
+
+        try:
+            return await jobs.start(
+                scope_id=kb.kb_id,
+                scope_kind="knowledge_base",
+                kind="kb_ingest",
+                owner_id=user.user_id,
+                run=run,
+                progress=progress,
+            )
+        except JobConflictError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    @app.post(
+        "/knowledge-bases",
+        response_model=KnowledgeBaseResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["knowledge-bases"],
+    )
+    async def create_knowledge_base(
+        file: UploadFile = File(..., description="A zip of the corpus (docs + code + tests)."),
+        name: str | None = Form(default=None),
+        enrich: bool | None = Form(default=None),
+        provider: str | None = Form(default=None),
+        model: str | None = Form(default=None),
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> KnowledgeBaseResponse:
+        """Upload a corpus zip and index it in the background (202 + the job).
+
+        Extraction is synchronous (zip-slip safe, size-capped) so a bad archive
+        answers 400 immediately; the graph build — and LLM enrichment when
+        ``enrich`` (default: server setting) — runs as a ``kb_ingest`` job. Poll
+        ``GET /jobs/{id}`` or ``GET /knowledge-bases/{id}`` until ``status`` is
+        ``ready``. ``provider``/``model`` select the LLM per request exactly like
+        ``/projects/compile`` (default: cloud Nemotron).
+        """
+        _validate_provider(provider)
+        data = await file.read()
+        settings = get_settings()
+        do_enrich = settings.kg_enrich_default if enrich is None else enrich
+        kb = await _guard(
+            kg.create_from_zip(
+                name or (file.filename or "knowledge base").rsplit(".", 1)[0],
+                data,
+                owner_id=user.user_id,
+                filename=file.filename,
+            )
+        )
+        job = await _start_kb_ingest(
+            kg, kb, enrich=do_enrich, provider=provider, model=model, user=user
+        )
+        return _kb_response(kb, job)
+
+    @app.get(
+        "/knowledge-bases", response_model=KnowledgeBaseListResponse, tags=["knowledge-bases"]
+    )
+    async def list_knowledge_bases(
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> KnowledgeBaseListResponse:
+        """Knowledge bases visible to the caller, newest first."""
+        shared = get_settings().projects_shared
+        items = [
+            _kb_response(kb)
+            for kb in await _guard(kg.list_all())
+            if shared or kb.owner_id in (None, user.user_id)
+        ]
+        return KnowledgeBaseListResponse(knowledge_bases=items)
+
+    @app.get(
+        "/knowledge-bases/{kb_id}", response_model=KnowledgeBaseResponse, tags=["knowledge-bases"]
+    )
+    async def get_knowledge_base(
+        kb_id: str,
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> KnowledgeBaseResponse:
+        kb = await _guard(kg.get(kb_id))
+        _check_kb_owner(kb, user)
+        active = jobs.active_for_scope(kb_id, scope_kind="knowledge_base")
+        return _kb_response(kb, active)
+
+    @app.delete("/knowledge-bases/{kb_id}", tags=["knowledge-bases"])
+    async def delete_knowledge_base(
+        kb_id: str,
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> dict[str, str]:
+        """Remove the knowledge base, its corpus and its graph."""
+        kb = await _guard(kg.get(kb_id))
+        _check_kb_owner(kb, user)
+        active = jobs.active_for_scope(kb_id, scope_kind="knowledge_base")
+        if active is not None:
+            await jobs.cancel(active.job_id)
+        await _guard(kg.delete(kb_id))
+        return {"status": "deleted", "kb_id": kb_id}
+
+    @app.post(
+        "/knowledge-bases/{kb_id}/reindex",
+        response_model=KnowledgeBaseResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["knowledge-bases"],
+    )
+    async def reindex_knowledge_base(
+        kb_id: str,
+        request: KbReindexRequest | None = None,
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> KnowledgeBaseResponse:
+        """Rebuild the graph from the stored corpus as a job (enrichment cache kept)."""
+        request = request or KbReindexRequest()
+        _validate_provider(request.provider)
+        kb = await _guard(kg.get(kb_id))
+        _check_kb_owner(kb, user)
+        settings = get_settings()
+        do_enrich = settings.kg_enrich_default if request.enrich is None else request.enrich
+        job = await _start_kb_ingest(
+            kg, kb, enrich=do_enrich, provider=request.provider, model=request.model, user=user
+        )
+        return _kb_response(kb, job)
+
+    @app.post(
+        "/knowledge-bases/{kb_id}/retrieve",
+        response_model=KbRetrieveResponse,
+        tags=["knowledge-bases"],
+    )
+    async def retrieve_from_knowledge_base(
+        kb_id: str,
+        request: KbRetrieveRequest,
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> KbRetrieveResponse:
+        """A grounded context packet (rendered text + sections + files + coverage)."""
+        _check_kb_owner(await _guard(kg.get(kb_id)), user)
+        packet = await _guard(
+            kg.retrieve(kb_id, request.prompt, budget=request.budget, max_hops=request.max_hops)
+        )
+        return KbRetrieveResponse(kb_id=kb_id, packet=packet)
+
+    @app.get(
+        "/knowledge-bases/{kb_id}/impact", response_model=KbImpactResponse, tags=["knowledge-bases"]
+    )
+    async def knowledge_base_impact(
+        kb_id: str,
+        seed: list[str] = Query(default=[], description="Node ids or search terms (repeatable)."),
+        max_hops: int = Query(default=2, ge=0, le=4),
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> KbImpactResponse:
+        """Deterministic BFS over dependency edges from the seeds."""
+        _check_kb_owner(await _guard(kg.get(kb_id)), user)
+        rows = await _guard(kg.impact(kb_id, seed, max_hops=max_hops))
+        return KbImpactResponse(kb_id=kb_id, seeds=seed, max_hops=max_hops, rows=rows)
+
+    @app.get(
+        "/knowledge-bases/{kb_id}/search", response_model=KbSearchResponse, tags=["knowledge-bases"]
+    )
+    async def knowledge_base_search(
+        kb_id: str,
+        q: str = Query(..., min_length=1),
+        k: int = Query(default=10, ge=1, le=50),
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> KbSearchResponse:
+        """BM25 anchor candidates for ``q`` (what retrieval would seed from)."""
+        _check_kb_owner(await _guard(kg.get(kb_id)), user)
+        hits = await _guard(kg.search(kb_id, q, k=k))
+        return KbSearchResponse(kb_id=kb_id, query=q, hits=hits)
+
+    @app.get(
+        "/knowledge-bases/{kb_id}/files",
+        response_model=KbFileResponse | KbFileListResponse,
+        tags=["knowledge-bases"],
+    )
+    async def knowledge_base_files(
+        kb_id: str,
+        path: str | None = Query(default=None, description="Corpus-relative file to read."),
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> KbFileResponse | KbFileListResponse:
+        """List corpus files, or read one as text (docx/xlsx/pdf are text-extracted)."""
+        _check_kb_owner(await _guard(kg.get(kb_id)), user)
+        if path is None:
+            return KbFileListResponse(kb_id=kb_id, files=await _guard(kg.list_files(kb_id)))
+        item = await _guard(kg.read_file(kb_id, path))
+        return KbFileResponse(
+            kb_id=kb_id, path=item.path, size=item.size, text=item.text, extracted=item.extracted
+        )
+
+    @app.get(
+        "/knowledge-bases/{kb_id}/graph/summary",
+        response_model=KbGraphSummaryResponse,
+        tags=["knowledge-bases"],
+    )
+    async def knowledge_base_graph_summary(
+        kb_id: str,
+        top: int = Query(default=15, ge=1, le=100),
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> KbGraphSummaryResponse:
+        _check_kb_owner(await _guard(kg.get(kb_id)), user)
+        summary = await _guard(kg.graph_summary(kb_id, top=top))
+        return KbGraphSummaryResponse(kb_id=kb_id, summary=summary)
+
+    # ------------------------------------------------------------------ #
     # Background jobs: cancelable validate/approve that survive navigation
     # ------------------------------------------------------------------ #
     # The synchronous /validate and /approve above stay for the CLI-parity path
@@ -1208,14 +1512,24 @@ def create_app() -> FastAPI:
             )
 
     def _job_response(job: Job, project: ProjectResponse | None = None) -> JobResponse:
+        progress = (
+            JobProgressSchema(
+                message=job.progress.message, done=job.progress.done, total=job.progress.total
+            )
+            if job.progress is not None
+            else None
+        )
         return JobResponse(
             job_id=job.job_id,
             project_id=job.project_id,
+            scope_id=job.scope_id,
+            scope_kind=job.scope_kind,
             kind=job.kind,
             status=job.status,
             error=job.error,
             created_at=job.created_at,
             updated_at=job.updated_at,
+            progress=progress,
             project=project,
         )
 
@@ -1283,13 +1597,26 @@ def create_app() -> FastAPI:
     @app.get("/jobs", response_model=list[JobResponse], tags=["jobs"])
     async def list_jobs(
         project_id: str | None = None,
+        scope_id: str | None = None,
+        scope_kind: str | None = None,
         user: User = Depends(get_current_user),
     ) -> list[JobResponse]:
-        """Jobs visible to the caller (all users' when projects are shared)."""
+        """Jobs visible to the caller (all users' when projects are shared).
+
+        ``project_id`` and ``scope_id`` are the same filter; ``scope_kind``
+        narrows to ``project`` or ``knowledge_base`` jobs.
+        """
         owner_filter = None if get_settings().projects_shared else user.user_id
+        kind_filter = (
+            scope_kind if scope_kind in ("project", "knowledge_base") else None
+        )
         return [
             _job_response(j)
-            for j in jobs.list(owner_id=owner_filter, project_id=project_id)
+            for j in jobs.list(
+                owner_id=owner_filter,
+                scope_id=scope_id if scope_id is not None else project_id,
+                scope_kind=kind_filter,  # type: ignore[arg-type]
+            )
         ]
 
     @app.get("/jobs/{job_id}", response_model=JobResponse, tags=["jobs"])
@@ -1304,7 +1631,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"No job with id {job_id!r}.")
         _authorize_job(job, user)
         project: ProjectResponse | None = None
-        if job.status == "succeeded":
+        if job.status == "succeeded" and job.scope_kind == "project":
             loaded = await _guard(compiler.load_project(job.project_id))
             project = await _project_response(loaded, compiler, user)
         return _job_response(job, project)

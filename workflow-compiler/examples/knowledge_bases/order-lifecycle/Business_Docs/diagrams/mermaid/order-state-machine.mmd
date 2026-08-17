@@ -1,0 +1,32 @@
+stateDiagram-v2
+    [*] --> RECEIVED: capture_order
+
+    RECEIVED --> VALIDATING: begin validation
+    VALIDATING --> VALIDATED: inventory OK, payment authorized, fraud clear
+    VALIDATING --> REJECTED: validation failed
+
+    VALIDATED --> PROVISIONING: begin provisioning
+    PROVISIONING --> PROVISIONED: inventory reserved, warehouse allocated
+    PROVISIONING --> REJECTED: provisioning failed (nothing to compensate)
+
+    PROVISIONED --> DISPATCHING: begin dispatch
+    DISPATCHING --> DISPATCHED: carrier label generated, package handed off
+    DISPATCHING --> COMPENSATING_PROVISION: dispatch failed
+    COMPENSATING_PROVISION --> REJECTED: inventory released
+
+    DISPATCHED --> COMPLETED: delivery confirmed, invoice generated
+
+    RECEIVED --> CANCELLED: cancel_order signal
+    VALIDATING --> CANCELLED: cancel_order signal
+    VALIDATED --> CANCELLED: cancel_order signal
+    PROVISIONING --> CANCELLING_COMPENSATE: cancel_order signal
+    PROVISIONED --> CANCELLING_COMPENSATE: cancel_order signal
+    CANCELLING_COMPENSATE --> CANCELLED: inventory released
+
+    DISPATCHING --> CANCELLING_RECALL: cancel_order signal
+    DISPATCHED --> CANCELLING_RECALL: cancel_order signal
+    CANCELLING_RECALL --> CANCELLED: shipment recalled, inventory released
+
+    REJECTED --> [*]
+    CANCELLED --> [*]
+    COMPLETED --> [*]

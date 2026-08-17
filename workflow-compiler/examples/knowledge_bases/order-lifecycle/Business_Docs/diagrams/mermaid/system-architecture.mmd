@@ -1,0 +1,53 @@
+flowchart LR
+    subgraph Channels
+        WEB[Web Storefront]
+        MOB[Mobile App]
+        PART[Partner API]
+        CC[Call Center]
+    end
+
+    subgraph Intake
+        GW[API Gateway]
+        INTAKE[Order Intake Service]
+    end
+
+    subgraph Orchestration["Temporal Orchestration Layer"]
+        TS[(Temporal Server / Cloud)]
+        WRK1[Worker Pool - Order Namespace]
+        WF[[OrderWorkflow]]
+    end
+
+    subgraph Downstream["Downstream Systems"]
+        INV[(Inventory Service)]
+        PAY[(Payment Gateway)]
+        FRD[(Fraud/Risk Service)]
+        WMS[(Warehouse Mgmt System)]
+        CAR[(Carrier Aggregator API)]
+        FIN[(Invoicing / Finance)]
+    end
+
+    subgraph Consumers["Internal Consumers"]
+        SUP[Customer Support]
+        OPS[Operations Dashboard/Alerting]
+        AUD[Audit / Compliance Export]
+    end
+
+    WEB --> GW
+    MOB --> GW
+    PART --> GW
+    CC --> GW
+    GW --> INTAKE
+    INTAKE -- StartWorkflow(order_id) --> TS
+    TS <--> WRK1
+    WRK1 --> WF
+
+    WF -- validate --> INV
+    WF -- authorize --> PAY
+    WF -- score --> FRD
+    WF -- reserve/release --> WMS
+    WF -- create shipment/recall --> CAR
+    WF -- generate invoice --> FIN
+
+    SUP -- query get_status --> TS
+    OPS -- SLA monitor query --> TS
+    AUD -- export event history --> TS

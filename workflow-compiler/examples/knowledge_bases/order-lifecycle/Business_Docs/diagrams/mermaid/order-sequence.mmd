@@ -1,0 +1,42 @@
+sequenceDiagram
+    autonumber
+    participant Client as Order Intake API
+    participant TC as Temporal Client
+    participant WF as OrderWorkflow (Temporal)
+    participant INV as Inventory Service
+    participant PAY as Payment Gateway
+    participant FRD as Fraud Service
+    participant WMS as Warehouse Mgmt System
+    participant CAR as Carrier API
+    participant FIN as Invoicing/Finance
+
+    Client->>TC: StartWorkflow(order_id, OrderRequest)
+    TC->>WF: new OrderWorkflow execution
+    WF->>WF: capture_order() -> RECEIVED
+
+    WF->>INV: check_availability(sku, qty)
+    INV-->>WF: available
+    WF->>PAY: authorize(payment_token, amount)
+    PAY-->>WF: authorized
+    WF->>FRD: score(order)
+    FRD-->>WF: pass
+    WF->>WF: VALIDATED
+
+    WF->>WMS: reserve_inventory(order_id, sku, qty)
+    WMS-->>WF: reservation_id
+    WF->>WF: PROVISIONED
+
+    WF->>CAR: create_shipment(order_id, idempotency_key, address)
+    CAR-->>WF: tracking_number, label_url
+    WF->>WF: DISPATCHED
+    WF->>WF: continue_as_new (carry forward minimal state)
+
+    Note over WF: Workflow awaits delivery_confirmed signal (hours/days)
+
+    CAR-->>WF: signal: delivery_confirmed(order_id)
+    WF->>FIN: generate_invoice(order_id)
+    FIN-->>WF: invoice_id
+    WF->>WF: COMPLETED
+
+    Client->>WF: query get_status(order_id)
+    WF-->>Client: OrderState{status=COMPLETED, ...}

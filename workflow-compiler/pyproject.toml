@@ -82,6 +82,7 @@ select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
 "src/workflow_compiler/api/app.py" = ["B008"]
 "src/workflow_compiler/api/auth.py" = ["B008"]
 "src/workflow_compiler/cli/main.py" = ["B008"]
+"src/workflow_compiler/cli/kb.py" = ["B008"]
 # __all__ is grouped by domain area on purpose rather than sorted alphabetically.
 "src/workflow_compiler/models/__init__.py" = ["RUF022"]
 # Vendored Context Hub subset (kg/contexthub/VENDORED.md): upstream style is kept

@@ -18,9 +18,13 @@ cheap and safe:
   in the state store, but the *project* record never references them, so at the
   project level nothing changed.)
 
-Concurrency rule: **at most one active run per project** (starting a second run
+Concurrency rule: **at most one active run per scope** (starting a second run
 on a project that is already running raises :class:`JobConflictError`), but any
-number of *different* projects may run at once. Two runs on the same project
+number of *different* scopes may run at once. A scope is the thing a job
+belongs to — a project (``scope_kind="project"``) or a knowledge base
+(``scope_kind="knowledge_base"``, kind ``kb_ingest``); ``project_id`` is kept as
+an alias of ``scope_id`` so existing callers and the frontend poller are
+unchanged. Two runs on the same project
 would race on the same persisted file and make cancellation ambiguous; two runs
 on different projects share no state.
 
@@ -40,8 +44,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
-JobKind = Literal["validate", "approve", "predraft"]
+JobKind = Literal["validate", "approve", "predraft", "kb_ingest"]
 JobStatus = Literal["running", "succeeded", "failed", "canceled"]
+ScopeKind = Literal["project", "knowledge_base"]
 
 #: Speculative work: started by the system rather than the user, and never worth
 #: making the user wait for. It is exempt from the one-run-per-project rule and
@@ -59,28 +64,57 @@ def _now() -> datetime:
 
 
 class JobConflictError(Exception):
-    """A run is already in flight for this project (one active run per project)."""
+    """A run is already in flight for this scope (one active run per scope)."""
 
-    def __init__(self, project_id: str, job_id: str) -> None:
-        super().__init__(f"A run is already in progress for project {project_id!r}.")
-        self.project_id = project_id
+    def __init__(self, scope_id: str, job_id: str, scope_kind: ScopeKind = "project") -> None:
+        noun = "project" if scope_kind == "project" else "knowledge base"
+        super().__init__(f"A run is already in progress for {noun} {scope_id!r}.")
+        self.project_id = scope_id
+        self.scope_id = scope_id
+        self.scope_kind = scope_kind
         self.job_id = job_id
 
 
 @dataclass
+class JobProgress:
+    """Mutable progress a long run reports while it is running.
+
+    Shared by reference between the job and the coroutine doing the work: the
+    worker calls :meth:`update` (safe from a thread — plain attribute writes),
+    the job endpoint reads it. ``total == 0`` means "indeterminate".
+    """
+
+    message: str = ""
+    done: int = 0
+    total: int = 0
+
+    def update(self, message: str, done: int = 0, total: int = 0) -> None:
+        self.message = message
+        self.done = done
+        self.total = total
+
+
+@dataclass
 class Job:
-    """One background run of a project stage."""
+    """One background run of a project stage or a knowledge-base ingest."""
 
     job_id: str
-    project_id: str
+    scope_id: str
     kind: JobKind
     owner_id: str | None
+    scope_kind: ScopeKind = "project"
     status: JobStatus = "running"
     error: str | None = None
     created_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
+    progress: JobProgress | None = None
     # The running task — never serialized; ``None`` once terminal.
     task: asyncio.Task[None] | None = field(default=None, repr=False)
+
+    @property
+    def project_id(self) -> str:
+        """Alias of ``scope_id`` (every job used to be a project job)."""
+        return self.scope_id
 
     @property
     def active(self) -> bool:
@@ -117,11 +151,22 @@ class JobManager:
         work: ``False`` finds only user-initiated runs, ``True`` only speculative
         ones, ``None`` (the default) either.
         """
+        return self.active_for_scope(project_id, speculative=speculative)
+
+    def active_for_scope(
+        self,
+        scope_id: str,
+        *,
+        scope_kind: ScopeKind | None = None,
+        speculative: bool | None = None,
+    ) -> Job | None:
+        """The in-flight run for ``scope_id`` (optionally of one ``scope_kind``)."""
         return next(
             (
                 j
                 for j in self._jobs.values()
-                if j.project_id == project_id
+                if j.scope_id == scope_id
+                and (scope_kind is None or j.scope_kind == scope_kind)
                 and j.active
                 and (speculative is None or (j.kind in _SPECULATIVE) is speculative)
             ),
@@ -131,11 +176,14 @@ class JobManager:
     async def start(
         self,
         *,
-        project_id: str,
+        project_id: str | None = None,
         kind: JobKind,
         owner_id: str | None,
         run: Callable[[], Awaitable[object]],
         after: Callable[[], Awaitable[object]] | None = None,
+        scope_id: str | None = None,
+        scope_kind: ScopeKind = "project",
+        progress: JobProgress | None = None,
     ) -> Job:
         """Register and launch a run. Raises :class:`JobConflictError` if the
         project already has one in flight.
@@ -149,26 +197,35 @@ class JobManager:
         any speculative run rather than being refused by it. Background
         pre-drafting must never be able to answer a user's click with a 409.
         """
+        resolved_scope = scope_id if scope_id is not None else project_id
+        if resolved_scope is None:
+            raise ValueError("start() needs a project_id or a scope_id")
         async with self._lock:
             self._prune()
             if kind in _SPECULATIVE:
-                existing = self.active_for_project(project_id)
+                existing = self.active_for_scope(resolved_scope, scope_kind=scope_kind)
                 if existing is not None:
-                    raise JobConflictError(project_id, existing.job_id)
+                    raise JobConflictError(resolved_scope, existing.job_id, scope_kind)
             else:
-                speculative = self.active_for_project(project_id, speculative=True)
+                speculative = self.active_for_scope(
+                    resolved_scope, scope_kind=scope_kind, speculative=True
+                )
                 if speculative is not None:
                     # Nothing is persisted until a run finishes, so this discards
                     # work in progress and no state.
                     await self._cancel(speculative)
-                existing = self.active_for_project(project_id, speculative=False)
+                existing = self.active_for_scope(
+                    resolved_scope, scope_kind=scope_kind, speculative=False
+                )
                 if existing is not None:
-                    raise JobConflictError(project_id, existing.job_id)
+                    raise JobConflictError(resolved_scope, existing.job_id, scope_kind)
             job = Job(
                 job_id=uuid.uuid4().hex,
-                project_id=project_id,
+                scope_id=resolved_scope,
                 kind=kind,
                 owner_id=owner_id,
+                scope_kind=scope_kind,
+                progress=progress,
             )
             self._jobs[job.job_id] = job
             job.task = asyncio.create_task(self._run(job, run, after))
@@ -217,18 +274,26 @@ class JobManager:
         return self._jobs.get(job_id)
 
     def list(
-        self, *, owner_id: str | None, project_id: str | None = None
+        self,
+        *,
+        owner_id: str | None,
+        project_id: str | None = None,
+        scope_id: str | None = None,
+        scope_kind: ScopeKind | None = None,
     ) -> list[Job]:
         """Jobs visible to a caller, newest first.
 
         ``owner_id=None`` returns every job (used when projects are shared, to
-        mirror project visibility); otherwise only that owner's jobs."""
+        mirror project visibility); otherwise only that owner's jobs.
+        ``project_id`` is an alias of ``scope_id``."""
         self._prune()
+        wanted_scope = scope_id if scope_id is not None else project_id
         jobs = [
             j
             for j in self._jobs.values()
             if (owner_id is None or j.owner_id == owner_id)
-            and (project_id is None or j.project_id == project_id)
+            and (wanted_scope is None or j.scope_id == wanted_scope)
+            and (scope_kind is None or j.scope_kind == scope_kind)
         ]
         return sorted(jobs, key=lambda j: j.created_at, reverse=True)
 

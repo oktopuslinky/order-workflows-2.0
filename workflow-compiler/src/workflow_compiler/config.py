@@ -184,6 +184,25 @@ class Settings(BaseSettings):
             "for an `advance` signal (interactive step-through debugging)."
         ),
     )
+    kg_enrich_default: bool = Field(
+        default=True,
+        description=(
+            "Knowledge bases: run LLM enrichment (per-file summaries, topics, "
+            "entities, process clusters) by default when a corpus is indexed. "
+            "Static ingest alone is instant; enrichment is one LLM call per "
+            "document/module and runs as a background job."
+        ),
+    )
+    kg_retrieve_budget: int = Field(
+        default=4000,
+        gt=0,
+        description="Knowledge bases: default token budget of a retrieved context packet.",
+    )
+    kg_max_upload_mb: int = Field(
+        default=50,
+        gt=0,
+        description="Knowledge bases: maximum uncompressed size of an uploaded corpus zip.",
+    )
 
 
 @lru_cache(maxsize=1)

@@ -45,6 +45,10 @@ class KbCatalog(BaseModel):
     stories: list[str] = Field(default_factory=list)
     test_cases: list[str] = Field(default_factory=list)
     requirements: list[str] = Field(default_factory=list)
+    documents: list[str] = Field(
+        default_factory=list,
+        description="Document ids found in the corpus text (BRD-ORD-001, TDD-ORD-001, TP-ORD-001 …).",
+    )
 
 
 class KnowledgeBase(BaseModel):

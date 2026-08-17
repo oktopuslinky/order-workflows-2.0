@@ -252,7 +252,7 @@ class KgService:
         graph = result.graph
         self._cache_put(kb_id, graph)
         kb.stats = self._stats(graph, corpus)
-        kb.catalog = self._catalog(graph)
+        kb.catalog = self._catalog(graph, self.hub_dir(kb_id))
         kb.indexed_at = _now()
         kb.llm_enriched = bool(enrich)
         kb.provider_used = llm_provider.name if llm_provider is not None else None
@@ -464,7 +464,7 @@ class KgService:
     async def catalog(self, kb_id: str) -> KbCatalog:
         """Business ids present in the graph, computed live (also stored on the KB)."""
         graph = await self._graph(kb_id)
-        return self._catalog(graph)
+        return await asyncio.to_thread(self._catalog, graph, self.hub_dir(kb_id))
 
     async def graph_summary(self, kb_id: str, *, top: int = 15) -> KgGraphSummary:
         graph = await self._graph(kb_id)
@@ -592,7 +592,7 @@ class KgService:
         )
 
     @staticmethod
-    def _catalog(graph: Any) -> KbCatalog:
+    def _catalog(graph: Any, hub_dir: Path | None = None) -> KbCatalog:
         buckets: dict[str, list[str]] = {
             "Epic": [],
             "UserStory": [],
@@ -610,7 +610,31 @@ class KgService:
             stories=sorted(buckets["UserStory"]),
             test_cases=sorted(buckets["TestCase"]),
             requirements=sorted(buckets["Requirement"]),
+            documents=_document_ids(hub_dir) if hub_dir is not None else [],
         )
+
+
+_DOC_ID_RE = re.compile(r"\b(?:BRD|TDD|TP|SDD|ADR|TS)-[A-Z]{2,6}-\d{2,4}\b")
+
+
+def _document_ids(hub_dir: Path) -> list[str]:
+    """Document ids (``TDD-ORD-001`` …) mentioned anywhere in the extracted corpus text.
+
+    Document nodes are keyed by path, not by the id printed inside the file, so
+    the catalog scans the ingest extracts (``.contexthub/extracts/*.txt``) —
+    small, already-extracted plain text — to learn which numbered documents
+    exist. Deterministic and cheap; used to number successors (``TDD-ORD-002``).
+    """
+    extracts = hub_dir / "extracts"
+    if not extracts.is_dir():
+        return []
+    found: set[str] = set()
+    for path in sorted(extracts.glob("*.txt")):
+        try:
+            found.update(_DOC_ID_RE.findall(path.read_text(encoding="utf-8", errors="replace")))
+        except OSError:  # pragma: no cover - unreadable extract
+            continue
+    return sorted(found)
 
 
 def _node_path(node: Any) -> str | None:

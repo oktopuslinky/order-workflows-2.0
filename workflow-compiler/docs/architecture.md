@@ -248,6 +248,35 @@ flowchart LR
     agents --> prov
 ```
 
+## Knowledge bases (`kg/`, phase 0 of the change pipeline)
+
+A zipped corpus becomes a Context Hub graph that later phases use to ground change requests and
+specs. The vendored engine (`kg/contexthub`, pinned SHA) sits behind one typed façade.
+
+```mermaid
+flowchart LR
+    upload["POST /knowledge-bases (zip)
+CLI kb init"] --> ingest["kg/ingest.py
+safe extract → corpus/"]
+    ingest --> svc["KgService"]
+    svc -->|"kb_ingest job (JobManager scope=knowledge_base)"| init["contexthub init_repo
+static ingest"]
+    init -->|"enrich (optional)"| bridge["ProviderJsonClient
+(kg/llm_bridge)"]
+    bridge --> prov["BaseLLMProvider
+(nemotron | local | mock)"]
+    init --> graph[".contexthub/graph.json"]
+    svc -->|"retrieve / impact / search / files"| graph
+    svc --> store["KnowledgeBaseStore
+<state>/knowledge_bases/<id>.json"]
+    api["/knowledge-bases/* routes
+frontend /knowledge"] --> svc
+```
+
+Retrieval (`retrieve`) is BM25 anchor → bounded traversal → dereferenced file spans, returned as a
+`KgPacket` whose `rendered` text is what later prompts get; `impact` is a deterministic BFS over
+dependency edges. See `docs/HOW_IT_WORKS.md` §8c and `docs/kg-plan/`.
+
 ## Request sequence (compile → approve)
 
 ```mermaid

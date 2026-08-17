@@ -40,12 +40,12 @@ def save(graph: Graph, path: Path = DEFAULT_GRAPH_PATH) -> Path:
             for e in graph.edges
         ],
     }
-    path.write_text(json.dumps(data, indent=2))
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")  # workflow-compiler edit
     return path
 
 
 def load(path: Path = DEFAULT_GRAPH_PATH) -> Graph:
-    data = json.loads(Path(path).read_text())
+    data = json.loads(Path(path).read_text(encoding="utf-8"))  # workflow-compiler edit: explicit utf-8
     graph = Graph()
     for n in data["nodes"]:
         graph.add_node(Node(

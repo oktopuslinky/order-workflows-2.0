@@ -36,5 +36,11 @@ never import this subpackage from outside `workflow_compiler.kg`.
 8. **`bootstrap/formats.py`** — `.pdf` is an indexable document; `_extract_pdf` routes it through
    `workflow_compiler.ingestion.DocumentParserFactory` (pypdf).
 
+9. **`bootstrap/store.py`** — `save`/`load` pass `encoding="utf-8"` explicitly (upstream used the
+   platform default, which is cp1252 on Windows and breaks on non-ASCII summaries).
+10. **`bootstrap/idlinks.py`** — `DEFAULT_ID_PREFIXES` gains `BR` and `BCR` (both minted as
+    `Requirement`), with `TC→BR verifies` / `US→BR satisfies` link semantics, because the reference
+    BRD numbers requirements `BR-01..` and the change pipeline keys off `BCR-001`.
+
 Everything else is byte-identical to upstream at the pinned commit. To re-vendor: copy the
 subset, re-apply the edits above (they are small and commented), re-run `pytest tests/test_kg_*.py`.

@@ -42,7 +42,12 @@ from ..model.schema import EdgeType, NodeType
 
 # The default families. Configurable because the convention, not the specific
 # prefixes, is what generalizes — another corpus may use SVC-/FEAT-/BUG-.
-DEFAULT_ID_PREFIXES: tuple[str, ...] = ("CMP", "API", "US", "REQ", "TC", "EPIC", "TERM")
+# workflow-compiler edit: ``BR`` (business requirement) and ``BCR`` (business
+# change request) added — the reference BRD numbers requirements BR-01.. and the
+# change pipeline keys everything off BCR-001.
+DEFAULT_ID_PREFIXES: tuple[str, ...] = (
+    "CMP", "API", "US", "REQ", "BR", "BCR", "TC", "EPIC", "TERM",
+)
 
 # Prefix → the type a *minted* node gets. A prefix with no entry still yields
 # mention edges; it just has no strong opinion about what the id is, and falls
@@ -51,6 +56,8 @@ NODE_TYPE_BY_PREFIX: dict[str, NodeType] = {
     "CMP": NodeType.COMPONENT,
     "API": NodeType.ENDPOINT,
     "REQ": NodeType.REQUIREMENT,
+    "BR": NodeType.REQUIREMENT,   # workflow-compiler edit
+    "BCR": NodeType.REQUIREMENT,  # workflow-compiler edit
     "US": NodeType.USER_STORY,
     "TC": NodeType.TEST_CASE,
     "EPIC": NodeType.EPIC,
@@ -64,6 +71,8 @@ DEFAULT_LINK_SEMANTICS: dict[tuple[str, str], tuple[EdgeType, str]] = {
     ("TC", "US"): (EdgeType.DEPENDS_ON, "verifies"),
     ("TC", "REQ"): (EdgeType.DEPENDS_ON, "verifies"),
     ("US", "REQ"): (EdgeType.DEPENDS_ON, "satisfies"),
+    ("TC", "BR"): (EdgeType.DEPENDS_ON, "verifies"),   # workflow-compiler edit
+    ("US", "BR"): (EdgeType.DEPENDS_ON, "satisfies"),  # workflow-compiler edit
     ("US", "EPIC"): (EdgeType.DEPENDS_ON, "belongs_to"),
     ("EPIC", "US"): (EdgeType.CONTAINS, "backlog"),
 }

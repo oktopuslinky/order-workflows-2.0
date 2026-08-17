@@ -8,6 +8,15 @@ import type {
   EditPreviewResponse,
   Job,
   JobStartBody,
+  KbFileListResponse,
+  KbFileResponse,
+  KbGraphSummary,
+  KbGraphSummaryResponse,
+  KbImpactResponse,
+  KbRetrieveResponse,
+  KbSearchResponse,
+  KnowledgeBase,
+  KnowledgeBaseListResponse,
   LocalModelList,
   MetricsSummary,
   ProjectFilesResponse,
@@ -335,6 +344,79 @@ export const api = {
     request<Job[]>(
       `/jobs${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`,
     ),
+
+  // ---- knowledge bases -------------------------------------------------- //
+  // A corpus zip becomes a Context Hub graph; indexing runs as a kb_ingest job
+  // (poll listJobs / getJob, or the KB itself until status is "ready").
+  listKnowledgeBases: () =>
+    request<KnowledgeBaseListResponse>("/knowledge-bases").then(
+      (r) => r.knowledge_bases,
+    ),
+  getKnowledgeBase: (id: string) =>
+    request<KnowledgeBase>(`/knowledge-bases/${encodeURIComponent(id)}`),
+  createKnowledgeBase: (
+    file: File,
+    opts: { name?: string; enrich?: boolean; provider?: string; model?: string } = {},
+  ) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (opts.name) form.append("name", opts.name);
+    if (opts.enrich !== undefined) form.append("enrich", String(opts.enrich));
+    if (opts.provider) form.append("provider", opts.provider);
+    if (opts.model) form.append("model", opts.model);
+    return request<KnowledgeBase>("/knowledge-bases", { method: "POST", body: form });
+  },
+  deleteKnowledgeBase: (id: string) =>
+    request<{ status: string }>(`/knowledge-bases/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  reindexKnowledgeBase: (
+    id: string,
+    body: { enrich?: boolean; provider?: string; model?: string } = {},
+  ) =>
+    request<KnowledgeBase>(`/knowledge-bases/${encodeURIComponent(id)}/reindex`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    }),
+  retrieveFromKnowledgeBase: (
+    id: string,
+    prompt: string,
+    opts: { budget?: number; maxHops?: number } = {},
+  ) =>
+    request<KbRetrieveResponse>(`/knowledge-bases/${encodeURIComponent(id)}/retrieve`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        prompt,
+        budget: opts.budget ?? null,
+        max_hops: opts.maxHops ?? 2,
+      }),
+    }),
+  knowledgeBaseImpact: (id: string, seeds: string[], maxHops = 2) => {
+    const params = new URLSearchParams();
+    for (const s of seeds) params.append("seed", s);
+    params.set("max_hops", String(maxHops));
+    return request<KbImpactResponse>(
+      `/knowledge-bases/${encodeURIComponent(id)}/impact?${params.toString()}`,
+    );
+  },
+  knowledgeBaseSearch: (id: string, q: string, k = 10) =>
+    request<KbSearchResponse>(
+      `/knowledge-bases/${encodeURIComponent(id)}/search?q=${encodeURIComponent(q)}&k=${k}`,
+    ),
+  knowledgeBaseFiles: (id: string) =>
+    request<KbFileListResponse>(`/knowledge-bases/${encodeURIComponent(id)}/files`).then(
+      (r) => r.files,
+    ),
+  knowledgeBaseFile: (id: string, path: string) =>
+    request<KbFileResponse>(
+      `/knowledge-bases/${encodeURIComponent(id)}/files?path=${encodeURIComponent(path)}`,
+    ),
+  knowledgeBaseGraphSummary: (id: string, top = 15): Promise<KbGraphSummary> =>
+    request<KbGraphSummaryResponse>(
+      `/knowledge-bases/${encodeURIComponent(id)}/graph/summary?top=${top}`,
+    ).then((r) => r.summary),
 
   getJob: (jobId: string) => request<Job>(`/jobs/${encodeURIComponent(jobId)}`),
 

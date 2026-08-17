@@ -31,6 +31,8 @@ interface Toast {
   tone: "pass" | "block";
   message: string;
   projectId: string;
+  /** Where clicking the toast goes (a project page or a knowledge-base page). */
+  href: string;
 }
 
 interface RunsContextValue {
@@ -40,6 +42,8 @@ interface RunsContextValue {
   jobForProject: (projectId: string) => Job | undefined;
   /** True while a run for the project is in flight. */
   isRunning: (projectId: string) => boolean;
+  /** The most recent ingest job for a knowledge base (active preferred). */
+  jobForKnowledgeBase: (kbId: string) => Job | undefined;
   /** Start a run; resolves to the created Job, rejects on 409/other errors. */
   start: (projectId: string, body: JobStartBody) => Promise<Job>;
   /** Cancel a run; the project is left exactly as it was. */
@@ -51,6 +55,8 @@ const RunsContext = createContext<RunsContextValue | null>(null);
 const KIND_LABEL: Record<JobKind, string> = {
   validate: "Validation",
   approve: "Approval",
+  predraft: "Question drafting",
+  kb_ingest: "Knowledge-base indexing",
 };
 
 const TERMINAL: ReadonlySet<JobStatus> = new Set([
@@ -100,24 +106,36 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
       const prev = seen.current.get(job.job_id);
       seen.current.set(job.job_id, job.status);
       if (prev === job.status || !TERMINAL.has(job.status)) continue;
+      const isKb = job.scope_kind === "knowledge_base";
+      const href = isKb ? `/knowledge/${job.scope_id}` : `/projects/${job.project_id}`;
+      const refresh = () => {
+        if (isKb) {
+          queryClient.invalidateQueries({ queryKey: ["knowledge-base", job.scope_id] });
+          queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+        } else {
+          queryClient.invalidateQueries({ queryKey: ["project", job.project_id] });
+          queryClient.invalidateQueries({ queryKey: ["projects"] });
+          queryClient.invalidateQueries({ queryKey: ["metrics-summary"] });
+        }
+      };
       // First time we observe this run as finished.
       if (prev === undefined && job.status !== "running") {
         // Job was already terminal when we first loaded (e.g. finished before a
         // refresh) — don't toast for history, just make sure views are fresh.
-        queryClient.invalidateQueries({ queryKey: ["project", job.project_id] });
+        refresh();
         continue;
       }
-      queryClient.invalidateQueries({ queryKey: ["project", job.project_id] });
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["metrics-summary"] });
+      refresh();
 
       const label = KIND_LABEL[job.kind];
       if (job.status === "succeeded") {
         pushToast({
           tone: "pass",
           projectId: job.project_id,
-          message:
-            job.kind === "approve"
+          href,
+          message: isKb
+            ? "Knowledge base indexed and ready."
+            : job.kind === "approve"
               ? "Approval complete — code generated."
               : "Validation complete.",
         });
@@ -125,6 +143,7 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
         pushToast({
           tone: "block",
           projectId: job.project_id,
+          href,
           message: `${label} failed${job.error ? `: ${job.error}` : "."}`,
         });
       }
@@ -160,13 +179,26 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
   const value: RunsContextValue = {
     jobs,
     jobForProject: (projectId) => {
-      const forProject = jobs.filter((j) => j.project_id === projectId);
+      const forProject = jobs.filter(
+        (j) => j.scope_kind !== "knowledge_base" && j.project_id === projectId,
+      );
       return (
         forProject.find((j) => j.status === "running") ?? forProject[0] ?? undefined
       );
     },
     isRunning: (projectId) =>
-      jobs.some((j) => j.project_id === projectId && j.status === "running"),
+      jobs.some(
+        (j) =>
+          j.scope_kind !== "knowledge_base" &&
+          j.project_id === projectId &&
+          j.status === "running",
+      ),
+    jobForKnowledgeBase: (kbId) => {
+      const forKb = jobs.filter(
+        (j) => j.scope_kind === "knowledge_base" && j.scope_id === kbId,
+      );
+      return forKb.find((j) => j.status === "running") ?? forKb[0] ?? undefined;
+    },
     start: (projectId, body) =>
       startMutation.mutateAsync({ projectId, body }),
     cancel: async (jobId) => {
@@ -179,7 +211,7 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
       {children}
       <ToastHost
         toasts={toasts}
-        onOpen={(projectId) => router.push(`/projects/${projectId}`)}
+        onOpen={(href) => router.push(href)}
         onDismiss={(id) => setToasts((prev) => prev.filter((x) => x.id !== id))}
       />
     </RunsContext.Provider>
@@ -199,7 +231,7 @@ function ToastHost({
   onDismiss,
 }: {
   toasts: Toast[];
-  onOpen: (projectId: string) => void;
+  onOpen: (href: string) => void;
   onDismiss: (id: number) => void;
 }) {
   if (toasts.length === 0) return null;
@@ -215,9 +247,9 @@ function ToastHost({
         >
           <button
             type="button"
-            onClick={() => onOpen(t.projectId)}
+            onClick={() => onOpen(t.href)}
             className="min-w-0 flex-1 text-left"
-            title="Open project"
+            title="Open"
           >
             {t.message}
           </button>

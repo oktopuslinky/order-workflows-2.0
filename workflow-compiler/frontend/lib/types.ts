@@ -360,8 +360,16 @@ export interface CvpaPreviewResponse {
   diagram: string;
 }
 
-export type JobKind = "validate" | "approve";
+export type JobKind = "validate" | "approve" | "predraft" | "kb_ingest";
 export type JobStatus = "running" | "succeeded" | "failed" | "canceled";
+/** What a job belongs to: a project, or a knowledge base (kb_ingest). */
+export type JobScopeKind = "project" | "knowledge_base";
+
+export interface JobProgress {
+  message: string;
+  done: number;
+  total: number;
+}
 
 /**
  * A background validate/approve run. Lives server-side, so it survives the user
@@ -370,12 +378,16 @@ export type JobStatus = "running" | "succeeded" | "failed" | "canceled";
  */
 export interface Job {
   job_id: string;
+  /** The job's scope id (= scope_id; a kb id for knowledge-base jobs). */
   project_id: string;
+  scope_id: string;
+  scope_kind: JobScopeKind;
   kind: JobKind;
   status: JobStatus;
   error: string | null;
   created_at: string;
   updated_at: string;
+  progress: JobProgress | null;
   project: ProjectResponse | null;
 }
 
@@ -527,4 +539,150 @@ export interface Run {
   created_at: string;
   bundle_written: string[];
   bundle_kept: string[];
+}
+
+// --------------------------------------------------------------------------- //
+// Knowledge bases
+// --------------------------------------------------------------------------- //
+
+export type KnowledgeBaseStatus = "ingesting" | "ready" | "failed";
+
+export interface KbStats {
+  nodes: number;
+  edges: number;
+  by_type: Record<string, number>;
+  edges_by_type: Record<string, number>;
+  files: number;
+}
+
+export interface KbCatalog {
+  epics: string[];
+  stories: string[];
+  test_cases: string[];
+  requirements: string[];
+}
+
+export interface KnowledgeBase {
+  kb_id: string;
+  name: string;
+  owner_id: string | null;
+  source: { kind: "zip" | "path"; filename: string | null };
+  status: KnowledgeBaseStatus;
+  error: string | null;
+  stats: KbStats;
+  indexed_at: string | null;
+  llm_enriched: boolean;
+  provider_used: string | null;
+  model_used: string | null;
+  catalog: KbCatalog;
+  warnings: string[];
+  created_at: string;
+  updated_at: string;
+  /** The ingest job that is running (or was just started), if any. */
+  job: Job | null;
+}
+
+export interface KnowledgeBaseListResponse {
+  knowledge_bases: KnowledgeBase[];
+}
+
+export interface KgSection {
+  band: string;
+  node_id: string;
+  text: string;
+  tokens: number;
+  path: string | null;
+  start_line: number | null;
+  end_line: number | null;
+}
+
+export interface KgFileRef {
+  path: string;
+  band: string;
+  tokens: number;
+  node_ids: string[];
+  spans: [number, number][];
+}
+
+export interface KgPacket {
+  prompt: string;
+  seeds: string[];
+  focus_domain: string | null;
+  rendered: string;
+  sections: KgSection[];
+  files: KgFileRef[];
+  total_tokens: number;
+  band_budgets: Record<string, number>;
+  coverage: number;
+  uncovered_terms: string[];
+  low_confidence: boolean;
+  refinement_rounds: number;
+}
+
+export interface KbRetrieveResponse {
+  kb_id: string;
+  packet: KgPacket;
+}
+
+export interface KgImpactRow {
+  node_id: string;
+  type: string;
+  name: string;
+  path: string | null;
+  hops: number;
+  via: string;
+}
+
+export interface KbImpactResponse {
+  kb_id: string;
+  seeds: string[];
+  max_hops: number;
+  rows: KgImpactRow[];
+}
+
+export interface KgSearchHit {
+  node_id: string;
+  type: string;
+  name: string;
+  path: string | null;
+  score: number;
+}
+
+export interface KbSearchResponse {
+  kb_id: string;
+  query: string;
+  hits: KgSearchHit[];
+}
+
+export interface KbFileListResponse {
+  kb_id: string;
+  files: string[];
+}
+
+export interface KbFileResponse {
+  kb_id: string;
+  path: string;
+  size: number;
+  text: string;
+  extracted: boolean;
+}
+
+export interface KgNodeBrief {
+  node_id: string;
+  type: string;
+  name: string;
+  degree: number;
+}
+
+export interface KbGraphSummary {
+  nodes: number;
+  edges: number;
+  by_type: Record<string, number>;
+  edges_by_type: Record<string, number>;
+  top_nodes: KgNodeBrief[];
+}
+
+export interface KbGraphSummaryResponse {
+  kb_id: string;
+  summary: KbGraphSummary;
 }

@@ -299,7 +299,7 @@ function FilesCard({ kbId, ready }: { kbId: string; ready: boolean }) {
 
 function AskCard({ kbId, ready }: { kbId: string; ready: boolean }) {
   const [prompt, setPrompt] = useState("how does dispatch compensate provisioning");
-  const [budget, setBudget] = useState(2000);
+  const [budget, setBudget] = useState(4000);
   const [packet, setPacket] = useState<KgPacket | null>(null);
   const [showRendered, setShowRendered] = useState(false);
   const ask = useMutation({

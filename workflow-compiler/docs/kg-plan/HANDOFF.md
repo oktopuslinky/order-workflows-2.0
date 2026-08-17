@@ -46,16 +46,17 @@ paragraph), `docs/kg-plan/RUNBOOK.md`.
 
 ## Ids / facts Phase 1 will need
 
-- Live KB (this machine, `.workflow_state/knowledge_bases/`): see RUNBOOK Phase 0 results for the
-  kb_id, node counts and catalog. Catalog on the real corpus: epics `EPIC-001` (+`EPIC-001-A`
-  minted from a section id), stories `US-001..007`, test cases `TC-01..17` (TC-08/13 are absent in
-  the source), requirements `BR-01..10` + `BCR-001`. So Phase 1 numbers **EPIC-002**, **US-008…**,
-  **TC-18…**, `TDD-ORD-002`.
+- Live KB (this machine, `.workflow_state/knowledge_bases/86d9919378bd4ebe8329f8ff950a2a27`,
+  enriched on Nemotron, 401 nodes / 979 edges — details in RUNBOOK). A static twin
+  `order-lifecycle-static` was made with the CLI. Catalog on the real corpus: epics `EPIC-001`
+  (+`EPIC-001-A` minted from a section id), stories `US-001..007`, test cases `TC-01..17`,
+  requirements `BR-01..12` + `BCR-001`. So Phase 1 numbers **EPIC-002**, **US-008…**, **TC-18…**,
+  `TDD-ORD-002`.
 - Node id shapes: `mod:existing_Codebase/workflows/order_workflow.py`,
   `fn:existing_Codebase/activities/order_activities.py:dispatch_order`,
   `doc:Business_Docs/epics/EPIC-001-order-lifecycle-management.docx`, `US-003`, `TC-05`, `BR-02`,
   `chunk:<path>:<start>-<end>`; enrichment adds `topic:*` / `entity:*` (`DataArtifact`) and
-  `process:*` (`Service`).
+  `svc:proc:*` (`Service`) process clusters.
 - `KgService.retrieve(kb_id, prompt, budget)` returns `KgPacket.rendered` (prompt-ready) plus
   `files[].path/spans` for the "Sources" footer; `impact(kb_id, seeds)` for the deterministic
   affected-node table (seeds = node ids or terms like `complete_order`).

@@ -36,7 +36,10 @@ class ProviderJsonClient:
         *,
         loop: asyncio.AbstractEventLoop | None = None,
         temperature: float = 0.1,
-        max_tokens: int | None = 1024,
+        # Upstream used 1024. Nemotron-class models often preface the JSON with
+        # prose and the clustering answer lists every file, so 1024 truncates the
+        # object and the call is wasted; 2048 leaves headroom at negligible cost.
+        max_tokens: int | None = 2048,
         call_timeout: float | None = None,
     ) -> None:
         self._provider = provider
@@ -84,10 +87,14 @@ class ProviderJsonClient:
                 parsed = extract_json(text)
             except Exception as exc:  # provider or parse failure → retry
                 last_error = exc
-                logger.debug("kg enrichment call %r attempt %d failed: %s", label, attempt, exc)
+                logger.warning(
+                    "kg enrichment call %r attempt %d/%d failed: %s",
+                    label, attempt + 1, max(1, retries), str(exc)[:200],
+                )
                 continue
             if isinstance(parsed, dict):
                 return parsed
             last_error = LlmError(f"LLM returned a JSON {type(parsed).__name__}, not an object")
         self.failures += 1
+        logger.warning("kg enrichment call %r gave up after %d attempts", label, max(1, retries))
         raise LlmError(f"{label or 'enrichment'}: {last_error}")

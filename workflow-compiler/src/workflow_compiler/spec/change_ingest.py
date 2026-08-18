@@ -61,6 +61,11 @@ _KIND_ALIASES: dict[str, ComponentKind] = {k.value: k for k in ComponentKind} | 
     "test_plan": ComponentKind.DOC,
     "file": ComponentKind.MODULE,
     "mmd": ComponentKind.DIAGRAM,
+    "mermaid": ComponentKind.DIAGRAM,
+    "requirement": ComponentKind.DOC,
+    "business_rule": ComponentKind.DOC,
+    "brd": ComponentKind.DOC,
+    "other": ComponentKind.DOC,
 }
 _CHANGE_ALIASES: dict[str, ChangeType] = {c.value: c for c in ChangeType} | {
     "modified": ChangeType.MODIFY,
@@ -78,9 +83,21 @@ _CHANGE_ALIASES: dict[str, ChangeType] = {c.value: c for c in ChangeType} | {
 }
 
 
-def coerce_kind(value: str) -> ComponentKind:
-    """Map free-form kind words onto :class:`ComponentKind` (default: module)."""
-    return _KIND_ALIASES.get(value.strip().lower(), ComponentKind.MODULE)
+def coerce_kind(value: str, name: str = "") -> ComponentKind:
+    """Map free-form kind words onto :class:`ComponentKind` (default: module).
+
+    ``name`` breaks ties the word cannot: a ``.mmd`` / ``.mermaid`` file is a
+    diagram and a ``.py`` file a module whatever the row calls it.
+    """
+    lowered = name.strip().strip("`").lower()
+    if lowered.endswith((".mmd", ".mermaid")):
+        return ComponentKind.DIAGRAM
+    kind = _KIND_ALIASES.get(value.strip().lower())
+    if kind is None:
+        return ComponentKind.MODULE
+    if kind is ComponentKind.DOC and lowered.endswith(".py"):
+        return ComponentKind.MODULE
+    return kind
 
 
 def coerce_change_type(value: str) -> ChangeType:

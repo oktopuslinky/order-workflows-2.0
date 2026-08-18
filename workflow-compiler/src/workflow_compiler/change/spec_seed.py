@@ -57,7 +57,7 @@ def seed_components(cr: ChangeRequest) -> list[ComponentChange]:
         name = item.ref.strip().strip("`")
         if not name:
             continue
-        kind = coerce_kind(item.kind)
+        kind = coerce_kind(item.kind, name)
         key = f"{kind.value}:{name.lower()}"
         if key in seen:
             continue

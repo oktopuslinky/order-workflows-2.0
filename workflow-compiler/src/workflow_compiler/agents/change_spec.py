@@ -174,7 +174,7 @@ class ChangeSpecAgent:
             name = item.name.strip().strip("`")
             if not name:
                 continue
-            kind = coerce_kind(item.kind)
+            kind = coerce_kind(item.kind, name)
             key = f"{kind.value}:{name.lower()}"
             seed = seeds_by_key.get(key) or seeds_by_tail.get(f"{kind.value}:{_tail(name)}")
             if seed is not None:

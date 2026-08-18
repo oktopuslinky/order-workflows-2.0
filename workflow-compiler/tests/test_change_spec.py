@@ -379,6 +379,11 @@ def test_seed_components_from_change_request() -> None:
         ("tests/test_workflow.py", "test", "add", "tests/test_workflow.py"),
     ]
     assert seeds[0].proposed == "fan out"  # rationale until the TDD supplies text
+    from workflow_compiler.spec.change_ingest import coerce_kind
+
+    assert coerce_kind("document", "order-state-machine.mmd") is ComponentKind.DIAGRAM
+    assert coerce_kind("requirement", "BR-06") is ComponentKind.DOC
+    assert coerce_kind("document", "shared/types.py") is ComponentKind.MODULE
     assert seed_components(ChangeRequest(kb_id="kb", title="t", document_text="x")) == []
 
 

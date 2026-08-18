@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 
+from workflow_compiler.models.change_spec import CHANGES_SLUG
 from workflow_compiler.models.findings import Severity, SpecFinding
 from workflow_compiler.models.project import CompilationProject
 
@@ -55,9 +56,26 @@ def has_anything_to_ask(project: CompilationProject) -> bool:
     The cheap check the API uses to decide whether pre-drafting is worth starting
     at all, without paying for a drafting run to discover the agenda is empty.
     """
-    return any(
+    if any(
         askable_findings(project, spec.slug) or spec.unresolved_questions()
         for spec in project.specs
+    ):
+        return True
+    return change_spec_has_anything_to_ask(project)
+
+
+def change_spec_has_anything_to_ask(project: CompilationProject) -> bool:
+    """True when the change spec (``changes.md``) has an askable finding or question.
+
+    The change spec is a second file at the same gate: its findings travel
+    under :data:`CHANGES_SLUG` and its unresolved open questions count exactly
+    like a workflow's.
+    """
+    change_spec = project.change_spec
+    if change_spec is None:
+        return False
+    return bool(
+        askable_findings(project, CHANGES_SLUG) or change_spec.unresolved_questions()
     )
 
 
@@ -74,6 +92,13 @@ def agenda_fingerprint(project: CompilationProject) -> str:
         for line in sorted(f.as_string() for f in askable_findings(project, spec.slug)):
             digest.update(f"\x00finding\x01{line}".encode())
         for question in sorted(q.text for q in spec.unresolved_questions()):
+            digest.update(f"\x00question\x01{question}".encode())
+    change_spec = project.change_spec
+    if change_spec is not None:
+        digest.update(f"\x00changes\x01{change_spec.version}".encode())
+        for line in sorted(f.as_string() for f in askable_findings(project, CHANGES_SLUG)):
+            digest.update(f"\x00finding\x01{line}".encode())
+        for question in sorted(q.text for q in change_spec.unresolved_questions()):
             digest.update(f"\x00question\x01{question}".encode())
     return digest.hexdigest()
 

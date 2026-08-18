@@ -17,7 +17,7 @@ Line grammar (what the parser relies on):
   ``#### Existing`` and ``#### Proposed`` free-text blocks (until the next
   ``####`` / ``###`` / ``##``).
 * ``## Assumptions`` — ``- <text>`` bullets with optional provenance marker.
-* ``## Open Questions`` — ``- [ ] (<ref>) <question>`` + indented ``Answer:``.
+* ``## Open Questions`` — ``- [ ] (<ref>) <question> [marker]`` + indented ``Answer:``.
 * ``## Sources`` — read-only ``- `path — lines a-b``` bullets (kept as stored).
 """
 
@@ -134,7 +134,7 @@ def render_change_spec(
     for question in spec.open_questions:
         box = "x" if question.resolved else " "
         ref = f"({question.ref}) " if question.ref else ""
-        question_lines.append(f"- [{box}] {ref}{question.text}")
+        question_lines.append(f"- [{box}] {ref}{question.text}{_marker(question.provenance)}")
         question_lines.append(f"  Answer: {question.answer or ''}")
     section(QUESTIONS_SECTION, question_lines)
 

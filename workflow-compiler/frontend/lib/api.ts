@@ -203,6 +203,8 @@ export const api = {
     model?: string,
     nickname?: string,
     provider?: string,
+    kbId?: string,
+    changeRequestId?: string,
   ) =>
     request<ProjectResponse>("/projects/compile", {
       method: "POST",
@@ -213,6 +215,8 @@ export const api = {
         provider: provider || null,
         model: model || null,
         nickname: nickname || null,
+        kb_id: kbId || null,
+        change_request_id: changeRequestId || null,
       }),
     }),
 
@@ -222,6 +226,8 @@ export const api = {
     model?: string,
     nickname?: string,
     provider?: string,
+    kbId?: string,
+    changeRequestId?: string,
   ) => {
     const form = new FormData();
     form.append("file", file);
@@ -229,11 +235,23 @@ export const api = {
     if (provider) form.append("provider", provider);
     if (model) form.append("model", model);
     if (nickname) form.append("nickname", nickname);
+    if (kbId) form.append("kb_id", kbId);
+    if (changeRequestId) form.append("change_request_id", changeRequestId);
     return request<ProjectResponse>("/projects/compile-upload", {
       method: "POST",
       body: form,
     });
   },
+
+  /** One click "upload the TDD to the workflow GUI": compiles the approved TDD grounded by the KB. */
+  sendToWorkflow: (
+    crId: string,
+    body: { provider?: string; model?: string; nickname?: string } = {},
+  ) =>
+    request<ProjectResponse>(
+      `/change-requests/${encodeURIComponent(crId)}/send-to-workflow`,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) },
+    ),
 
   saveSpec: (id: string, specMarkdown: Record<string, string>) =>
     request<ProjectResponse>(`/projects/${encodeURIComponent(id)}/spec`, {

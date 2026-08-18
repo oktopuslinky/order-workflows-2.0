@@ -107,15 +107,17 @@ from workflow_compiler.api.auth import (
     verify_password,
 )
 from workflow_compiler.api.dependencies import (
+    KB_DEFAULT_PROVIDER,
     SELECTABLE_PROVIDERS,
+    CompilerSelector,
     get_change_service,
     get_compiler,
+    get_compiler_selector,
     get_executor,
     get_kg_service,
     get_local_provider,
     get_project_compiler,
     project_compiler_for_model,
-    project_compiler_for_selection,
 )
 from workflow_compiler.api.jobs import Job, JobConflictError, JobKind, JobManager, JobProgress
 from workflow_compiler.api.schemas import (
@@ -162,6 +164,7 @@ from workflow_compiler.api.schemas import (
     RunnableListResponse,
     RunnableWorkflowSchema,
     RunResponse,
+    SendToWorkflowRequest,
     SettingsDefaults,
     SignalRunRequest,
     SignalSchema,
@@ -217,6 +220,7 @@ from workflow_compiler.interfaces.executor import (
     RunStatus,
     WorkflowExecutor,
 )
+from workflow_compiler.kg.grounding import KgGrounder
 from workflow_compiler.kg.models import KnowledgeBase
 from workflow_compiler.kg.service import KgService
 from workflow_compiler.llm.types import ChatMessage
@@ -238,7 +242,6 @@ from workflow_compiler.models.change import (
 )
 from workflow_compiler.models.user import User
 from workflow_compiler.project_compiler import ProjectCompiler
-from workflow_compiler.spec import render_spec
 from workflow_compiler.storage.user_store import UserStore
 
 logger = logging.getLogger(__name__)
@@ -642,22 +645,79 @@ def create_app() -> FastAPI:
         """
         return ProjectResponse(
             project=project,
-            spec_markdown={
-                spec.slug: render_spec(spec, project.cross_references, project.triggers)
-                for spec in project.specs
-            },
+            spec_markdown=ProjectCompiler.spec_markdown(project),
             time_saved=compute_time_saved(project, _effective_baselines(user)),
             diagrams=await compiler.build_diagrams(project),
         )
 
+    async def _grounding_for(
+        kb_id: str | None,
+        change_request_id: str | None,
+        kg: KgService,
+        changes: ChangeRequestService,
+        user: User,
+    ) -> tuple[KgGrounder | None, ChangeRequest | None]:
+        """Resolve a compile's optional knowledge base / change request.
+
+        A change request implies its knowledge base; an explicit ``kb_id`` that
+        disagrees with it is a 422. Missing ids are 404, an unindexed knowledge
+        base is 409 (its graph is not there to ground with yet).
+        """
+        cr: ChangeRequest | None = None
+        if change_request_id:
+            cr = await _guard(changes.get(change_request_id))
+            _check_cr_owner(cr, user)
+            if kb_id and kb_id != cr.kb_id:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    f"Change request {cr.cr_id!r} belongs to knowledge base {cr.kb_id!r}, "
+                    f"not {kb_id!r}.",
+                )
+            kb_id = cr.kb_id
+        if not kb_id:
+            return None, None
+        kb = await _guard(kg.get(kb_id))
+        _check_kb_owner(kb, user)
+        if kb.status != "ready":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Knowledge base {kb.kb_id!r} is {kb.status}; it must be ready to ground a "
+                "compile.",
+            )
+        return KgGrounder(kg, kb.kb_id, kb_name=kb.name), cr
+
+    async def _finish_compile(
+        project: CompilationProject,
+        compiler: ProjectCompiler,
+        user: User,
+        *,
+        persist: bool,
+        nickname: str | None,
+        change_request: ChangeRequest | None,
+        changes: ChangeRequestService,
+    ) -> ProjectResponse:
+        """Common tail of the compile routes: owner, nickname, save, CR link."""
+        project.owner_id = user.user_id
+        if nickname and nickname.strip():
+            project.nickname = nickname.strip()
+        if persist:
+            await compiler.save_project(project)
+            if change_request is not None:
+                await changes.link_project(change_request.cr_id, project.project_id)
+        return await _project_response(project, compiler, user)
+
     def _select_compiler(
-        provider: str | None, model: str | None, default: ProjectCompiler
+        provider: str | None,
+        model: str | None,
+        default: ProjectCompiler,
+        selector: CompilerSelector | None = None,
     ) -> ProjectCompiler:
         """Resolve the per-compile provider/model selection to a compiler.
 
         An explicit ``provider`` wins; a bare ``model`` keeps the legacy sentinel
         routing (``nemotron-cloud`` vs. local-with-fallback); neither uses the
-        server's configured default.
+        server's configured default. ``selector`` (the ``get_compiler_selector``
+        dependency) builds the compiler for an explicit provider.
         """
         if provider:
             if provider not in SELECTABLE_PROVIDERS:
@@ -665,7 +725,7 @@ def create_app() -> FastAPI:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     f"Unknown provider '{provider}'. Available: {', '.join(SELECTABLE_PROVIDERS)}.",
                 )
-            return project_compiler_for_selection(provider, model)
+            return (selector or get_compiler_selector())(provider, model)
         if model:
             return project_compiler_for_model(model)
         return default
@@ -674,19 +734,33 @@ def create_app() -> FastAPI:
     async def compile_project(
         request: ProjectCompileRequest,
         compiler: ProjectCompiler = Depends(get_project_compiler),
+        kg: KgService = Depends(get_kg_service),
+        changes: ChangeRequestService = Depends(get_change_service),
         user: User = Depends(get_current_user),
     ) -> ProjectResponse:
-        """Segment a document into per-workflow specs (stops at the spec gate)."""
+        """Segment a document into per-workflow specs (stops at the spec gate).
+
+        ``kb_id`` grounds every prompt in a knowledge base and adds a change spec
+        (``changes.md``); ``change_request_id`` seeds that change spec from the
+        request's approved impact analysis and links the project to it.
+        """
         compiler = _select_compiler(request.provider, request.model, compiler)
-        project = await _guard(
-            compiler.compile_document(request.document_text, persist=request.persist)
+        grounder, cr = await _grounding_for(
+            request.kb_id, request.change_request_id, kg, changes, user
         )
-        project.owner_id = user.user_id
-        if request.nickname and request.nickname.strip():
-            project.nickname = request.nickname.strip()
-        if request.persist:
-            await compiler.save_project(project)
-        return await _project_response(project, compiler, user)
+        project = await _guard(
+            compiler.compile_document(
+                request.document_text,
+                persist=request.persist,
+                grounder=grounder,
+                change_request=cr,
+            )
+        )
+        return await _finish_compile(
+            project, compiler, user,
+            persist=request.persist, nickname=request.nickname,
+            change_request=cr, changes=changes,
+        )
 
     @app.post("/projects/compile-upload", response_model=ProjectResponse, tags=["projects"])
     async def compile_project_upload(
@@ -695,10 +769,17 @@ def create_app() -> FastAPI:
         provider: str | None = Form(default=None),
         model: str | None = Form(default=None),
         nickname: str | None = Form(default=None),
+        kb_id: str | None = Form(default=None),
+        change_request_id: str | None = Form(default=None),
         compiler: ProjectCompiler = Depends(get_project_compiler),
+        kg: KgService = Depends(get_kg_service),
+        changes: ChangeRequestService = Depends(get_change_service),
         user: User = Depends(get_current_user),
     ) -> ProjectResponse:
-        """Parse an uploaded document to text, then segment it into per-workflow specs."""
+        """Parse an uploaded document to text, then segment it into per-workflow specs.
+
+        Same optional ``kb_id`` / ``change_request_id`` grounding as ``/projects/compile``.
+        """
         data = await file.read()
         try:
             content = DocumentParserFactory().parse(
@@ -709,13 +790,18 @@ def create_app() -> FastAPI:
         except WorkflowCompilerError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
         compiler = _select_compiler(provider, model, compiler)
-        project = await _guard(compiler.compile_document(content.text, persist=persist))
-        project.owner_id = user.user_id
-        if nickname and nickname.strip():
-            project.nickname = nickname.strip()
-        if persist:
-            await compiler.save_project(project)
-        return await _project_response(project, compiler, user)
+        grounder, cr = await _grounding_for(
+            kb_id or None, change_request_id or None, kg, changes, user
+        )
+        project = await _guard(
+            compiler.compile_document(
+                content.text, persist=persist, grounder=grounder, change_request=cr
+            )
+        )
+        return await _finish_compile(
+            project, compiler, user,
+            persist=persist, nickname=nickname, change_request=cr, changes=changes,
+        )
 
     @app.get("/metrics/summary", response_model=MetricsSummary, tags=["projects"])
     async def metrics_summary(
@@ -892,12 +978,7 @@ def create_app() -> FastAPI:
         return EditPreviewResponse(
             record=preview.record,
             resolved=preview.resolved,
-            spec_markdown={
-                spec.slug: render_spec(
-                    spec, preview.project.cross_references, preview.project.triggers
-                )
-                for spec in preview.project.specs
-            },
+            spec_markdown=ProjectCompiler.spec_markdown(preview.project),
             workflows_added=preview.record.workflows_added,
             workflows_removed=preview.record.workflows_removed,
         )
@@ -1011,10 +1092,7 @@ def create_app() -> FastAPI:
             changes=outcome.changes if outcome is not None else [],
             parked_as=outcome.parked_as if outcome is not None else None,
             warnings=outcome.warnings if outcome is not None else [],
-            spec_markdown={
-                spec.slug: render_spec(spec, project.cross_references, project.triggers)
-                for spec in project.specs
-            },
+            spec_markdown=ProjectCompiler.spec_markdown(project),
         )
 
     @app.get(
@@ -1163,10 +1241,7 @@ def create_app() -> FastAPI:
                 session.awaiting_clarification if session is not None else False
             ),
             applied=session.applied_count if session is not None else 0,
-            spec_markdown={
-                spec.slug: render_spec(spec, project.cross_references, project.triggers)
-                for spec in project.specs
-            },
+            spec_markdown=ProjectCompiler.spec_markdown(project),
         )
 
     @app.get(
@@ -1612,6 +1687,60 @@ def create_app() -> FastAPI:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
         return _cr_response(await _guard(create()))
+
+    @app.post(
+        "/change-requests/{cr_id}/send-to-workflow",
+        response_model=ProjectResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["change-requests"],
+    )
+    async def send_change_request_to_workflow(
+        cr_id: str,
+        request: SendToWorkflowRequest,
+        changes: ChangeRequestService = Depends(get_change_service),
+        kg: KgService = Depends(get_kg_service),
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        selector: CompilerSelector = Depends(get_compiler_selector),
+        user: User = Depends(get_current_user),
+    ) -> ProjectResponse:
+        """Compile the approved TDD into a workflow project grounded by the KB.
+
+        One click for "upload the TDD to the workflow GUI": the TDD markdown is
+        compiled with ``kb_id`` + ``change_request_id`` set (grounded prompts,
+        seeded ``changes.md``) and the new project id is appended to the change
+        request's ``project_ids``. Requires an **approved** TDD (409 otherwise).
+        Synchronous like ``/projects/compile``; the provider defaults to cloud
+        Nemotron.
+        """
+        _validate_provider(request.provider)
+        cr = await _guard(changes.get(cr_id))
+        _check_cr_owner(cr, user)
+        tdd = cr.artifacts.tdd
+        if tdd.status != "approved" or not tdd.markdown.strip():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "The change request's TDD must be approved before it can be sent to "
+                "the workflow GUI.",
+            )
+        compiler = _select_compiler(
+            request.provider or cr.wizard.provider or KB_DEFAULT_PROVIDER,
+            request.model or cr.wizard.model,
+            compiler,
+            selector,
+        )
+        grounder, _linked = await _grounding_for(None, cr.cr_id, kg, changes, user)
+        project = await _guard(
+            compiler.compile_document(
+                tdd.markdown, persist=True, grounder=grounder, change_request=cr
+            )
+        )
+        nickname = request.nickname or (
+            f"{cr.ids.tdd_id} — {cr.title}" if cr.ids.tdd_id else cr.title
+        )
+        return await _finish_compile(
+            project, compiler, user,
+            persist=True, nickname=nickname, change_request=cr, changes=changes,
+        )
 
     @app.get("/change-requests", response_model=ChangeRequestListResponse, tags=["change-requests"])
     async def list_change_requests(

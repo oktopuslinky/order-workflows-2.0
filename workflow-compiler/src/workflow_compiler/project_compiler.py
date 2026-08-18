@@ -27,10 +27,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from workflow_compiler.agents.change_spec import ChangeSpecAgent
 from workflow_compiler.agents.cvpa import CVPAClassifierAgent
 from workflow_compiler.agents.edit_interpreter import EditInterpreterAgent
 from workflow_compiler.agents.graph_builder import GraphBuilderAgent
 from workflow_compiler.agents.segmentation import WorkflowSegmentationAgent
+from workflow_compiler.change.bcr import seed_terms
+from workflow_compiler.change.spec_seed import seed_components
 from workflow_compiler.checklist import amend as checklist_amend
 from workflow_compiler.compiler import (
     ProgressCallback,
@@ -52,8 +55,12 @@ from workflow_compiler.exceptions import (
     WorkflowCompilerError,
 )
 from workflow_compiler.interfaces.llm import BaseLLMProvider
+from workflow_compiler.kg.grounding import KgGrounder
+from workflow_compiler.kg.service import KgService
 from workflow_compiler.models import (
+    CHANGES_SLUG,
     ApprovalStatus,
+    ChangeSpec,
     CompilationProject,
     CompilationStage,
     CrossReference,
@@ -63,6 +70,7 @@ from workflow_compiler.models import (
     FactCategory,
     Patch,
     PatchAction,
+    ProjectGrounding,
     ProjectStage,
     Provenance,
     ResolvedEdit,
@@ -89,9 +97,18 @@ from workflow_compiler.spec import (
     ingest_spec_markdown,
     render_spec,
 )
+from workflow_compiler.spec.change_ingest import ingest_change_markdown
+from workflow_compiler.spec.change_renderer import CHANGES_FILENAME, render_change_spec
+from workflow_compiler.spec.change_validator import validate_change_spec
 from workflow_compiler.spec.edit_ingest import EditRequestDoc, parse_edit_request
 from workflow_compiler.spec.wiring import apply_xref_op
 from workflow_compiler.storage.project_store import FileProjectStore, ProjectStore
+
+if TYPE_CHECKING:
+    from workflow_compiler.models.change import ChangeRequest
+
+#: Cap on impact-traversal rows handed to the change-spec extraction prompt.
+_CHANGE_IMPACT_ROWS = 120
 
 
 @dataclass(frozen=True)
@@ -155,9 +172,16 @@ class ProjectCompiler:
         prompt_manager: PromptManager | None = None,
         segmentation_review: bool = True,
         graph_health_threshold: float = 0.9,
+        kg_service: KgService | None = None,
     ) -> None:
-        """Wire the front-end collaborators around an inner workflow compiler."""
+        """Wire the front-end collaborators around an inner workflow compiler.
+
+        ``kg_service`` is only needed by knowledge-graph-grounded projects: the
+        change-spec validator resolves component paths through it and approval
+        re-grounds the Temporal-design prompt. Ungrounded projects never touch it.
+        """
         self._llm = llm_provider
+        self._kg = kg_service
         self._prompts = prompt_manager or PromptManager()
         self._compiler = workflow_compiler or WorkflowCompiler(
             llm_provider=llm_provider, prompt_manager=self._prompts
@@ -167,6 +191,7 @@ class ProjectCompiler:
             llm_provider, prompt_manager=self._prompts, review_enabled=segmentation_review
         )
         self._validator = SpecValidator(llm_provider, prompt_manager=self._prompts)
+        self._change_agent = ChangeSpecAgent(llm_provider, prompt_manager=self._prompts)
         self._threshold = graph_health_threshold
         # Built lazily: most projects never open a dialogue session.
         self._dialogue: DialogueEngine | None = None
@@ -181,6 +206,7 @@ class ProjectCompiler:
     ) -> ProjectCompiler:
         """Build a fully wired project compiler from application settings."""
         from workflow_compiler.config import get_settings
+        from workflow_compiler.kg.store import FileKnowledgeBaseStore
         from workflow_compiler.llm import ProviderFactory
 
         resolved = settings or get_settings()
@@ -192,12 +218,37 @@ class ProjectCompiler:
             ),
             project_store=FileProjectStore(resolved.state_store_path),
             graph_health_threshold=resolved.graph_health_threshold,
+            # Read-only use (retrieve / search / impact); no provider factory,
+            # because a project compiler never indexes a knowledge base.
+            kg_service=KgService(
+                FileKnowledgeBaseStore(resolved.state_store_path),
+                default_budget=resolved.kg_retrieve_budget,
+            ),
         )
 
     @property
     def workflow_compiler(self) -> WorkflowCompiler:
         """The inner per-workflow compiler (back-end)."""
         return self._compiler
+
+    @property
+    def kg_service(self) -> KgService | None:
+        """The knowledge-graph service, when this compiler was given one."""
+        return self._kg
+
+    def grounder_for(self, project: CompilationProject) -> KgGrounder | None:
+        """A grounder bound to the project's knowledge base, or ``None``.
+
+        ``None`` when the project is ungrounded or this compiler has no
+        :class:`KgService` — every caller treats that as "compile as before".
+        """
+        if project.kb_id is None or self._kg is None:
+            return None
+        return KgGrounder(
+            self._kg,
+            project.kb_id,
+            kb_name=project.grounding.kb_name if project.grounding else "",
+        )
 
     # ------------------------------------------------------------------ #
     # Stage 1: document → project with drafted specs
@@ -210,12 +261,23 @@ class ProjectCompiler:
         persist: bool = True,
         project_id: str | None = None,
         progress: ProgressCallback | None = None,
+        grounder: KgGrounder | None = None,
+        change_request: ChangeRequest | None = None,
     ) -> CompilationProject:
         """Segment the document and draft one reviewed spec per workflow.
 
         Stops at the spec gate (``SPEC_DRAFTED``): the caller renders the spec
         files for the user, who edits them and drives ``validate_specs`` /
         ``approve_spec``.
+
+        ``grounder`` (a :class:`~workflow_compiler.kg.KgGrounder` bound to a
+        knowledge base) prepends a knowledge-graph context block to the
+        segmentation, discovery and fact-extraction prompts and additionally
+        extracts a **change spec** (``changes.md``) for the document; ``None``
+        compiles exactly as before. ``change_request`` (an approved change
+        request whose TDD this document is) seeds that change spec with the
+        request's impact rows and restricts its requirement ids; it is only
+        honoured together with a grounder.
         """
         if not document_text or not document_text.strip():
             raise CompilationError("Cannot compile an empty document.")
@@ -223,6 +285,15 @@ class ProjectCompiler:
         project = CompilationProject(document_text=document_text)
         if project_id is not None:
             project.project_id = project_id
+        if grounder is not None:
+            project.kb_id = grounder.kb_id
+            project.grounding = ProjectGrounding(kb_name=grounder.kb_name)
+            if change_request is not None:
+                project.change_request_id = change_request.cr_id
+                project.grounding.change_request_title = change_request.title
+                project.grounding.requirement_ids = [
+                    r.id for r in change_request.requirements if r.id
+                ]
 
         _emit(progress, ProgressEvent(
             phase="agent", name=self._segmentation.name, status="start", index=1, total=2,
@@ -231,7 +302,8 @@ class ProjectCompiler:
         self._segmentation.set_progress(self._sub_reporter(progress))
         try:
             segments, references, triggers, warnings = await self._segmentation.run(
-                document_text
+                document_text,
+                kg_context=await self._kg_block(grounder, document_text),
             )
         finally:
             self._segmentation.set_progress(None)
@@ -258,6 +330,7 @@ class ProjectCompiler:
                 segment.text,
                 project_id=project.project_id,
                 progress=_nested_progress(progress, segment.slug),
+                kg_context=await self._kg_block(grounder, segment.text),
             )
             project.specs.append(self._build_spec(segment.slug, state))
             elapsed = time.perf_counter() - seg_started
@@ -267,11 +340,163 @@ class ProjectCompiler:
                 seconds=elapsed, stage=state.stage.value,
             ))
 
+        if grounder is not None:
+            await self._extract_change_spec(
+                project, document_text, grounder, change_request, progress
+            )
+            self._record_grounding(project, grounder)
+
         project.stage = ProjectStage.SPEC_DRAFTED
         project.touch()
         if persist:
             await self._projects.save(project)
         return project
+
+    @staticmethod
+    async def _kg_block(grounder: KgGrounder | None, text: str) -> str | None:
+        """The grounding block for ``text``, or ``None`` when ungrounded."""
+        if grounder is None:
+            return None
+        return await grounder.block_for(text)
+
+    @staticmethod
+    def _record_grounding(project: CompilationProject, grounder: KgGrounder) -> None:
+        """Copy the grounder's visible provenance onto the project."""
+        grounding = project.grounding or ProjectGrounding(kb_name=grounder.kb_name)
+        seen = set(grounding.sources)
+        grounding.sources.extend(s for s in grounder.sources_seen if s not in seen)
+        if grounder.min_coverage is not None:
+            grounding.coverage = (
+                grounder.min_coverage
+                if grounding.coverage is None
+                else min(grounding.coverage, grounder.min_coverage)
+            )
+        grounding.low_confidence = grounding.low_confidence or grounder.any_low_confidence
+        project.grounding = grounding
+
+    async def _extract_change_spec(
+        self,
+        project: CompilationProject,
+        document_text: str,
+        grounder: KgGrounder,
+        change_request: ChangeRequest | None,
+        progress: ProgressCallback | None,
+    ) -> None:
+        """Extract ``changes.md`` (existing vs. proposed per component).
+
+        Seeded from the change request's parsed impact rows when one is linked;
+        the deterministic impact traversal over the document's own identifiers
+        and the grounding block go into the prompt. A failed extraction never
+        fails the compile: the seed rows (or an empty spec) are kept and the
+        failure is recorded as a project warning.
+        """
+        name = "change_spec"
+        _emit(progress, ProgressEvent(phase="agent", name=name, status="start", index=1, total=1))
+        started = time.perf_counter()
+        seeds = seed_components(change_request) if change_request is not None else []
+        requirement_ids = (
+            [r.id for r in change_request.requirements if r.id]
+            if change_request is not None
+            else []
+        )
+        try:
+            impact_rows = await grounder.kg.impact(
+                grounder.kb_id, seed_terms(document_text, [])[:40], max_hops=2
+            )
+        except Exception as exc:  # a broken graph degrades, never fails
+            impact_rows = []
+            project.warnings.append(f"change spec: impact traversal skipped — {exc}")
+        kg_context = await grounder.block_for(document_text)
+        try:
+            spec = await self._change_agent.extract(
+                document_text,
+                kg_context=kg_context,
+                impact_table=impact_rows[:_CHANGE_IMPACT_ROWS],
+                seed_components=seeds,
+                requirement_ids=requirement_ids,
+                sources=list(grounder.sources_seen),
+            )
+        except WorkflowCompilerError as exc:
+            project.warnings.append(
+                f"change spec: extraction failed ({exc}); changes.md holds the "
+                "change request's impact rows only"
+            )
+            spec = ChangeSpec(components=seeds, sources=list(grounder.sources_seen))
+        project.change_spec = spec
+        elapsed = time.perf_counter() - started
+        self._record_timing(project, name, elapsed)
+        _emit(progress, ProgressEvent(
+            phase="agent", name=name, status="done", index=1, total=1, seconds=elapsed,
+        ))
+
+    # ------------------------------------------------------------------ #
+    # changes.md helpers (the change spec is a second file at the same gate)
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def render_changes(project: CompilationProject) -> str | None:
+        """``changes.md`` for a grounded project, ``None`` when it has no change spec."""
+        if project.change_spec is None:
+            return None
+        grounding = project.grounding
+        return render_change_spec(
+            project.change_spec,
+            kb_id=project.kb_id,
+            kb_name=grounding.kb_name if grounding else "",
+            change_request_id=project.change_request_id,
+            change_request_title=grounding.change_request_title if grounding else "",
+        )
+
+    @classmethod
+    def spec_markdown(cls, project: CompilationProject) -> dict[str, str]:
+        """Every editable file of the project keyed by slug (``__changes__`` last)."""
+        files = {
+            spec.slug: render_spec(spec, project.cross_references, project.triggers)
+            for spec in project.specs
+        }
+        changes = cls.render_changes(project)
+        if changes is not None:
+            files[CHANGES_SLUG] = changes
+        return files
+
+    def _fold_changes(
+        self, project: CompilationProject, markdown: str | None
+    ) -> list[SpecFinding]:
+        """Fold an edited ``changes.md`` onto the change spec; return ingest findings."""
+        findings: list[SpecFinding] = []
+        if markdown is None or project.change_spec is None:
+            return findings
+        result = ingest_change_markdown(project.change_spec, markdown)
+        project.change_spec = result.spec
+        findings.extend(
+            SpecFinding(
+                severity=Severity.INFO, workflow=CHANGES_SLUG, section="Ingest", message=c
+            )
+            for c in result.changes
+        )
+        findings.extend(
+            SpecFinding(
+                severity=Severity.WARNING, workflow=CHANGES_SLUG, section="Ingest", message=w
+            )
+            for w in result.warnings
+        )
+        return findings
+
+    async def _validate_changes(self, project: CompilationProject) -> list[SpecFinding]:
+        """Deterministic change-spec validation (paths, requirement ids, empty proposals)."""
+        if project.change_spec is None:
+            return []
+        requirement_ids = (
+            (project.grounding.requirement_ids if project.grounding else [])
+            if project.change_request_id
+            else None
+        )
+        return await validate_change_spec(
+            project.change_spec,
+            kg=self._kg,
+            kb_id=project.kb_id,
+            requirement_ids=requirement_ids,
+        )
 
     @staticmethod
     def _build_spec(slug: str, state: WorkflowState) -> WorkflowSpec:
@@ -375,6 +600,24 @@ class ProjectCompiler:
         # findings onto the workflow that owns each trigger / dependency.
         for finding in self._validate_triggers_and_dependencies(project):
             findings_by_slug.setdefault(finding.workflow, []).append(finding)
+
+        if project.change_spec is not None:
+            name = f"validate:{CHANGES_SLUG}"
+            _emit(progress, ProgressEvent(
+                phase="review", name=name, status="start", index=total + 1, total=total + 1,
+            ))
+            started = time.perf_counter()
+            change_findings = self._fold_changes(
+                project, (markdown_by_slug or {}).get(CHANGES_SLUG)
+            )
+            change_findings.extend(await self._validate_changes(project))
+            findings_by_slug[CHANGES_SLUG] = change_findings
+            elapsed = time.perf_counter() - started
+            self._record_timing(project, name, elapsed)
+            _emit(progress, ProgressEvent(
+                phase="review", name=name, status="done", index=total + 1, total=total + 1,
+                seconds=elapsed,
+            ))
 
         project.validation_findings = findings_by_slug
         project.stage = ProjectStage.SPEC_VALIDATED
@@ -533,6 +776,7 @@ class ProjectCompiler:
             project.cross_references = result.cross_references
             project.triggers = result.triggers
             self._replace_spec(project, result.spec)
+        self._fold_changes(project, markdown_by_slug.get(CHANGES_SLUG))
         project.touch()
         if persist:
             await self._projects.save(project)
@@ -546,7 +790,9 @@ class ProjectCompiler:
     def dialogue(self) -> DialogueEngine:
         """The conversational-resolution engine, built lazily on first use."""
         if self._dialogue is None:
-            self._dialogue = DialogueEngine(self._llm, prompt_manager=self._prompts)
+            self._dialogue = DialogueEngine(
+                self._llm, change_agent=self._change_agent, prompt_manager=self._prompts
+            )
         return self._dialogue
 
     async def prepare_dialogue(
@@ -1427,6 +1673,7 @@ class ProjectCompiler:
                 project.cross_references = result.cross_references
                 project.triggers = result.triggers
                 self._replace_spec(project, result.spec)
+            self._fold_changes(project, markdown_by_slug.get(CHANGES_SLUG))
 
         selected = [
             spec
@@ -1435,6 +1682,22 @@ class ProjectCompiler:
         ]
         if not selected:
             raise ApprovalError(f"Project {project_id!r} has no matching specs to approve.")
+
+        # The change spec is part of the same gate: a component with no proposed
+        # change is a hole the post-approval change outputs cannot fill. Blocking
+        # findings stop approval unless the caller accepts incomplete input.
+        if project.change_spec is not None:
+            change_findings = await self._validate_changes(project)
+            project.validation_findings[CHANGES_SLUG] = change_findings
+            blocking_changes = [
+                f for f in change_findings if f.severity is Severity.BLOCKING
+            ]
+            if blocking_changes and not accept_incomplete:
+                raise ApprovalError(
+                    "changes.md has blocking findings — resolve them (or approve with "
+                    "accept_incomplete): "
+                    + "; ".join(f.message for f in blocking_changes)
+                )
 
         unconfirmed = [
             r
@@ -1468,6 +1731,7 @@ class ProjectCompiler:
         project.stage = ProjectStage.COMPILING
         needs_attention = False
         total = len(selected)
+        grounder = self.grounder_for(project)
 
         for index, spec in enumerate(selected, start=1):
             name = f"compile:{spec.slug}"
@@ -1491,6 +1755,10 @@ class ProjectCompiler:
                     seconds=time.perf_counter() - started, stage="blocked",
                 ))
                 continue  # nothing compiled — no timing recorded for this slug
+            if grounder is not None:
+                # Ground the Temporal-design prompt the same way the extraction
+                # prompts were: real module / activity / type names win.
+                state.kg_context = await grounder.block_for(state.document_text)
             state = await self._compiler.compile_prepared(
                 state,
                 review_mode=True,
@@ -1532,6 +1800,8 @@ class ProjectCompiler:
         project.stage = (
             ProjectStage.NEEDS_ATTENTION if needs_attention else ProjectStage.COMPLETED
         )
+        if grounder is not None:
+            self._record_grounding(project, grounder)
         project.touch()
         if persist:
             await self._projects.save(project)
@@ -1706,6 +1976,11 @@ class ProjectCompiler:
                 encoding="utf-8",
             )
             paths.append(path)
+        changes = self.render_changes(project)
+        if changes is not None:
+            path = root / CHANGES_FILENAME
+            path.write_text(changes, encoding="utf-8")
+            paths.append(path)
         overview = root / OVERVIEW_FILENAME
         overview.write_text(self.render_overview(project), encoding="utf-8")
         paths.append(overview)
@@ -1722,6 +1997,10 @@ class ProjectCompiler:
             path = root / f"{spec.slug}.md"
             if path.is_file():
                 contents[spec.slug] = path.read_text(encoding="utf-8")
+        if project.change_spec is not None:
+            path = root / CHANGES_FILENAME
+            if path.is_file():
+                contents[CHANGES_SLUG] = path.read_text(encoding="utf-8")
         return contents
 
     @staticmethod
@@ -1740,6 +2019,19 @@ class ProjectCompiler:
             questions = len(spec.unresolved_questions())
             suffix = f" — {questions} open question(s)" if questions else ""
             lines.append(f"- `{spec.slug}.md` — {spec.metadata.name}{suffix}")
+        if project.change_spec is not None:
+            grounding = project.grounding
+            lines += ["", "## Change Spec"]
+            questions = len(project.change_spec.unresolved_questions())
+            suffix = f" — {questions} open question(s)" if questions else ""
+            lines.append(
+                f"- `{CHANGES_FILENAME}` — {len(project.change_spec.components)} "
+                f"component change(s){suffix}"
+            )
+            if grounding is not None and grounding.kb_name:
+                lines.append(f"- grounded by knowledge base: {grounding.kb_name}")
+            if grounding is not None and grounding.change_request_title:
+                lines.append(f"- from change request: {grounding.change_request_title}")
         lines += ["", "## Cross-Workflow Dependencies"]
         if project.cross_references:
             for r in project.cross_references:

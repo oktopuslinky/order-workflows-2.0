@@ -149,6 +149,13 @@ class ChangeRequestService:
     async def delete(self, cr_id: str) -> None:
         await self._store.delete(cr_id)
 
+    async def link_project(self, cr_id: str, project_id: str) -> ChangeRequest:
+        """Record that ``project_id`` was compiled from this change request's TDD."""
+        cr = await self.get(cr_id)
+        if project_id not in cr.project_ids:
+            cr.project_ids.append(project_id)
+        return await self._save(cr)
+
     # -------------------------------------------------------------- wizard
     async def start(
         self, cr_id: str, *, provider: str | None = None, model: str | None = None

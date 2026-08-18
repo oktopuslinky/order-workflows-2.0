@@ -144,6 +144,20 @@ class ProjectCompileRequest(BaseModel):
     nickname: str | None = Field(
         default=None, description="Optional human-friendly label for the new project."
     )
+    kb_id: str | None = Field(
+        default=None,
+        description=(
+            "Knowledge base to ground the compile with: its context is prepended to "
+            "every extraction prompt and a change spec (changes.md) is extracted."
+        ),
+    )
+    change_request_id: str | None = Field(
+        default=None,
+        description=(
+            "Change request the document is the approved TDD of; seeds the change spec "
+            "and restricts its requirement ids. Implies kb_id (the request's) when omitted."
+        ),
+    )
 
 
 class LocalModel(BaseModel):
@@ -807,6 +821,18 @@ class ChangeRequestResponse(BaseModel):
 class WizardStartRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
+
+
+class SendToWorkflowRequest(BaseModel):
+    """Body for ``POST /change-requests/{id}/send-to-workflow``."""
+
+    provider: str | None = Field(
+        default=None, description="LLM provider for the compile (default: cloud Nemotron)."
+    )
+    model: str | None = Field(default=None, description="Local gateway model id, if any.")
+    nickname: str | None = Field(
+        default=None, description="Project nickname (default: '<TDD id> — <CR title>')."
+    )
 
 
 class WizardAnswerRequest(BaseModel):

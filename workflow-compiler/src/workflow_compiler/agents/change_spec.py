@@ -23,11 +23,13 @@ from workflow_compiler.models import (
     Provenance,
     SpecItem,
 )
+from workflow_compiler.models.dialogue import DraftedQuestions
 from workflow_compiler.prompts import PromptManager
 from workflow_compiler.spec.change_ingest import coerce_change_type, coerce_kind
 
 _EXTRACT_PROMPT = "extract_change_spec"
 _INTERPRET_PROMPT = "interpret_change_answer"
+_DRAFT_PROMPT = "draft_change_questions"
 
 _EXTRACT_SYSTEM = (
     "You are a precise senior engineer. Read design documents against the existing "
@@ -36,6 +38,11 @@ _EXTRACT_SYSTEM = (
 _INTERPRET_SYSTEM = (
     "You translate a human's answer about a change specification into minimal "
     "deterministic updates. Respond with strict JSON only."
+)
+_DRAFT_SYSTEM = (
+    "You turn validator findings about a change specification into a short list "
+    "of clear questions for an engineer, each with likely answers. Respond with "
+    "strict JSON only."
 )
 
 #: Cap on components kept from one extraction (a TDD names dozens at most).
@@ -188,6 +195,10 @@ class ChangeSpecAgent:
             )
             if len(components) >= MAX_COMPONENTS:
                 break
+        if not components and seed_components:
+            # A model that returns nothing has not "dropped" the seeds — it has
+            # failed to answer; the change request's own rows are the floor.
+            components = [c.model_copy(deep=True) for c in seed_components]
         return ChangeSpec(
             components=components,
             assumptions=[
@@ -203,6 +214,24 @@ class ChangeSpecAgent:
             sources=list(sources),
         )
 
+    async def draft_questions(
+        self,
+        *,
+        findings_block: str,
+        questions_block: str,
+        current_changes: str,
+    ) -> DraftedQuestions:
+        """Return the dialogue agenda for the change spec's unresolved items."""
+        prompt = self._prompts.render(
+            _DRAFT_PROMPT,
+            findings_block=findings_block or "(none)",
+            questions_block=questions_block or "(none)",
+            current_changes=current_changes,
+        )
+        return await self._require_llm().structured(
+            prompt, DraftedQuestions, system=_DRAFT_SYSTEM
+        )
+
     async def interpret_answer(
         self,
         *,
@@ -211,7 +240,11 @@ class ChangeSpecAgent:
         current_changes: str,
         prior_followup: str | None = None,
     ) -> ChangeAnswerPlan:
-        """Return the update plan for one prose answer about the change spec."""
+        """Return the update plan for one prose answer about the change spec.
+
+        A second follow-up would let the conversation loop, so when one was
+        already asked the plan's ``needs_followup`` is forced off here too.
+        """
         followup_context = (
             "\nA clarifying follow-up was ALREADY asked for this question:\n"
             f"{prior_followup}\n"
@@ -226,9 +259,14 @@ class ChangeSpecAgent:
             followup_context=followup_context,
             current_changes=current_changes,
         )
-        return await self._require_llm().structured(
+        plan = await self._require_llm().structured(
             prompt, ChangeAnswerPlan, system=_INTERPRET_SYSTEM
         )
+        if prior_followup and plan.needs_followup:
+            return plan.model_copy(
+                update={"needs_followup": False, "followup_question": None}
+            )
+        return plan
 
 
 __all__ = [

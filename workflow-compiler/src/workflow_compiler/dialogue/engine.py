@@ -33,6 +33,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from workflow_compiler.agents.change_spec import ChangeSpecAgent
 from workflow_compiler.agents.dialogue import DialogueAgent
 from workflow_compiler.dialogue.agenda import (
     SEVERITY_ORDER as _SEVERITY_ORDER,
@@ -40,6 +41,11 @@ from workflow_compiler.dialogue.agenda import (
 from workflow_compiler.dialogue.agenda import (
     agenda_fingerprint,
     askable_findings,
+)
+from workflow_compiler.dialogue.change_ops import (
+    apply_component_updates,
+    park_change_question,
+    replace_change_spec,
 )
 from workflow_compiler.dialogue.spec_ops import (
     apply_patches,
@@ -51,6 +57,9 @@ from workflow_compiler.dialogue.spec_ops import (
 from workflow_compiler.exceptions import CompilationError
 from workflow_compiler.interfaces.llm import BaseLLMProvider
 from workflow_compiler.models import (
+    CHANGES_SLUG,
+    ChangeAnswerPlan,
+    ChangeSpec,
     CompilationProject,
     SpecItem,
     WorkflowSpec,
@@ -67,6 +76,7 @@ from workflow_compiler.models.dialogue import (
 )
 from workflow_compiler.models.findings import Severity, SpecFinding
 from workflow_compiler.prompts import PromptManager
+from workflow_compiler.spec.change_renderer import render_change_spec
 from workflow_compiler.spec.edit_applier import EditPatchApplier
 from workflow_compiler.spec.renderer import render_spec
 from workflow_compiler.spec.wiring import apply_xref_op
@@ -103,10 +113,20 @@ class DialogueEngine:
         llm_provider: BaseLLMProvider | None = None,
         *,
         agent: DialogueAgent | None = None,
+        change_agent: ChangeSpecAgent | None = None,
         prompt_manager: PromptManager | None = None,
     ) -> None:
-        """Wire the drafting/interpreting agent and the deterministic applier."""
+        """Wire the drafting/interpreting agents and the deterministic applier.
+
+        ``change_agent`` handles the change spec (``changes.md``, slug
+        :data:`CHANGES_SLUG`) of a knowledge-graph-grounded project; its
+        questions and answers go through the same session as the workflow
+        specs', but its updates are component rows rather than patches.
+        """
         self._agent = agent or DialogueAgent(llm_provider, prompt_manager=prompt_manager)
+        self._change_agent = change_agent or ChangeSpecAgent(
+            llm_provider, prompt_manager=prompt_manager
+        )
         self._applier = EditPatchApplier()
 
     # ------------------------------------------------------------------ #
@@ -173,6 +193,19 @@ class DialogueEngine:
             agenda.extend(
                 self._to_questions(spec.slug, drafted.questions, findings, questions)
             )
+        change_spec = project.change_spec
+        if change_spec is not None:
+            findings = askable_findings(project, CHANGES_SLUG)
+            questions = change_spec.unresolved_questions()
+            if findings or questions:
+                drafted = await self._change_agent.draft_questions(
+                    findings_block=self._findings_block(findings),
+                    questions_block=self._questions_block(questions),
+                    current_changes=render_change_spec(change_spec),
+                )
+                agenda.extend(
+                    self._to_questions(CHANGES_SLUG, drafted.questions, findings, questions)
+                )
         return agenda
 
     @staticmethod
@@ -265,6 +298,11 @@ class DialogueEngine:
         text = answer.strip()
         if not text:
             raise CompilationError("An answer cannot be empty.")
+
+        if question.slug == CHANGES_SLUG:
+            return await self._answer_change(
+                project, session, question, text, chosen_option=chosen_option
+            )
 
         spec = project.spec_for(question.slug)
         if spec is None:
@@ -412,6 +450,105 @@ class DialogueEngine:
         return AnswerOutcome(
             question=question, parked_as=note, warnings=warnings or []
         )
+
+    # ------------------------------------------------------------------ #
+    # Answering about the change spec (changes.md)
+    # ------------------------------------------------------------------ #
+
+    async def _answer_change(
+        self,
+        project: CompilationProject,
+        session: DialogueSession,
+        question: DialogueQuestion,
+        text: str,
+        *,
+        chosen_option: str | None,
+    ) -> AnswerOutcome:
+        """The :data:`CHANGES_SLUG` twin of :meth:`answer`.
+
+        Same three dispositions, same precedence (updates beat a follow-up,
+        one follow-up at most, park otherwise); the deterministic half is
+        :mod:`workflow_compiler.dialogue.change_ops` instead of the patch applier.
+        """
+        change_spec = project.change_spec
+        if change_spec is None:
+            question.status = QuestionStatus.SKIPPED
+            session.advance()
+            return AnswerOutcome(
+                question=question,
+                warnings=["the project has no change spec any more — question skipped"],
+            )
+        offered = {o.label for o in question.prompt_options}
+        prior_followup = question.followups[-1] if question.followups else None
+        plan = await self._change_agent.interpret_answer(
+            question=question.text,
+            answer=text,
+            current_changes=render_change_spec(change_spec),
+            prior_followup=prior_followup,
+        )
+        question.answer = text
+        question.chosen_option = chosen_option if chosen_option in offered else None
+        return self._dispose_change(project, session, question, change_spec, plan, text)
+
+    def _dispose_change(
+        self,
+        project: CompilationProject,
+        session: DialogueSession,
+        question: DialogueQuestion,
+        change_spec: ChangeSpec,
+        plan: ChangeAnswerPlan,
+        answer: str,
+    ) -> AnswerOutcome:
+        if plan.updates or plan.resolve_questions:
+            new_spec, summary, warnings = apply_component_updates(
+                change_spec, plan.updates, resolve_questions=plan.resolve_questions
+            )
+            if summary:
+                replace_change_spec(project, new_spec)
+                self._mark_dirty(project, session, CHANGES_SLUG)
+                question.status = QuestionStatus.ANSWERED
+                question.changes = summary
+                session.advance()
+                return AnswerOutcome(question=question, changes=summary, warnings=warnings)
+            return self._park_change(
+                project, session, question, change_spec, plan, answer, warnings=warnings
+            )
+        if plan.needs_followup and not question.followups:
+            followup = (plan.followup_question or "").strip()
+            if followup:
+                question.followups.append(followup)
+                question.followup_options = [
+                    o for o in plan.followup_options if o.label.strip()
+                ]
+                session.touch()
+                return AnswerOutcome(
+                    question=question,
+                    followup=followup,
+                    followup_options=question.followup_options,
+                )
+        return self._park_change(project, session, question, change_spec, plan, answer)
+
+    def _park_change(
+        self,
+        project: CompilationProject,
+        session: DialogueSession,
+        question: DialogueQuestion,
+        change_spec: ChangeSpec,
+        plan: ChangeAnswerPlan,
+        answer: str,
+        *,
+        warnings: list[str] | None = None,
+    ) -> AnswerOutcome:
+        note = (plan.park_note or "").strip() or answer
+        replace_change_spec(
+            project,
+            park_change_question(change_spec, note, ref=f"dialogue:{question.question_id}"),
+        )
+        self._mark_dirty(project, session, CHANGES_SLUG)
+        question.status = QuestionStatus.PARKED
+        question.parked_as = note
+        session.advance()
+        return AnswerOutcome(question=question, parked_as=note, warnings=warnings or [])
 
     def skip(self, session: DialogueSession) -> DialogueQuestion:
         """Pass on the current question, leaving the spec untouched."""

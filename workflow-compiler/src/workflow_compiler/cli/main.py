@@ -176,12 +176,27 @@ def compile(
         "per workflow to this directory, and stop at the spec gate (resume with "
         "'validate' / 'approve-spec').",
     ),
+    kb: str | None = typer.Option(
+        None,
+        "--kb",
+        help="Knowledge base id to ground the compile with (KG context in every prompt; "
+        "writes changes.md next to the spec files).",
+    ),
+    change_request: str | None = typer.Option(
+        None,
+        "--change-request",
+        help="Change request id whose approved TDD this document is (seeds changes.md; "
+        "implies --kb).",
+    ),
 ) -> None:
     """Compile a workflow document into editable spec files (stops at the spec gate)."""
     import asyncio
 
     asyncio.run(
-        _run_compile_spec(document, provider, model, timeout, spec_dir, review, persist)
+        _run_compile_spec(
+            document, provider, model, timeout, spec_dir, review, persist,
+            kb_id=kb, change_request_id=change_request,
+        )
     )
 
 
@@ -494,6 +509,7 @@ def _review_config(enabled_flag: bool) -> ReviewConfig:
 
 def _project_compiler(provider: BaseLLMProvider, review: bool) -> ProjectCompiler:
     """Build a ProjectCompiler wired to the configured file stores."""
+    from workflow_compiler.cli.kb import _service as kg_service
     from workflow_compiler.compiler import WorkflowCompiler
     from workflow_compiler.config import get_settings
     from workflow_compiler.project_compiler import ProjectCompiler
@@ -511,6 +527,7 @@ def _project_compiler(provider: BaseLLMProvider, review: bool) -> ProjectCompile
         project_store=FileProjectStore(settings.state_store_path),
         segmentation_review=review,
         graph_health_threshold=settings.graph_health_threshold,
+        kg_service=kg_service(),
     )
 
 
@@ -526,6 +543,12 @@ def _print_project(project: object, spec_dir: Path) -> None:
         open_questions = len(spec.unresolved_questions())
         note = f"  [yellow]{open_questions} open question(s)[/]" if open_questions else ""
         console.print(f"  - [cyan]{spec_dir / (spec.slug + '.md')}[/] — {spec.metadata.name}{note}")
+    change_spec = project.change_spec
+    if change_spec is not None:
+        console.print(
+            f"  - [cyan]{spec_dir / 'changes.md'}[/] — change spec, "
+            f"{len(change_spec.components)} component change(s)"
+        )
     for reference in project.cross_references:
         status = "[green]confirmed[/]" if reference.user_confirmed else "[yellow]UNCONFIRMED[/]"
         console.print(
@@ -560,21 +583,53 @@ async def _run_compile_spec(
     spec_dir: Path,
     review: bool,
     persist: bool,
+    *,
+    kb_id: str | None = None,
+    change_request_id: str | None = None,
 ) -> None:
     from workflow_compiler.ingestion import DocumentParserFactory
+    from workflow_compiler.kg.grounding import KgGrounder
 
     console.print(f"[bold]Ingesting[/] {document} ...")
     content = DocumentParserFactory().parse(document)
     provider = _build_provider(provider_name, model, timeout)
     console.print(f"[bold]Provider[/]: {provider.name}")
     compiler = _project_compiler(provider, review)
+    grounder: KgGrounder | None = None
+    cr = None
+    if change_request_id:
+        from workflow_compiler.cli.cr import _service as change_service
+
+        cr = await change_service(timeout).get(change_request_id)
+        if kb_id and kb_id != cr.kb_id:
+            raise typer.BadParameter(
+                f"change request {change_request_id} belongs to knowledge base {cr.kb_id}, "
+                f"not {kb_id}"
+            )
+        kb_id = cr.kb_id
+    if kb_id:
+        kg = compiler.kg_service
+        assert kg is not None
+        kb = await kg.get(kb_id)
+        grounder = KgGrounder(kg, kb.kb_id, kb_name=kb.name)
+        console.print(f"[bold]Grounding[/]: knowledge base {kb.name} ({kb.kb_id})")
+        if cr is not None:
+            console.print(f"[bold]Change request[/]: {cr.title} ({cr.cr_id})")
     try:
         console.print("[bold]Compiling to specification[/] (segment → per-workflow facts) ...")
         project = await compiler.compile_document(
-            content.text, persist=persist, progress=_make_progress()
+            content.text,
+            persist=persist,
+            progress=_make_progress(),
+            grounder=grounder,
+            change_request=cr,
         )
     finally:
         await _aclose(provider)
+    if cr is not None and persist:
+        from workflow_compiler.cli.cr import _service as change_service
+
+        await change_service(timeout).link_project(cr.cr_id, project.project_id)
 
     compiler.write_spec_files(project, spec_dir)
     _print_project(project, spec_dir)

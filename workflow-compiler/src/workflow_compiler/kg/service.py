@@ -430,7 +430,7 @@ class KgService:
             return None
         graph = await self._graph(kb_id)
         if needle in graph.nodes:
-            return needle
+            return str(needle)
         suffix = "/" + needle.lstrip("/")
         by_path: str | None = None
         by_symbol: str | None = None
@@ -441,10 +441,10 @@ class KgService:
                 if norm == needle or norm.endswith(suffix):
                     # Prefer the file-level node (mod:/doc:) over its chunks.
                     if node.type.value in ("Module", "Document"):
-                        return node_id
-                    by_path = node_id
+                        return str(node_id)
+                    by_path = str(node_id)
             if by_symbol is None and node_id.startswith("fn:") and node_id.endswith(":" + needle):
-                by_symbol = node_id
+                by_symbol = str(node_id)
         return by_path or by_symbol
 
     async def impact(

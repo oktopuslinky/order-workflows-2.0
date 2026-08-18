@@ -89,6 +89,42 @@ _DEMO_RESPONSES: dict[str, dict[str, Any]] = {
         ],
         "note": "canned mock question agenda",
     },
+    "ChangeSpecDraft": {
+        "components": [
+            {
+                "name": "src/orders/workflow.py",
+                "kind": "module",
+                "path": "src/orders/workflow.py",
+                "existing": "OrderWorkflow provisions and dispatches one order.",
+                "proposed": "Fan out provisioning and dispatch per shipment group.",
+                "change_type": "modify",
+                "requirement_ids": [],
+            },
+            {
+                "name": "dispatch_order",
+                "kind": "activity",
+                "path": "src/orders/activities.py",
+                "existing": "Hands the whole order to the carrier.",
+                "proposed": "Accept a shipment group id and dispatch that group only.",
+                "change_type": "modify",
+                "requirement_ids": [],
+            },
+        ],
+        "assumptions": ["Groups are decided at capture time."],
+        "open_questions": ["Should a cancelled group be refunded immediately?"],
+    },
+    "ChangeAnswerPlan": {
+        "updates": [
+            {
+                "action": "modify",
+                "name": "dispatch_order",
+                "proposed": "Mock-answered: dispatch one shipment group per call.",
+                "evidence": "mock change answer",
+            }
+        ],
+        "needs_followup": False,
+        "note": "canned mock change answer plan",
+    },
     "AnswerPlan": {
         "patches": [
             {

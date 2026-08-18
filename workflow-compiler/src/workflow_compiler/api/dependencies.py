@@ -8,6 +8,7 @@ an in-memory store.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -144,6 +145,22 @@ def project_compiler_for_selection(
 
     provider = provider_for_selection(provider_name, model)
     return ProjectCompiler.from_settings(llm_provider=provider, settings=get_settings())
+
+
+#: ``(provider_name, model) -> ProjectCompiler`` — how the compile routes turn an
+#: explicit per-request provider choice into a compiler.
+CompilerSelector = Callable[[str, "str | None"], "ProjectCompiler"]
+
+
+def get_compiler_selector() -> CompilerSelector:
+    """Provide the per-request compiler selector (:func:`project_compiler_for_selection`).
+
+    A dependency so tests can override it with a selector that returns the mock
+    compiler whatever provider a request names — the send-to-workflow route
+    always names one (cloud Nemotron by default), so without this override it
+    would build a real provider.
+    """
+    return project_compiler_for_selection
 
 
 #: Provider the knowledge-base routes use when a request names none. Cloud on

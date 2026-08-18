@@ -10,6 +10,8 @@ import { useRuns } from "@/lib/runs";
 import type { ChangeRequestResponse, ChangeStepKind } from "@/lib/types";
 import { ArtifactPanel } from "@/components/ArtifactPanel";
 import { ExportAllButton } from "@/components/ExportButtons";
+import { RunningOverlay } from "@/components/RunningOverlay";
+import { COMPILE_STEPS } from "@/lib/format";
 import { ChangeChat } from "@/components/ChangeChat";
 import { ChangeStagePill, STEP_LABEL, STEP_ORDER } from "@/components/ChangeStagePill";
 import { ChangeStepper } from "@/components/ChangeStepper";
@@ -72,6 +74,22 @@ export default function ChangeRequestPage() {
     },
   });
 
+  // "Send to workflow GUI": compile the approved TDD into a KB-grounded project
+  // (synchronous like the home page's compile) and open it. The wizard's own
+  // provider is reused; the API defaults to cloud Nemotron when it has none.
+  const sendToWorkflow = useMutation({
+    mutationFn: () =>
+      api.sendToWorkflow(id, {
+        provider: cr?.wizard.provider ?? undefined,
+        model: cr?.wizard.model ?? undefined,
+      }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["change-request", id] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      router.push(`/projects/${data.project.project_id}`);
+    },
+  });
+
   const currentStep: ChangeStepKind | null = res?.current_step ?? null;
   const stepKind: ChangeStepKind = useMemo(() => {
     if (selected) return selected;
@@ -109,9 +127,16 @@ export default function ChangeRequestPage() {
   const artifact = cr.artifacts[stepKind];
   const isCurrent = stepKind === currentStep;
   const started = cr.wizard.started_at !== null;
+  const tddApproved = cr.artifacts.tdd.status === "approved";
 
   return (
-    <div className="mx-auto max-w-[88rem] px-6 py-8">
+    <div className="relative mx-auto max-w-[88rem] px-6 py-8">
+      {sendToWorkflow.isPending && (
+        <RunningOverlay
+          title="Compiling the TDD into a grounded workflow project"
+          steps={[...COMPILE_STEPS, "Extracting the change spec (changes.md)"]}
+        />
+      )}
       {/* Header */}
       <div className="mb-5 flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
@@ -177,6 +202,17 @@ export default function ChangeRequestPage() {
           {cr.wizard.steps.some((s) => s.status === "drafted" || s.status === "approved") && (
             <ExportAllButton crId={id} disabled={running} />
           )}
+          {tddApproved && (
+            <button
+              type="button"
+              className="btn btn-primary text-xs"
+              disabled={running || sendToWorkflow.isPending}
+              title="Compile the approved TDD into a workflow project grounded by this knowledge base"
+              onClick={() => sendToWorkflow.mutate()}
+            >
+              {sendToWorkflow.isPending ? "Sending…" : "Send to workflow GUI"}
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-danger text-xs"
@@ -190,6 +226,21 @@ export default function ChangeRequestPage() {
         </div>
       </div>
 
+      {sendToWorkflow.error && (
+        <p className="tone-block mb-4 rounded-lg border px-3 py-2 text-sm">
+          {(sendToWorkflow.error as ApiError).message}
+        </p>
+      )}
+      {cr.project_ids.length > 0 && (
+        <p className="tone-pass mb-4 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-sm">
+          <span>Workflow project{cr.project_ids.length === 1 ? "" : "s"} from this TDD:</span>
+          {cr.project_ids.map((pid) => (
+            <Link key={pid} href={`/projects/${pid}`} className="link-accent font-mono text-xs">
+              {pid.slice(0, 8)}
+            </Link>
+          ))}
+        </p>
+      )}
       {running && job && (
         <div className="tone-info mb-4 rounded-lg border px-3 py-2 text-sm" role="status">
           {job.kind === "cr_questions"

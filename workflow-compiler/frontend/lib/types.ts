@@ -166,6 +166,53 @@ export interface EditRecord {
   [key: string]: unknown;
 }
 
+/** Pseudo-slug the change spec (changes.md) travels under (never a workflow slug). */
+export const CHANGES_SLUG = "__changes__";
+export const CHANGES_FILENAME = "changes.md";
+
+export type ComponentKind =
+  | "module"
+  | "activity"
+  | "workflow"
+  | "type"
+  | "signal"
+  | "query"
+  | "test"
+  | "diagram"
+  | "doc";
+export type ChangeType = "modify" | "add" | "remove" | "verify";
+
+/** One component's existing state and proposed change (a row of changes.md). */
+export interface ComponentChange {
+  name: string;
+  kind: ComponentKind;
+  path: string;
+  existing: string;
+  proposed: string;
+  change_type: ChangeType;
+  requirement_ids: string[];
+  provenance: string;
+}
+
+/** The change spec of a knowledge-graph-grounded project. */
+export interface ChangeSpec {
+  components: ComponentChange[];
+  assumptions: SpecItem[];
+  open_questions: SpecItem[];
+  sources: string[];
+  version: number;
+}
+
+/** Visible grounding record: what KB / CR a project was compiled with. */
+export interface ProjectGrounding {
+  kb_name: string;
+  change_request_title: string;
+  sources: string[];
+  coverage: number | null;
+  low_confidence: boolean;
+  requirement_ids: string[];
+}
+
 export interface CompilationProject {
   project_id: string;
   nickname: string | null;
@@ -180,6 +227,12 @@ export interface CompilationProject {
   validation_findings: Record<string, SpecFinding[]>;
   edit_log: EditRecord[];
   dialogue_session: DialogueSession | null;
+  /** Knowledge base the compile was grounded with (null = ungrounded). */
+  kb_id?: string | null;
+  /** Change request whose approved TDD this project came from, if any. */
+  change_request_id?: string | null;
+  change_spec?: ChangeSpec | null;
+  grounding?: ProjectGrounding | null;
   stage: ProjectStage;
   created_at: string;
   updated_at: string;

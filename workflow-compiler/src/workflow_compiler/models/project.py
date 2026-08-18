@@ -82,6 +82,13 @@ class ProjectGrounding(WorkflowBaseModel):
     low_confidence: bool = Field(
         default=False, description="True when any grounding retrieval reported low confidence."
     )
+    requirement_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The linked change request's requirement ids at compile time — the only ids "
+            "the change spec may cite (validated without re-loading the change request)."
+        ),
+    )
 
 
 class CompilationProject(WorkflowBaseModel):

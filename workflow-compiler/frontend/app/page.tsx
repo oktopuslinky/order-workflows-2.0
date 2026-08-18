@@ -27,7 +27,19 @@ export default function HomePage() {
   const [provider, setProvider] = useState<string>("local-fallback");
   // "" = the gateway's advertised default model (local providers only).
   const [model, setModel] = useState("");
+  // "" = plain compile; a kb_id grounds every prompt in that knowledge base
+  // and adds a change spec (changes.md) to the project.
+  const [kbId, setKbId] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const knowledgeBases = useQuery({
+    queryKey: ["knowledge-bases"],
+    queryFn: () => api.listKnowledgeBases(),
+    retry: false,
+  });
+  const readyKbs = (knowledgeBases.data?.knowledge_bases ?? []).filter(
+    (kb) => kb.status === "ready",
+  );
 
   const localModels = useQuery({
     queryKey: ["local-models"],
@@ -63,8 +75,12 @@ export default function HomePage() {
   const compile = useMutation({
     mutationFn: () =>
       file
-        ? api.compileUpload(file, true, localModel, nickname || undefined, provider)
-        : api.compileText(text, true, localModel, nickname || undefined, provider),
+        ? api.compileUpload(
+            file, true, localModel, nickname || undefined, provider, kbId || undefined,
+          )
+        : api.compileText(
+            text, true, localModel, nickname || undefined, provider, kbId || undefined,
+          ),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       router.push(`/projects/${data.project.project_id}`);
@@ -231,6 +247,42 @@ export default function HomePage() {
               {provider === "local"
                 ? " Local-only compiles will fail until it is back."
                 : " Compiles will fall back to Nemotron (cloud)."}
+            </p>
+          )}
+
+          <div className="mt-3 flex items-center gap-2">
+            <label htmlFor="kb" className="text-sm text-[var(--muted)]">
+              Ground with knowledge base
+            </label>
+            <select
+              id="kb"
+              value={kbId}
+              onChange={(e) => setKbId(e.target.value)}
+              className="flex-1 cursor-pointer rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-2 py-1 text-sm text-[var(--ink)] outline-none focus:border-[var(--accent)]"
+            >
+              <option value="">None — plain compile</option>
+              {readyKbs.map((kb) => (
+                <option key={kb.kb_id} value={kb.kb_id}>
+                  {kb.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {kbId && (
+            <p className="mt-1 text-xs text-[var(--faint)]">
+              Every extraction prompt sees the knowledge graph&apos;s real module,
+              activity and test names, and the project gets a{" "}
+              <span className="font-mono">changes.md</span> change spec (existing vs.
+              proposed per component) at the same gate.
+            </p>
+          )}
+          {!kbId && readyKbs.length === 0 && !knowledgeBases.isLoading && (
+            <p className="mt-1 text-xs text-[var(--faint)]">
+              No indexed knowledge base yet —{" "}
+              <Link href="/knowledge" className="link-accent">
+                upload one
+              </Link>{" "}
+              to ground compiles.
             </p>
           )}
 

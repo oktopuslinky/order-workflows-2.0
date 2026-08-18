@@ -225,9 +225,11 @@ def _parse_items(lines: list[str]) -> list[tuple[str, str | None]]:
     return items
 
 
-def _parse_questions(lines: list[str]) -> list[tuple[str, str | None, bool, str | None]]:
-    """``- [ ] (ref) text`` + ``Answer:`` → ``(text, ref, checked, answer)``."""
-    out: list[tuple[str, str | None, bool, str | None]] = []
+def _parse_questions(
+    lines: list[str],
+) -> list[tuple[str, str | None, bool, str | None, str | None]]:
+    """``- [ ] (ref) text [marker]`` + ``Answer:`` → ``(text, ref, checked, answer, marker)``."""
+    out: list[tuple[str, str | None, bool, str | None, str | None]] = []
     index = 0
     while index < len(lines):
         bullet = _BULLET.match(lines[index].strip())
@@ -244,11 +246,11 @@ def _parse_questions(lines: list[str]) -> list[tuple[str, str | None, bool, str 
             if answer_match:
                 answer = answer_match.group(1).strip() or None
                 index += 1
-        text = box.group("text").strip()
+        text, marker = _strip_marker(box.group("text").strip())
         ref = (box.group("ref") or "").strip() or None
         checked = box.group("box").lower() == "x"
         if text:
-            out.append((text, ref, checked, answer))
+            out.append((text, ref, checked, answer, marker))
         index += 1
     return out
 
@@ -371,7 +373,7 @@ def ingest_change_markdown(spec: ChangeSpec | None, markdown: str) -> ChangeInge
         old_by_ref = {q.ref: q for q in old.open_questions if q.ref}
         old_by_text = {q.text.lower(): q for q in old.open_questions}
         questions = []
-        for text, ref, checked, answer in _parse_questions(sections[QUESTIONS_SECTION]):
+        for text, ref, checked, answer, marker in _parse_questions(sections[QUESTIONS_SECTION]):
             existing_q = (ref and old_by_ref.get(ref)) or old_by_text.get(text.lower())
             resolved = checked or bool(answer)
             if existing_q is not None:
@@ -386,7 +388,7 @@ def ingest_change_markdown(spec: ChangeSpec | None, markdown: str) -> ChangeInge
                 questions.append(
                     SpecItem(
                         text=text,
-                        provenance=default_new,
+                        provenance=_provenance_from(marker, default_new),
                         resolved=resolved,
                         answer=answer,
                         ref=ref,

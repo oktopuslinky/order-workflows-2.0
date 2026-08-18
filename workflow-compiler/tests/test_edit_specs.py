@@ -7,6 +7,8 @@ would produce; everything after the LLM call is the production code path.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from workflow_compiler import ProjectCompiler, WorkflowCompiler
@@ -582,7 +584,10 @@ async def test_confirm_with_stale_fingerprint_raises() -> None:
     project = await compiler.compile_document(_DOCUMENT)
 
     preview = await compiler.preview_edit(project.project_id, _EDIT_DOC)
-    # Any project change after the preview invalidates it.
+    # Any project change after the preview invalidates it. (Windows' clock ticks
+    # every ~15 ms, so a touch in the same tick as the preview would not move
+    # ``updated_at``; wait one tick so the test exercises staleness, not the clock.)
+    await asyncio.sleep(0.03)
     stored = await compiler.load_project(project.project_id)
     stored.touch()
     await compiler.save_project(stored)

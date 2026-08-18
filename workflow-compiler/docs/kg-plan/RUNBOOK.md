@@ -93,3 +93,116 @@ Chunk, `US-001..007`, `TC-01..17`, `EPIC-001`, `BR-xx`, and a packet that derefe
   so `GET /jobs` in one test can see jobs from another; assert on scope filtering, not emptiness.
 - **Bash-tool heredocs containing backticks** fail to parse in the Claude Code harness on this
   machine; write patch scripts to a file and run them.
+
+## Phase 1 — Change request + guided wizard (2026-08-18)
+
+### Automated gates
+
+| Gate | Result |
+|---|---|
+| `pytest -q -p no:warnings` | **646 passed** (620 from Phase 0 + 26 new: 17 wizard/round-trip/ids/store/splice, 4 API flow, 1 CLI, 4 fixture checks) |
+| `ruff check src tests` | clean |
+| `mypy src` (strict) | clean, 166 files |
+| `npm run build` | clean; routes `/changes`, `/changes/[id]` |
+
+### Bring-up used for the live run
+
+Same as the top of this file (backend `127.0.0.1:8010` **without** `--reload`, frontend
+`127.0.0.1:3010` with `NEXT_PUBLIC_API_BASE=http://127.0.0.1:8010`), demo account
+`kgdemo@example.com`. The backend was restarted twice mid-run to pick up engine fixes found
+during the run (see "Gotchas") — restarting between jobs is safe; the change request is saved
+after every call.
+
+### Live run — BCR-001 through the wizard in the browser (Nemotron `nvidia/llama-3.3-nemotron-super-49b-v1`)
+
+Steps (Chrome, driven via Chrome DevTools; all times UTC as recorded on the change request's
+chat turns — local time is UTC−5):
+
+1. `/changes` → New change request: KB **Order lifecycle (Existing_KG)** (`86d9919378bd4ebe8329f8ff950a2a27`),
+   upload `examples/change_requests/BCR-001-partial-shipment-support.docx`, provider Nemotron →
+   *Create* → redirected to `/changes/dfad0d257db847919029f11dbef3c47d`. The header already shows
+   the parsed metadata (BCR-001, VP Supply Chain Operations, target OrderWorkflow) — no LLM call.
+2. **Start wizard** → ids reserved instantly (`EPIC-002`, `TDD-ORD-002`, next TC `TC-18`; 86 impact
+   rows) and the impact questions job runs.
+3. Impact step: 3 questions → answered (chip + prose) → **Draft now** → v1 (30 affected rows) →
+   **Revise** ("add EPIC-001 DoD + TP §3.2 rows") → **Approve**.
+4. EPIC step: 3 questions (2 answered, 1 skipped as out of scope) → Draft → hand **Edit** in the
+   markdown editor (Target Release) → v2 `human_edit` → Approve.
+5. Stories step: 5 questions (3 answered, 2 skipped) → Draft (8 stories, 3 batches) → Approve.
+6. TDD step: 5 questions (4 answered, 1 skipped) → Draft (4 chunks) → Revise (§5 list-valued
+   results + `ShipmentGroup`) → Approve → CR **complete**.
+
+| Item | Measured |
+|---|---|
+| CR create (docx parse, meta/requirements/seeds) | < 1 s; 6 requirements `BCR-01-01..06`, 20 seed terms |
+| Start (catalog → ids, impact BFS, glossary) | ~1 s; catalog `documents = [BRD-ORD-001, TDD-ORD-001, TP-ORD-001]` → `TDD-ORD-002` |
+| Impact questions (`cr_questions`) | 15:50:50 → 15:53:22 = **2.5 min** (brief ≈ 36 k chars incl. 32 KG excerpts) |
+| Impact answers (sync `answer`, per call) | 13 s / 13 s / 8 s |
+| Impact draft (`cr_draft`: draft + coverage pass + render) | 15:54:41 → 15:58:24 = **3.7 min**; v1 = 30 affected rows, 6 requirement rows, 86-row KG appendix, 15 sources |
+| Impact revise (`cr_revise`, whole-document rewrite — the first implementation) | 15:58:53 → 16:01:12 = 2.3 min, **but it condensed the document 17.7 KB → 5.0 KB** (rows dropped) — fixed the same session, see gotchas; the section-scoped re-run took **65 s** and kept all rows (v6 = 18.2 KB) |
+| EPIC questions | 16:02:07 → 16:13:20 = 11 min wall-clock **including a Nemotron HTTP 504 + retries and a backend restart**; the call itself ≈ 2 min |
+| EPIC draft | 16:16:27 → 16:18:09 = **1.7 min**; story map `US-008..US-015` |
+| Human edit (PUT) | instant; v2 `human_edit` |
+| Stories questions | 16:24:06 → 16:24:56 = 50 s |
+| Stories draft (8 stories, batches of 3) | 16:26:37 → 16:28:42 = **2.1 min**; 23 Given… acceptance criteria |
+| TDD questions | 16:29:59 → 16:31:10 = 71 s |
+| TDD draft (4 chunked calls) | 16:32:29 → 16:35:46 = **3.3 min**; 14/14 sections, each Existing + Proposed |
+| TDD revise | 16:36:16 → 16:39:11 = 2.9 min |
+| End to end (create → complete) | 15:50:50 → 16:40:35 = 50 min including think time, one 504 stall and two restarts; pure LLM time ≈ 20 min |
+| Screenshots | `docs/kg-plan/screenshots/phase1-*.png` (questions drafting, impact drafting/drafted, epic drafted, stories drafting/drafted, tdd drafting, tdd approved, cr complete) |
+| Fixtures | `tests/fixtures/change_artifacts/{BCR-001-impact-analysis, EPIC-002, US-008-015-stories, TDD-ORD-002}.md` (+ `tests/test_change_fixtures.py` asserting the checks below and the round trips) |
+
+Plan checks, as observed in the artifacts:
+
+- **Impact** names `existing_Codebase/workflows/order_workflow.py`, the `types.py` classes
+  (`OrderState`, `ProvisioningResult`, `DispatchResult`, `CompletionResult`), `provision_order`,
+  `dispatch_order`, `compensate_*`, `complete_order`, TC-01/06/09/10/12/16, US-003/004/005, the
+  test plan (TP-ORD-001 §3.2 after the revision), EPIC-001 (DoD/story map row after the revision),
+  EPIC-002 (add), both diagrams and the new companion diagram; requirement rows for all six
+  BCR-01-0N; a deterministic 86-row KG appendix and a 15-file Sources footer.
+- **EPIC-002** has Epic Statement / Business Value / In-Scope Capabilities / Definition of Done /
+  Story Map (`US-008..US-015`, ids assigned by the engine) / NFRs / Dependencies / Risks.
+- **Stories** are one `## US-00N: Title` section each with As/I want/so that, `- [ ] Given …`
+  criteria and Notes citing BCR ids, TDD-ORD-002 sections and TC ids.
+- **TDD-ORD-002** keeps TDD-ORD-001's sections with Existing vs Proposed each: `PARTIALLY_PROVISIONED`
+  / `PARTIALLY_DISPATCHED` + a per-group sub-state machine, per-group activities table, group saga
+  pseudo-code, `cancel_shipment_group(group_id)`, `get_status` per group, timeouts, testing (TC-06/09/10
+  updated + new scenarios), `list[ProvisioningResult]` / `list[DispatchResult]` + `ShipmentGroup` in §5
+  (after the revision), diagram `order-state-machine-partial-shipment.mmd`.
+
+CLI parity: the same flow was first run unattended (`cr create … --provider nemotron`, then
+`cr draft <id> impact|epic|stories|tdd --auto`, `cr approve`) — impact 1 m 49 s (v1, before the
+coverage pass), epic ~80 s, stories 3 min, TDD 9 min with the first prompt (~3 min after chunking
+tuning). `--auto` answers every question with its first suggested option.
+
+### Gotchas found in this phase
+
+- **Whole-document LLM revisions are lossy.** Asked to "add two rows", Nemotron returned a
+  *condensed* document (17.7 KB → 5.0 KB, most table rows and the appendix dropped). Revision is now
+  section-scoped: the model returns only the `## ` sections it changed, the engine splices them by
+  heading and never touches the KG appendix / Sources; and because the model still abbreviates long
+  tables with `| … |` rows, a table-merge guard keeps every original row and appends only new ones
+  (deleting a row is a hand edit). The v2 impact produced by the old path was superseded by
+  restoring v1 (a `human_edit`) and re-running the revision.
+- **Nemotron under-reports affected items on one pass.** The first impact draft listed 6 rows. Two
+  changes fixed it: targeted retrieval queries + a **business-id glossary** in the brief (one corpus
+  line per reached `TC-`/`US-`/`BR-` id, e.g. `TC-05 | Provisioning fails after validation …`), and a
+  bounded **second coverage pass** that classifies the traversal candidates the first draft did not
+  mention (modify / verify / add / unaffected). Result: 30 rows with KG node ids.
+- **Decisions must be cumulative.** The EPIC and Stories steps re-asked the invoicing and
+  backward-compatibility questions until the brief listed the decisions of *all* previous steps
+  (they still get re-asked occasionally — Nemotron does not always honour "do not ask again"; answer
+  consistently or skip).
+- **Nemotron 504s.** One `HTTP 504` during the EPIC questions; the provider's retry handled it but the
+  job took 11 min wall-clock. Nothing to do but wait — the UI keeps polling.
+- **`PUT …/artifacts/{kind}` with `note: null`** was rejected (422) by the first schema; the note is now
+  optional on both sides. Approved artifacts cannot be edited from the UI (by design in this version —
+  the API allows it and flips them back to `drafted`).
+- **Programmatic browser driving:** the answer textarea is a controlled React input — `fill` did not
+  register; dispatch a native `input` event (see the DevTools transcript). CodeMirror is reachable via
+  `document.querySelector('.cm-content').cmTile.view` for a scripted edit.
+- **Timestamps** on steps/artifacts used the wizard's stale `updated_at` until fixed mid-run — the EPIC
+  approve time in the recorded CR equals its draft time for that reason.
+- **Bash-tool heredocs** in the Claude Code harness on this machine unescape `\n`/`\b`/backticks even
+  with a quoted delimiter — patch scripts with regexes or multi-line strings must be written to a
+  file with the Write tool and executed, not pasted into a heredoc.

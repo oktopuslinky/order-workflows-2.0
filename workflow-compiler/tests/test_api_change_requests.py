@@ -217,3 +217,73 @@ def test_other_users_projects_are_visible_when_shared(client: tuple[TestClient, 
         json={"email": "other@example.com", "password": "password123", "display_name": "O"},
     )
     assert c.get(f"/change-requests/{cr_id}").status_code == 200  # projects_shared default
+
+
+def test_export_routes(client: tuple[TestClient, str]) -> None:
+    """docx / md / xlsx / zip exports over HTTP — deterministic, labelled DRAFT until approved."""
+    import io
+    import zipfile
+
+    from docx import Document
+
+    fixtures = Path(__file__).parent / "fixtures" / "change_artifacts"
+    c, kb_id = client
+    cr_id = _create(c, kb_id)["change_request"]["cr_id"]
+    base = f"/change-requests/{cr_id}"
+    # Nothing drafted yet → 400, and unknown kinds/formats are rejected.
+    assert c.get(f"{base}/artifacts/impact/export?format=docx").status_code == 400
+    assert c.get(f"{base}/export.zip").status_code == 400
+    assert c.get(f"{base}/artifacts/nope/export").status_code == 404
+    assert c.get(f"{base}/artifacts/impact/export?format=pdf").status_code == 422
+
+    # A hand-written impact analysis (a human_edit version, not approved).
+    markdown = (fixtures / "BCR-001-impact-analysis.md").read_text(encoding="utf-8")
+    put = c.put(f"{base}/artifacts/impact", json={"markdown": markdown, "note": "fixture"})
+    assert put.status_code == 200, put.text
+
+    docx = c.get(f"{base}/artifacts/impact/export?format=docx")
+    assert docx.status_code == 200
+    assert docx.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert 'filename="Impact-Analysis-BCR-001-DRAFT.docx"' in docx.headers["content-disposition"]
+    doc = Document(io.BytesIO(docx.content))
+    assert doc.paragraphs[0].text == "Impact Analysis"
+    assert doc.paragraphs[1].text.endswith("— DRAFT v1 — not approved")
+
+    md = c.get(f"{base}/artifacts/impact/export?format=md")
+    assert md.status_code == 200 and md.text.startswith("# Impact Analysis — BCR-001")
+    assert 'filename="BCR-001-impact-analysis-DRAFT.md"' in md.headers["content-disposition"]
+
+    xlsx = c.get(f"{base}/artifacts/impact/export?format=xlsx")
+    assert xlsx.status_code == 200 and xlsx.content[:2] == b"PK"
+    assert 'filename="TC-preview-BCR-001-DRAFT.xlsx"' in xlsx.headers["content-disposition"]
+    assert c.get(f"{base}/artifacts/epic/export?format=xlsx").status_code == 400  # not drafted
+    stories = (fixtures / "US-008-015-stories.md").read_text(encoding="utf-8")
+    assert c.put(f"{base}/artifacts/stories", json={"markdown": stories}).status_code == 200
+    stories_zip = c.get(f"{base}/artifacts/stories/export?format=docx")
+    assert (
+        stories_zip.status_code == 200 and stories_zip.headers["content-type"] == "application/zip"
+    )
+    with zipfile.ZipFile(io.BytesIO(stories_zip.content)) as zf:
+        assert len(zf.namelist()) == 8 and all(n.endswith("-DRAFT.docx") for n in zf.namelist())
+
+    bundle = c.get(f"{base}/export.zip")
+    assert bundle.status_code == 200 and bundle.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(io.BytesIO(bundle.content)) as zf:
+        names = zf.namelist()
+        manifest = zf.read("MANIFEST.txt").decode("utf-8")
+    assert (
+        "Impact-Analysis-BCR-001-DRAFT.docx" in names and "TC-preview-BCR-001-DRAFT.xlsx" in names
+    )
+    assert sum(1 for n in names if n.startswith("US-0")) == 8
+    assert "markdown/BCR-001-impact-analysis-DRAFT.md" in names
+    assert "epic: not drafted — skipped" in manifest and "tdd: not drafted — skipped" in manifest
+
+    # Another signed-in account: shared by default (200), 404 when per-owner isolation is on.
+    c.post("/auth/logout")
+    c.post(
+        "/auth/register",
+        json={"email": "other@example.com", "password": "password123", "display_name": "O"},
+    )
+    assert c.get(f"{base}/export.zip").status_code in (200, 404)

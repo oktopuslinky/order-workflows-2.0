@@ -15,6 +15,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from workflow_compiler.agents.change_analyst import ChangeAnalystAgent
+from workflow_compiler.docs_export.artifacts import ArtifactExport, export_artifact
+from workflow_compiler.docs_export.bundle import bundle_filename, export_change_request
+from workflow_compiler.docs_export.xlsx_writer import TestCaseRow, read_test_case_rows
 from workflow_compiler.exceptions import CompilationError
 from workflow_compiler.ingestion import DocumentParserFactory
 from workflow_compiler.interfaces.llm import BaseLLMProvider
@@ -232,6 +235,53 @@ class ChangeRequestService:
                 f"{artifact.kind.value} has no version {version} (latest is {artifact.version})."
             )
         return cr, artifact, entry
+
+    # ------------------------------------------------------------ export
+    async def existing_test_cases(self, cr: ChangeRequest) -> list[TestCaseRow]:
+        """Rows of the knowledge base's original test-case matrix (``*.xlsx`` whose
+        first sheet starts with ``TC ID``), or ``[]`` when the KB has none / is gone.
+
+        Deterministic file read — used to fill the Phase 2 preview's detail
+        columns; never raises so an export always succeeds (thinner, labelled).
+        """
+        try:
+            files = await self._kg.list_files(cr.kb_id)
+        except Exception:
+            return []
+        rows: list[TestCaseRow] = []
+        for rel_path in files:
+            if not rel_path.lower().endswith(".xlsx"):
+                continue
+            try:
+                rows.extend(read_test_case_rows(await self._kg.read_bytes(cr.kb_id, rel_path)))
+            except Exception:
+                continue
+        return rows
+
+    async def export(
+        self, cr_id: str, kind: ArtifactKind | str, fmt: str = "docx"
+    ) -> ArtifactExport:
+        """One artifact as ``docx`` | ``md`` | ``xlsx`` (see :mod:`docs_export.artifacts`)."""
+        cr = await self.get(cr_id)
+        akind = ArtifactKind(kind)
+        existing = (
+            await self.existing_test_cases(cr)
+            if fmt == "xlsx" and akind == ArtifactKind.IMPACT
+            else []
+        )
+        try:
+            return export_artifact(cr, akind, fmt, existing_test_cases=existing)
+        except ValueError as exc:
+            raise CompilationError(str(exc)) from exc
+
+    async def export_bundle(self, cr_id: str) -> ArtifactExport:
+        """Every artifact of the change request as one zip (docx + xlsx + markdown)."""
+        cr = await self.get(cr_id)
+        if not any(a.markdown for a in cr.artifacts.all()):
+            raise CompilationError("Nothing to export yet — no artifact has been drafted.")
+        existing = await self.existing_test_cases(cr)
+        data = export_change_request(cr, existing_test_cases=existing)
+        return ArtifactExport(bundle_filename(cr), "application/zip", data)
 
     @staticmethod
     def current_step(cr: ChangeRequest) -> WizardStep | None:

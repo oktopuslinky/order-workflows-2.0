@@ -1,0 +1,108 @@
+{
+  "_comment": "Heading conventions of the manager's reference documents (docs/kg-plan/research/reference-repo-digest.md §5). The docx export tests assert the produced documents follow them.",
+  "common": {
+    "title_pt": 22,
+    "subtitle_pt": 14,
+    "table_header_fill": "2F5496",
+    "table_header_font_color": "FFFFFF",
+    "checked": "☑  ",
+    "unchecked": "☐  ",
+    "code_font": "Consolas",
+    "bullet_style": "List Paragraph"
+  },
+  "epic": {
+    "title": "EPIC-002",
+    "numbered": false,
+    "heading_style": "Heading 1",
+    "meta_labels": ["Epic Owner", "Linked BRD", "Linked BCR", "Status", "Target Release"],
+    "sections": [
+      "Epic Statement",
+      "Business Value",
+      "In-Scope Capabilities",
+      "Definition of Done",
+      "Story Map",
+      "Non-Functional Requirements",
+      "Dependencies",
+      "Risks"
+    ],
+    "tables": {
+      "Story Map": ["Story ID", "Title", "Status", "Doc"],
+      "Non-Functional Requirements": ["NFR", "Target"],
+      "Risks": ["Risk", "Mitigation"]
+    }
+  },
+  "story": {
+    "title_pattern": "^US-\\d+: .+",
+    "heading_style": "Heading 2",
+    "meta_labels": ["Epic", "Status", "Story Points"],
+    "sections": ["Story", "Acceptance Criteria", "Notes"],
+    "filename_pattern": "^US-\\d+-[a-z0-9-]+\\.docx$"
+  },
+  "tdd": {
+    "title": "Technical Design Document (TDD)",
+    "numbered": true,
+    "meta_labels": ["Document ID", "Linked EPIC", "Version", "Status", "Author"],
+    "sections": [
+      ["Heading 1", "1. Overview"],
+      ["Heading 1", "2. Why Temporal"],
+      ["Heading 1", "3. High-Level Architecture"],
+      ["Heading 1", "4. Workflow Design"],
+      ["Heading 2", "4.1 State Machine"],
+      ["Heading 2", "4.2 Activities"],
+      ["Heading 2", "4.3 Saga / Compensation Logic"],
+      ["Heading 2", "4.4 Idempotency Keys"],
+      ["Heading 2", "4.5 Signals & Queries"],
+      ["Heading 2", "4.6 Timeouts & SLAs"],
+      ["Heading 2", "4.7 Handling Delivery Wait Time"],
+      ["Heading 1", "5. Data Contracts"],
+      ["Heading 1", "6. Observability"],
+      ["Heading 1", "7. Testing Strategy"],
+      ["Heading 1", "8. Open Items / Future Work"]
+    ]
+  },
+  "impact": {
+    "title": "Impact Analysis",
+    "numbered": true,
+    "meta_labels": ["Change Request", "Target Workflow", "Knowledge Base", "Status"],
+    "sections": [
+      "1. Change Summary",
+      "2. Requirements Assessment",
+      "3. Affected Components",
+      "4. Impact on Existing Design",
+      "5. Risks & Assumptions",
+      "6. Open Decisions",
+      "Appendix A — Knowledge-graph traversal (deterministic)",
+      "Sources"
+    ],
+    "tables": {
+      "2. Requirements Assessment": ["Req ID", "Requirement", "Impact"],
+      "3. Affected Components": ["Kind", "Component", "Change", "Rationale", "KG reference"]
+    }
+  },
+  "test_cases_xlsx": {
+    "sheets": ["Test Cases", "Summary"],
+    "columns": [
+      "TC ID",
+      "Title",
+      "Preconditions",
+      "Steps",
+      "Expected Result",
+      "Type",
+      "Automated",
+      "Linked Story/Req",
+      "Notes"
+    ],
+    "summary_rows": [
+      "Linked TDD:",
+      "Linked Epic:",
+      "Automation:",
+      "Totals by Automation Status",
+      "Automated (Yes)",
+      "Manual",
+      "Planned",
+      "Total Test Cases",
+      "Totals by Type",
+      "Notes"
+    ]
+  }
+}

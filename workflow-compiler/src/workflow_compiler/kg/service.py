@@ -563,6 +563,20 @@ class KgService:
 
         return await asyncio.to_thread(_read)
 
+    async def read_bytes(self, kb_id: str, rel_path: str, *, max_bytes: int = 20_000_000) -> bytes:
+        """Raw bytes of one corpus file (for binary readers such as the TC matrix xlsx)."""
+        validate_kb_id(kb_id)
+        path = self._resolve_corpus_path(kb_id, rel_path)
+        if not path.is_file():
+            raise StateNotFoundError(f"No file {rel_path!r} in knowledge base {kb_id!r}.")
+
+        def _read() -> bytes:
+            if path.stat().st_size > max_bytes:
+                raise CompilationError(f"{rel_path!r} is larger than {max_bytes} bytes.")
+            return path.read_bytes()
+
+        return await asyncio.to_thread(_read)
+
     # ------------------------------------------------------------ graph cache
     async def _graph(self, kb_id: str) -> Any:
         validate_kb_id(kb_id)

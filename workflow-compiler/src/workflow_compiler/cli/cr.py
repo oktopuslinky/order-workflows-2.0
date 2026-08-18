@@ -247,25 +247,63 @@ async def _run_approve(cr_id: str, step: str) -> None:
 @cr_app.command(name="export")
 def export_cmd(
     cr_id: str = typer.Argument(..., help="Change request id."),
-    step: str = typer.Argument(..., help="impact | epic | stories | tdd"),
-    version: int | None = typer.Option(None, "--version", help="Artifact version (default latest)"),
-    out: Path | None = typer.Option(None, "--out", help="Write the markdown here (default stdout)"),
+    step: str | None = typer.Argument(
+        None, help="impact | epic | stories | tdd (omit with --format zip)"
+    ),
+    fmt: str = typer.Option(
+        "md", "--format", "-f", help="md | docx | xlsx (impact only) | zip (whole change request)"
+    ),
+    version: int | None = typer.Option(
+        None, "--version", help="Artifact version (markdown only; default latest)"
+    ),
+    out: Path | None = typer.Option(
+        None,
+        "--out",
+        help="Write here (default: stdout for markdown, else the export's filename)",
+    ),
 ) -> None:
-    """Print or save an artifact's markdown."""
-    asyncio.run(_run_export(cr_id, step, version, out))
+    """Export an artifact (markdown / Word / TC preview) or the whole change request as a zip.
+
+    Word/Excel exports are deterministic renders of the artifact's latest version, labelled
+    ``DRAFT vN — not approved`` (and suffixed ``-DRAFT``) when the artifact was not approved.
+    """
+    asyncio.run(_run_export(cr_id, step, fmt, version, out))
 
 
 @_domain_errors
-async def _run_export(cr_id: str, step: str, version: int | None, out: Path | None) -> None:
+async def _run_export(
+    cr_id: str, step: str | None, fmt: str, version: int | None, out: Path | None
+) -> None:
     from workflow_compiler.models.change import ArtifactKind
 
-    _cr, artifact, entry = await _service().artifact(cr_id, ArtifactKind(step), version=version)
-    markdown = entry.markdown if entry is not None else artifact.markdown
-    if out is not None:
-        out.write_text(markdown, encoding="utf-8")
-        _say(f"Wrote {out}")
+    fmt = fmt.lower().lstrip(".")
+    service = _service()
+    if fmt == "zip":
+        export = await service.export_bundle(cr_id)
     else:
-        console.print(markdown, markup=False, highlight=False)
+        if step is None:
+            raise typer.BadParameter("STEP is required unless --format zip is used.")
+        if fmt not in ("md", "docx", "xlsx"):
+            raise typer.BadParameter("--format must be md, docx, xlsx or zip.")
+        if fmt == "md":
+            _cr, artifact, entry = await service.artifact(
+                cr_id, ArtifactKind(step), version=version
+            )
+            markdown = entry.markdown if entry is not None else artifact.markdown
+            if out is not None:
+                out.write_text(markdown, encoding="utf-8")
+                _say(f"Wrote {out}")
+            else:
+                console.print(markdown, markup=False, highlight=False)
+            return
+        if version is not None:
+            raise typer.BadParameter("--version applies to markdown exports only.")
+        export = await service.export(cr_id, ArtifactKind(step), fmt)
+    target = out if out is not None else Path(export.filename)
+    if target.is_dir():
+        target = target / export.filename
+    target.write_bytes(export.data)
+    _say(f"Wrote {target} ({len(export.data)} bytes)")
 
 
 @cr_app.command(name="delete")

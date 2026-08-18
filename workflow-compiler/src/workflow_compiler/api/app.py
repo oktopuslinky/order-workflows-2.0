@@ -49,6 +49,9 @@ graph that later grounds change requests and specs; see ``kg/``):
 - ``POST   /change-requests/{id}/wizard/start|answer|skip|draft|revise`` — the guided wizard
   (start/draft/revise run as ``cr_questions``/``cr_draft``/``cr_revise`` jobs).
 - ``GET/PUT /change-requests/{id}/artifacts/{kind}``, ``POST …/approve`` — versioned artifacts.
+- ``GET    /change-requests/{id}/artifacts/{kind}/export?format=docx|md|xlsx`` — one artifact as
+  Word (stories: a zip of per-story documents) / markdown / the test-case preview workbook;
+  ``GET …/export.zip`` — every artifact + markdown sources + manifest (deterministic, no LLM).
 
 Per-workflow endpoints (viewing plus the manual override for workflows whose
 graph health fell below the auto-approve threshold):
@@ -186,6 +189,7 @@ from workflow_compiler.dialogue import (
     has_anything_to_ask,
     prepared_agenda_is_fresh,
 )
+from workflow_compiler.docs_export.artifacts import ArtifactExport
 from workflow_compiler.exceptions import (
     ApprovalError,
     CompilationError,
@@ -1831,6 +1835,54 @@ def create_app() -> FastAPI:
         _check_cr_owner(await _guard(changes.get(cr_id)), user)
         cr = await _guard(changes.edit(cr_id, akind, request.markdown, note=request.note or ""))
         return _artifact_response(cr, akind, None)
+
+    def _download(export: ArtifactExport) -> Response:
+        filename = export.filename.replace('"', "")
+        return Response(
+            content=export.data,
+            media_type=export.media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get(
+        "/change-requests/{cr_id}/artifacts/{kind}/export",
+        tags=["change-requests"],
+        response_class=Response,
+        responses={200: {"content": {"application/octet-stream": {}}}},
+    )
+    async def export_change_artifact(
+        cr_id: str,
+        kind: str,
+        format: str = Query(default="docx", pattern="^(docx|md|xlsx)$"),
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> Response:
+        """Download one artifact as Word / markdown / the TC preview workbook.
+
+        Deterministic — no model call. Unapproved artifacts export as the latest
+        version, labelled ``DRAFT vN — not approved`` (``-DRAFT`` filename suffix);
+        the stories artifact's ``docx`` is a zip with one document per story.
+        """
+        akind = _artifact_kind(kind)
+        _check_cr_owner(await _guard(changes.get(cr_id)), user)
+        return _download(await _guard(changes.export(cr_id, akind, format)))
+
+    @app.get(
+        "/change-requests/{cr_id}/export.zip",
+        tags=["change-requests"],
+        response_class=Response,
+        responses={200: {"content": {"application/zip": {}}}},
+    )
+    async def export_change_request_zip(
+        cr_id: str,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> Response:
+        """Every artifact of the change request as one zip: ``Impact-Analysis-<BCR>.docx``,
+        ``EPIC-00N-<slug>.docx``, one ``US-00N-<slug>.docx`` per story, ``TDD-…-<slug>.docx``,
+        the test-case preview ``.xlsx``, ``markdown/*.md`` sources and ``MANIFEST.txt``."""
+        _check_cr_owner(await _guard(changes.get(cr_id)), user)
+        return _download(await _guard(changes.export_bundle(cr_id)))
 
     @app.post(
         "/change-requests/{cr_id}/artifacts/{kind}/approve",

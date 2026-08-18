@@ -62,5 +62,42 @@ def test_cr_cli_round_trip(tmp_path: Path, state_root: Path) -> None:
     assert "# Impact Analysis" in out
     assert runner.invoke(app, ["cr", "export", cr_id, "impact", "--version", "9"]).exit_code == 1
 
+    # Word / Excel / zip exports (deterministic; the impact analysis is approved here).
+    docx_target = tmp_path / "impact.docx"
+    out = _ok(
+        runner.invoke(
+            app, ["cr", "export", cr_id, "impact", "--format", "docx", "--out", str(docx_target)]
+        )
+    )
+    assert "Wrote" in out and docx_target.stat().st_size > 0
+    from docx import Document
+
+    paragraphs = [p.text for p in Document(str(docx_target)).paragraphs]
+    assert paragraphs[0] == "Impact Analysis" and any(
+        p.startswith("Export: Approved v1") for p in paragraphs
+    )
+    _ok(
+        runner.invoke(
+            app, ["cr", "export", cr_id, "impact", "--format", "xlsx", "--out", str(tmp_path)]
+        )
+    )
+    assert (tmp_path / "TC-preview-BCR-001.xlsx").is_file()
+    _ok(
+        runner.invoke(
+            app, ["cr", "export", cr_id, "--format", "zip", "--out", str(tmp_path / "cr.zip")]
+        )
+    )
+    import zipfile
+
+    with zipfile.ZipFile(tmp_path / "cr.zip") as zf:
+        names = zf.namelist()
+    assert "Impact-Analysis-BCR-001.docx" in names and "MANIFEST.txt" in names
+    assert (
+        runner.invoke(app, ["cr", "export", cr_id, "--format", "docx"]).exit_code != 0
+    )  # step required
+    assert (
+        runner.invoke(app, ["cr", "export", cr_id, "epic", "--format", "docx"]).exit_code == 1
+    )  # empty
+
     _ok(runner.invoke(app, ["cr", "delete", cr_id]))
     assert "No change requests yet" in _ok(runner.invoke(app, ["cr", "list"]))

@@ -302,8 +302,7 @@ async def test_change_validator_findings(kg: KgService, kb: KnowledgeBase) -> No
     by_message = {f.message: f for f in findings}
     assert all(f.workflow == CHANGES_SLUG for f in findings)
     # resolvable paths (file, fn symbol) raise nothing
-    assert not any("src/orders/workflow.py" in m and "not in the knowledge base" in m
-                   for m in by_message)
+    assert not any("src/orders/workflow.py (module) points" in m for m in by_message)
     assert not any("dispatch_order (activity) points" in m for m in by_message)
     # a method inside a class resolves through its file; an unknown symbol does not
     assert not any("run (query) points" in m for m in by_message)

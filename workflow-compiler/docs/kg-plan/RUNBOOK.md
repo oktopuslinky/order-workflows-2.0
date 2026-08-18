@@ -206,3 +206,86 @@ tuning). `--auto` answers every question with its first suggested option.
 - **Bash-tool heredocs** in the Claude Code harness on this machine unescape `\n`/`\b`/backticks even
   with a quoted delimiter — patch scripts with regexes or multi-line strings must be written to a
   file with the Write tool and executed, not pasted into a heredoc.
+
+## Phase 2 — Document export, .docx / .xlsx in the manager's template style (2026-08-18)
+
+### Automated gates
+
+| Gate | Result |
+|---|---|
+| `pytest -q -p no:warnings` | **664 passed** (646 from Phase 1 + 18 new: 15 `test_docs_export.py` golden-structure/xlsx/bundle, 2 API export routes, 1 fixture identity; the CLI round-trip test grew the docx/xlsx/zip steps) |
+| `ruff check src tests` | clean |
+| `mypy src` (strict) | clean, 173 files |
+| `npm run build` | clean (routes unchanged; `npm run lint` reports the same 2 pre-existing `RunPanel`/`SpecChatPanel` findings as before this phase) |
+
+### What was measured on the reference documents (and reproduced)
+
+Inspected with python-docx/lxml/openpyxl before writing the writer (numbers are the reference's,
+not the digest's guesses): Letter page, 0.75 in margins; **no font defaults** in the styles → Word
+renders Times New Roman 10 pt; title run bold `2F5496` sz 44 (22 pt) with 10 pt after; subtitle
+`444444` sz 28 (14 pt) with 15 pt after; a bottom-bordered empty paragraph (`AAAAAA`, sz 6) before
+and after the metadata block; meta lines `Label: ` bold + value, 3 pt after; Heading 1 `2E74B5`
+16 pt (before 16 / after 8 pt), Heading 2 13 pt (before 13 / after 6), Heading 3 `1F4D78` 12 pt;
+tables `tblW` 9500 dxa, single `auto` borders, header row `tblHeader` + `shd 2F5496` + white bold
+runs, body cells `shd FFFFFF`, cell margins 80/100 dxa, an empty paragraph after each table;
+bullets = `ListParagraph` + `numPr` (`•`, ind 460/260; the EPIC also uses real decimal numbering
+for capabilities); checklists = plain paragraphs, `ind left 360`, run `☑  `/`☐  `; inline code =
+Consolas runs coloured `AA3377`; code blocks = one paragraph with `CCCCCC` borders, `F5F5F5`
+shading, Consolas 9.5 pt, `w:br` line breaks; the EPIC statement = paragraph with a `2F5496`
+sz 18 left border and 400 dxa indent. Xlsx: header Arial 10 bold white on `2F5496`, wrapped,
+30 pt row, frozen at A2, autofilter; body Arial 10 on `F2F2F2`, thin borders, top-aligned;
+column widths 8/30/32/30/48/20/15/16/30; Summary A1 Arial 14 bold `2F5496`, widths 32/28.
+
+Deliberate deviations: totals in the Summary sheet are **literal numbers** (the reference uses
+`COUNTIF` formulas, which openpyxl cannot evaluate and non-Excel readers see as blank); the
+`Existing` / `Proposed` split of TDD sections is rendered as Heading 3 (the reference TDD has no
+such split); every export adds an `Export: Approved vN (date)` / `DRAFT vN — not approved` line.
+
+### Live run — export BCR-001's artifacts from the UI (CR `dfad0d257db847919029f11dbef3c47d`)
+
+Bring-up as at the top of this file (backend restarted from this worktree on 127.0.0.1:8010, frontend
+on :3010). Steps (Chrome via DevTools):
+
+1. `/changes/dfad0d257db847919029f11dbef3c47d` (all four artifacts approved) — the artifact panel shows
+   **Export: .docx .md** (impact also **.xlsx**), the header **Export all (.zip)**
+   (`docs/kg-plan/screenshots/phase2-export-buttons.png`).
+2. TDD → `.docx`: `GET …/artifacts/tdd/export?format=docx` → 200 in < 1 s, the browser saved
+   `TDD-ORD-002-orderworkflow-temporal-implementation.docx` (40.7 KB). Impact → `.docx` / `.xlsx`,
+   EPIC / Stories → `.docx` (stories = `EPIC-002-user-stories.zip`, 8 files), **Export all** →
+   `BCR-001-dfad0d25-export.zip` (421 KB: 4 + 8 docx, 1 xlsx, 4 md, MANIFEST.txt).
+3. Opened next to the originals in Word/Excel: `phase2-word-tdd-side-by-side.png` (TDD-ORD-001 vs
+   TDD-ORD-002), `phase2-word-epic-side-by-side.png` (EPIC-001 vs EPIC-002), `phase2-word-story-side-by-side.png`
+   (US-003 vs US-008), `phase2-excel-tc-side-by-side.png` (TC-order-workflow.xlsx vs TC-preview-BCR-001.xlsx —
+   6 affected rows TC-01/06/09/10/12/16 with the original Title/Preconditions/Steps/Expected/Type/Automated
+   and the change note appended in Notes).
+
+| Item | Measured |
+|---|---|
+| Export latency (any artifact, docx) | < 1 s (pure CPU; no LLM) |
+| TC preview | 6 rows, all merged from the KB's `Business_Docs/test-cases/TC-order-workflow.xlsx` (17 original rows read via `KgService.read_bytes`) |
+| Bundle | 18 files, 420 939 bytes; byte-identical on re-export |
+| Fixture | `tests/fixtures/change_artifacts/TDD-ORD-002.docx` = `examples/change_requests/TDD-ORD-002.docx` (40 706 bytes; asserted equal to the deterministic render of `TDD-ORD-002.md`) |
+
+### Gotchas found in this phase
+
+- **The reference look is Word's fallback, not a chosen font.** The manager's docx files (generated
+  with the `docx` npm library, creator "Un-named") define no `rPrDefault`, so Word renders Times New
+  Roman 10 pt. python-docx's default template pins Calibri 11 via theme fonts — the first export
+  looked visibly different in Word until `Normal`/`Heading n` were set to Times New Roman explicitly
+  and the theme font attributes removed.
+- **OOXML packages are not byte-stable by default.** python-docx and openpyxl stamp zip members with
+  the current time and openpyxl overwrites `dcterms:modified` on save; `docs_export/package.py`
+  re-zips with fixed timestamps so identical input → identical bytes (the bundle test relies on it).
+- **`Content-Disposition` must be CORS-exposed** (`expose_headers=["Content-Disposition"]`), or the
+  frontend's fetch cannot read the filename and falls back to `tdd.docx` — the first UI run saved
+  fallback names.
+- **Chrome's automation profile blocks rapid multi-file downloads** ("multiple downloads" permission);
+  the first click saved, later ones were silently dropped. Verified the rest through the API with the
+  same session cookie (`scratchpad/fetch_exports.py`), then opened them in Word/Excel.
+- **Word/Excel screenshots via COM** need `SetProcessDPIAware()` in the PowerShell process (125 % DPI:
+  window geometry is in points ÷ DPI, `CopyFromScreen` otherwise captures the top-left 80 %), and
+  `Shell.Application.MinimizeAll()` before activating the Office windows.
+- `pytest` collects imported classes named `Test*` — `TestCaseRow`/`TestCaseSummary` carry
+  `__test__ = False`.
+- Bash-tool heredocs still unescape `\n`, `\"` and backticks — patch scripts and doc edits went
+  through the Write tool.

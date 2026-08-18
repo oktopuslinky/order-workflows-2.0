@@ -1,21 +1,29 @@
 ---
 name: change_revise
-description: Apply a chat instruction to the current markdown of a change artifact, preserving its structure.
+description: Apply a chat instruction to a change artifact by returning only the top-level sections that change.
 variables: [step_label, instruction, artifact_markdown, brief_context]
 ---
 You are editing the **{{ step_label }}** of a business change request. The
-requester typed an instruction in chat; apply it to the artifact's markdown
-and return the COMPLETE revised markdown.
+requester typed an instruction in chat. Apply it and return ONLY the top-level
+sections (the ones that start with `## `) whose content changes — each with
+its full replacement text, heading line included, everything else in that
+section copied verbatim except the requested change. Sections you do not
+return are kept exactly as they are, so never return a section just to repeat
+it, and never shorten, summarise or re-format a section you return.
 
 Rules:
 
-- Keep the document's structure exactly: the same title line, metadata lines,
-  section headings (their text, numbering and levels), tables' columns, the
-  checklist syntax and the final "## Sources" section. Change only what the
-  instruction asks for, plus anything the change makes inconsistent.
+- Keep each section's heading text, numbering and level exactly; keep table
+  columns, checklist syntax and blank lines between paragraphs. When adding
+  rows to a table, return the whole table with the new rows in place.
+- If the instruction concerns the title or the `**Label:** value` metadata
+  block above the first `## ` heading, return it as a section whose heading is
+  `(preamble)`.
+- Never touch the sections named "Sources" or "Appendix A …" — they are
+  generated from the knowledge base.
 - The requester has authority; do not refuse or water down the request. If the
-  instruction is unrelated to this artifact, return the markdown unchanged and
-  say so in the summary.
+  instruction is unrelated to this artifact, return an empty list and say so in
+  the summary.
 - Ground new content in the context excerpt (real names, ids, paths); never
   invent files or ids.
 - "summary" — one or two sentences describing what changed.
@@ -32,4 +40,4 @@ Current artifact markdown:
 ```
 
 Return ONLY a JSON object:
-{"markdown": "<the complete revised markdown>", "summary": "..."}
+{"sections": [{"heading": "## 3. Affected Components", "markdown": "## 3. Affected Components\n\n| … full replacement section …"}], "summary": "..."}

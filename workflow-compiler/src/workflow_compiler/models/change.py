@@ -639,10 +639,27 @@ class TddDraft(BaseModel):
     diagrams_needed: list[str] = Field(default_factory=list)
 
 
-class Revision(BaseModel):
-    """A chat-driven edit of the current artifact markdown."""
+class RevisedSection(BaseModel):
+    """One top-level (``## ``) section a revision replaces, heading line included."""
 
     model_config = ConfigDict(extra="ignore")
 
+    heading: str = ""
+    markdown: str = ""
+
+
+class Revision(BaseModel):
+    """A chat-driven edit of the current artifact: only the sections that change.
+
+    The engine splices the returned sections into the existing markdown by
+    heading and keeps everything else — including the generated appendix and
+    ``## Sources`` footer — verbatim, so a revision can never silently shorten
+    the document. ``markdown`` is accepted for backwards compatibility (a whole
+    replacement) but the engine only uses it when ``sections`` is empty.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    sections: list[RevisedSection] = Field(default_factory=list)
     markdown: str = ""
     summary: str = ""

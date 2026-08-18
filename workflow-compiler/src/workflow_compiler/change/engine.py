@@ -46,6 +46,7 @@ from workflow_compiler.models.change import (
     ImpactDoc,
     ImpactTableRow,
     RequirementImpact,
+    RevisedSection,
     SourceRef,
     StepStatus,
     StoriesDoc,
@@ -616,10 +617,13 @@ class ChangeWizardEngine:
             instruction=instruction,
             brief_context=brief.text[:24_000],
         )
-        markdown = revision.markdown.strip()
-        if not markdown:
+        if revision.sections:
+            markdown = splice_sections(artifact.markdown, revision.sections)
+        else:
+            markdown = revision.markdown.strip()
+        if not markdown.strip():
             raise CompilationError("The model returned an empty revision.")
-        markdown = self._ensure_parses(step.kind, markdown + "\n")
+        markdown = self._ensure_parses(step.kind, markdown.rstrip() + "\n")
         summary = revision.summary.strip() or "Revised as instructed."
         if markdown.strip() == artifact.markdown.strip():
             step.say("assistant", summary, "status")
@@ -943,6 +947,84 @@ def _coverage_candidates(
         if len(out) >= limit:
             break
     return out
+
+
+#: Sections a revision may never replace: they are generated from the graph.
+_PROTECTED_HEADINGS = ("sources", "appendix a")
+
+
+def _split_h2(markdown: str) -> list[tuple[str, str]]:
+    """Split markdown into ``(heading_line, body)`` blocks; the first block is the preamble
+    (heading ``""``). Headings inside fenced code are not boundaries."""
+    blocks: list[tuple[str, list[str]]] = [("", [])]
+    in_fence = False
+    for line in markdown.replace("\r\n", "\n").split("\n"):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+        if not in_fence and line.startswith("## "):
+            blocks.append((line.rstrip(), []))
+        else:
+            blocks[-1][1].append(line)
+    return [(h, "\n".join(b)) for h, b in blocks]
+
+
+def _norm_heading(text: str) -> str:
+    return " ".join(text.strip().lstrip("#").strip().lower().split())
+
+
+def splice_sections(markdown: str, sections: Sequence[RevisedSection]) -> str:
+    """Replace whole ``## `` sections of ``markdown`` by heading; keep the rest verbatim.
+
+    A returned section whose heading matches nothing is inserted before the
+    ``## Sources`` footer (or appended). Protected sections (Sources, the
+    knowledge-graph appendix) are never replaced. ``(preamble)`` replaces the
+    title/metadata block above the first heading.
+    """
+    blocks = _split_h2(markdown)
+    replacements: dict[str, str] = {}
+    additions: list[str] = []
+    preamble: str | None = None
+    for section in sections:
+        body = section.markdown.replace("\r\n", "\n").strip("\n")
+        if not body.strip():
+            continue
+        head = _norm_heading(section.heading) or _norm_heading(body.split("\n", 1)[0])
+        if head in ("(preamble)", "preamble"):
+            preamble = body
+            continue
+        if any(head.startswith(p) for p in _PROTECTED_HEADINGS):
+            continue
+        # The heading line must be the first line of the replacement.
+        first = body.split("\n", 1)[0]
+        if not first.startswith("## "):
+            body = f"## {section.heading.strip().lstrip('#').strip()}\n\n{body}"
+        replacements[head] = body
+    out: list[str] = []
+    matched: set[str] = set()
+    for i, (heading, body) in enumerate(blocks):
+        if i == 0:
+            out.append(preamble if preamble is not None else body)
+            continue
+        key = _norm_heading(heading)
+        if key in replacements:
+            out.append(replacements[key])
+            matched.add(key)
+        else:
+            out.append(f"{heading}\n{body}")
+    for key, body in replacements.items():
+        if key not in matched:
+            additions.append(body)
+    if additions:
+        # Insert before Sources / Appendix when present, else append.
+        insert_at = len(out)
+        for i, chunk in enumerate(out):
+            head = _norm_heading(chunk.split("\n", 1)[0]) if chunk.startswith("## ") else ""
+            if head and any(head.startswith(p) for p in _PROTECTED_HEADINGS):
+                insert_at = i
+                break
+        out[insert_at:insert_at] = additions
+    text = "\n".join(part.rstrip("\n") + "\n" for part in out)
+    return text.rstrip() + "\n"
 
 
 def _first_line_with(text: str, needle: str, *, width: int = 220) -> str:

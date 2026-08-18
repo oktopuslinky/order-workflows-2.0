@@ -462,10 +462,15 @@ class ScriptedAnalyst(MockProvider):
                     break
             return schema.model_validate({"affected": rows})
         if name == "Revision":
-            marker = "## Revised at\n"
-            current = prompt.split("```markdown\n", 1)[1].rsplit("```", 1)[0]
-            revised = current.replace("## Sources", marker + "\n## Sources", 1)
-            return schema.model_validate({"markdown": revised, "summary": "Added a section."})
+            return schema.model_validate(
+                {
+                    "sections": [
+                        {"heading": "## Revised at", "markdown": "## Revised at\n\nAdded by chat."},
+                        {"heading": "## Sources", "markdown": "## Sources\n\nMUST NOT LAND"},
+                    ],
+                    "summary": "Added a section.",
+                }
+            )
         return schema.model_validate(self.by_schema[name])
 
 
@@ -628,6 +633,10 @@ async def test_full_wizard_flow_offline(
     assert cr.artifacts.tdd.version == 2
     assert cr.artifacts.tdd.history[-1].source == VersionSource.LLM_REVISION
     assert "## Revised at" in cr.artifacts.tdd.markdown
+    assert "MUST NOT LAND" not in cr.artifacts.tdd.markdown  # protected footer kept
+    assert cr.artifacts.tdd.markdown.index("## Revised at") < cr.artifacts.tdd.markdown.index(
+        "## Sources"
+    )
     cr = await service.approve(cr_id, "tdd")
     assert cr.wizard.complete and cr.stage == ChangeRequestStage.COMPLETE
     with pytest.raises(WizardStateError):
@@ -673,3 +682,31 @@ async def test_engine_brief_lists_sources_from_retrieval(
     assert brief.sources, "retrievals produce a sources list"
     assert all(s.path for s in brief.sources)
     assert "### Requirements" in brief.text and "BCR-01-03" in brief.text
+
+
+def test_splice_sections_replaces_by_heading_and_protects_footer() -> None:
+    from workflow_compiler.change.engine import splice_sections
+    from workflow_compiler.models.change import RevisedSection
+
+    md = render_impact(_impact_doc())
+    out = splice_sections(
+        md,
+        [
+            RevisedSection(
+                heading="## 6. Open Decisions", markdown="## 6. Open Decisions\n\n- [ ] Only one"
+            ),
+            RevisedSection(heading="## Sources", markdown="## Sources\n\nHACK"),
+            RevisedSection(
+                heading="(preamble)",
+                markdown="# Impact Analysis — BCR-001 — Renamed\n\n**Change Request:** BCR-001",
+            ),
+            RevisedSection(heading="## 7. Extra", markdown="## 7. Extra\n\nNew section."),
+        ],
+    )
+    doc = parse_impact(out)
+    assert doc.title == "Renamed" and doc.open_decisions == ["Only one"]
+    assert "HACK" not in out and doc.sources == _impact_doc().sources
+    headings = [ln for ln in out.splitlines() if ln.startswith("## ")]
+    appendix = "## Appendix A — Knowledge-graph traversal (deterministic)"
+    assert headings.index("## 7. Extra") < headings.index(appendix)
+    assert doc.affected == _impact_doc().affected  # untouched sections verbatim

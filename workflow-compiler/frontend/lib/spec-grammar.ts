@@ -66,7 +66,9 @@ export function parseQuestions(markdown: string): ParsedQuestion[] {
       answerLine,
       resolved: m[1].toLowerCase() === "x",
       ref: m[2] ?? null,
-      text: m[3] ?? "",
+      // changes.md renders a provenance marker after the question; it stays on
+      // the line (setQuestionAnswer re-emits m[3]) but is not part of the text.
+      text: (m[3] ?? "").replace(/\s\[(?:human|inferred)\]\s*$/, ""),
       answer,
     });
   }

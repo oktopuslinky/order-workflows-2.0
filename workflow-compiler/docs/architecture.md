@@ -307,6 +307,35 @@ frontend /changes"] --> svc
 
 See `docs/HOW_IT_WORKS.md` §8d.
 
+## Document export (`docs_export/`, phase 2 of the change pipeline)
+
+Deterministic projection of the parsed artifacts to Word / Excel in the reference template style
+(no LLM; identical input → identical bytes).
+
+```mermaid
+flowchart LR
+    md["Artifact markdown
+(source of truth)"] --> parse["change/parse.py
+ImpactDoc · EpicDoc · StoriesDoc · TddDoc"]
+    parse --> art["docs_export/artifacts.py
+per-kind layouts (digest §5)"]
+    art --> writer["DocxWriter
+(docx_writer.py + markdown_to_docx.py)"]
+    art --> xlsx["xlsx_writer.py
+Test Cases + Summary"]
+    kb["KgService.read_bytes
+(original TC matrix, optional)"] -.merge rows.-> xlsx
+    writer --> pkg["package.py
+fixed timestamps"]
+    xlsx --> pkg
+    pkg --> bundle["bundle.py → export.zip
+docx · xlsx · markdown/ · MANIFEST"]
+    api["GET …/artifacts/{kind}/export?format=
+GET …/export.zip · CLI cr export · UI Export buttons"] --> svc["ChangeRequestService.export / export_bundle"] --> art
+```
+
+See `docs/HOW_IT_WORKS.md` §8e.
+
 ## Request sequence (compile → approve)
 
 ```mermaid

@@ -138,7 +138,7 @@ def export_impact(doc: ImpactDoc, *, label: str = "", approved: bool = True) -> 
     writer = DocxWriter()
     writer.title(IMPACT_TITLE)
     writer.subtitle(_subtitle(" — ".join(p for p in (doc.cr_id, doc.title) if p), approved, label))
-    writer.blank()
+    writer.rule()
     for key, value in (
         ("Change Request", doc.cr_id),
         ("Target Workflow", doc.target_workflow),
@@ -148,7 +148,7 @@ def export_impact(doc: ImpactDoc, *, label: str = "", approved: bool = True) -> 
     ):
         if value:
             writer.meta(key, value)
-    writer.blank()
+    writer.rule()
     if doc.coverage_note:
         writer.note(doc.coverage_note)
     writer.heading("1. Change Summary", 1)
@@ -197,7 +197,7 @@ def export_epic(doc: EpicDoc, *, label: str = "", approved: bool = True) -> byte
     writer = DocxWriter()
     writer.title(doc.id or "EPIC")
     writer.subtitle(_subtitle(doc.title, approved, label))
-    writer.blank()
+    writer.rule()
     for key, value in (
         ("Epic Owner", doc.owner),
         ("Linked BRD", doc.linked_brd),
@@ -208,11 +208,15 @@ def export_epic(doc: EpicDoc, *, label: str = "", approved: bool = True) -> byte
     ):
         if value:
             writer.meta(key, value)
-    writer.blank()
+    writer.rule()
     if doc.coverage_note:
         writer.note(doc.coverage_note)
     writer.heading("Epic Statement", 1)
-    render_markdown(writer, doc.statement, heading_offset=1)
+    statement = doc.statement.strip()
+    if statement and "\n" not in statement and not statement.startswith(("-", "|", "```")):
+        writer.callout(statement)
+    else:
+        render_markdown(writer, doc.statement, heading_offset=1)
     writer.heading("Business Value", 1)
     _bullets(writer, doc.value)
     writer.heading("In-Scope Capabilities", 1)
@@ -277,7 +281,7 @@ def export_story(
     writer.title(f"{story.id}: {story.title}" if story.id else story.title)
     if not approved:
         writer.subtitle(label)
-    writer.blank()
+    writer.rule()
     epic = story.epic or epic_title
     for key, value in (
         ("Epic", epic),
@@ -288,7 +292,7 @@ def export_story(
     ):
         if value:
             writer.meta(key, value)
-    writer.blank()
+    writer.rule()
     writer.heading("Story", 2)
     for line in (story.as_a, story.i_want, story.so_that):
         if line:
@@ -342,7 +346,7 @@ def export_tdd(doc: TddDoc, *, label: str = "", approved: bool = True) -> bytes:
     writer = DocxWriter()
     writer.title(TDD_TITLE)
     writer.subtitle(_subtitle(doc.title, approved, label))
-    writer.blank()
+    writer.rule()
     for key, value in (
         ("Document ID", doc.id),
         ("Linked EPIC", doc.linked_epic),
@@ -354,7 +358,7 @@ def export_tdd(doc: TddDoc, *, label: str = "", approved: bool = True) -> bytes:
     ):
         if value:
             writer.meta(key, value)
-    writer.blank()
+    writer.rule()
     if doc.coverage_note:
         writer.note(doc.coverage_note)
     container_open = False

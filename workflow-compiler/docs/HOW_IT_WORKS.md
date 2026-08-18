@@ -1003,7 +1003,33 @@ change request (cloud Nemotron by default) and stored on its wizard.
 
 **Config.** `change_kg_budget` (9000 tokens of KG excerpts per brief). CLI: `cr create|list|show|
 draft [--auto]|approve|export|delete`; UI: **Changes** page (list + new) and the wizard page
-(stepper + chat on the left, artifact editor with versions / approve / Sources on the right).
+(stepper + chat on the left, artifact editor with versions / approve / Sources / Export on the
+right). Word/Excel export: §8e.
+
+## 8e. Document export (`docs_export/`) — Word / Excel in the reference template style
+
+Markdown stays the source of truth; `docs_export/` projects the **parsed** artifacts
+(`change/parse.py` → `ImpactDoc` / `EpicDoc` / `StoriesDoc` / `TddDoc`) into files that look like
+the manager's reference documents. It is 100 % deterministic — no model call, and identical
+input yields identical bytes (`docs_export/package.py` pins the OOXML timestamps), so exports can
+be cached, diffed and asserted in tests.
+
+| Module | Role |
+|---|---|
+| `docx_writer.py` | `DocxWriter` over python-docx: 22 pt bold `2F5496` title, 14 pt subtitle, thin rules around a bold `Label: value` block, Word *Heading 1/2/3*, *List Paragraph* `•` bullets and real `1.` numbering, tables with a `2F5496` header row (white bold, `tblHeader`) and `FFFFFF` body cells, `☑  `/`☐  ` checklists, Consolas `AA3377` inline code, boxed code blocks, a left-barred callout. Body font Times New Roman 10 pt (what Word renders for the reference files, whose styles carry no font defaults). |
+| `markdown_to_docx.py` | Converter for our artifact grammar (headings, paragraphs, bullets, `1.` lists, `- [ ]`/`- [x]`, pipe tables with `<br>`/`\|`, code fences, `> notes`, `**Label:** value`, inline `` `code` ``/`**bold**`/`*italic*`); used for free-text bodies and as a whole-document fallback. |
+| `xlsx_writer.py` | Test-case matrix: sheet **Test Cases** (`TC ID | Title | Preconditions | Steps | Expected Result | Type | Automated | Linked Story/Req | Notes`, Arial 10, `2F5496` header, frozen + autofilter) and **Summary** (title, Linked TDD/Epic/Automation, *Totals by Automation Status*, *Totals by Type* in the reference vocabulary order, Notes — totals are literal numbers). `read_test_case_rows` reads a matrix back. |
+| `artifacts.py` | Per-kind layouts: **Impact** (title "Impact Analysis", `BCR-001 — title` subtitle, numbered H1s, KG appendix + Sources annexes), **EPIC** (title `EPIC-002`, unnumbered H1s, callout statement, ☑/☐ DoD, tables), **User story** (one file per story: `US-00N: Title`, meta, Heading 2 only — Story with bold subject / Acceptance Criteria ☐ / Notes), **TDD** ("Technical Design Document (TDD)", `N. Title` H1s, `4.x` H2s, *Existing* / *Proposed* as Heading 3), **TC preview** (the impact analysis' affected test cases; when the knowledge base holds the original matrix its Title/Preconditions/Steps/Expected/Type/Automated are merged in and the change note appended — otherwise the Title carries the impact rationale). `export_artifact(cr, kind, "docx"|"md"|"xlsx")`. |
+| `bundle.py` | `export_change_request(cr) -> zip`: `Impact-Analysis-BCR-001.docx`, `EPIC-002-<slug>.docx`, one `US-00N-<slug>.docx` per story, `TDD-ORD-002-<slug>.docx`, `TC-preview-BCR-001.xlsx`, `markdown/*.md` sources, `MANIFEST.txt`. |
+
+**Approval labelling.** Every export carries an `Export:` metadata line — `Approved vN (date)` or
+`DRAFT vN — not approved` (drafts also say so in the subtitle and get a `-DRAFT` filename suffix);
+the bundle skips undrafted artifacts and lists them in the manifest. The stories artifact's
+`docx` export is a zip with one document per story, mirroring the reference layout.
+`ChangeRequestService.export` / `export_bundle` add the KB lookup for the TC preview
+(`KgService.read_bytes`); the CLI is `cr export <cr-id> <step> --format md|docx|xlsx [--out]` and
+`cr export <cr-id> --format zip`; the UI shows `.docx` / `.md` (/ `.xlsx`) buttons on the artifact
+panel and **Export all (.zip)** in the wizard header.
 
 ## 9. The three entry points (same engine, three faces)
 
@@ -1247,7 +1273,8 @@ reasoning models can also be slow; bump `--timeout` (e.g. `300.0`) to avoid
 | `cr create <kb-id> <bcr.docx|.md|.txt> [--title] [--provider] [--model]` | Register a change request against a knowledge base (metadata, requirements and impact seeds parsed deterministically). |
 | `cr list` / `cr show <cr-id>` | Change requests and their wizard/artifact state. |
 | `cr draft <cr-id> <impact|epic|stories|tdd> [--auto] [--out FILE]` | Draft one wizard step; `--auto` starts the wizard, drafts the questions, answers each with its first suggested option, then drafts. |
-| `cr approve <cr-id> <step>` / `cr export <cr-id> <step> [--version N] [--out FILE]` / `cr delete <cr-id>` | Approve (advances the wizard), print/save an artifact version, delete. |
+| `cr approve <cr-id> <step>` / `cr delete <cr-id>` | Approve (advances the wizard), delete. |
+| `cr export <cr-id> <step> [--format md\|docx\|xlsx] [--version N] [--out PATH]` / `cr export <cr-id> --format zip [--out PATH]` | Print/save an artifact — markdown (any version), Word (stories → zip of per-story docs), the affected-test-cases workbook (impact only) — or the whole change request as a zip. Deterministic; unapproved artifacts are labelled DRAFT. |
 | `kb list` / `kb show <kb-id>` | List; stats by type, catalog ids, warnings. |
 | `kb ask <kb-id> "<prompt>" [--budget] [--hops] [--json]` | Print the retrieved packet + sources with line spans. |
 | `kb impact <kb-id> <seed>… [--hops]` | Deterministic impact table. |
@@ -1363,6 +1390,8 @@ Knowledge bases (§8c). Uploading a corpus answers `202` with the knowledge base
 | GET    | `/change-requests/{id}/artifacts/{kind}` | `?version=`                                              | Artifact markdown (latest or a version) + history + sources + coverage. |
 | PUT    | `/change-requests/{id}/artifacts/{kind}` | `{markdown, note?}`                                      | Human edit → new `human_edit` version (400 if the structure is lost). |
 | POST   | `/change-requests/{id}/artifacts/{kind}/approve` | —                                                | Approve; the cursor advances and the next step's questions job starts. |
+| GET    | `/change-requests/{id}/artifacts/{kind}/export` | `?format=docx\|md\|xlsx`                          | Download the artifact as Word (stories: zip of per-story docs) / markdown / TC preview workbook (impact only). Deterministic; `Content-Disposition` names the file; DRAFT-labelled until approved. |
+| GET    | `/change-requests/{id}/export.zip`     | —                                                          | Every artifact as Word/Excel + `markdown/*.md` + `MANIFEST.txt`. |
 
 Project responses include `time_saved`: each pipeline step's measured wall-clock seconds
 (persisted per project as `stage_timings`) compared against configurable human-team estimates

@@ -429,6 +429,9 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # The export routes name the file in Content-Disposition; the browser
+        # only lets the frontend read it when it is explicitly exposed.
+        expose_headers=["Content-Disposition"],
     )
 
     # Background-run registry (validate/approve). One instance per app so tests

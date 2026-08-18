@@ -81,3 +81,23 @@ def test_tdd_fixture_has_existing_vs_proposed_per_section() -> None:
     assert "group" in saga.proposed.lower()
     assert "order-state-machine-partial-shipment.mmd" in " ".join(doc.diagrams_needed)
     assert render_tdd(parse_tdd(render_tdd(doc))) == render_tdd(doc)
+
+
+def test_tdd_docx_fixture_matches_markdown() -> None:
+    """The Phase 3 input ``TDD-ORD-002.docx`` is the deterministic export of the markdown."""
+    import io
+
+    from docx import Document
+
+    from workflow_compiler.change.parse import parse_tdd
+    from workflow_compiler.docs_export.artifacts import export_tdd
+
+    fixtures = Path(__file__).parent / "fixtures" / "change_artifacts"
+    markdown = (fixtures / "TDD-ORD-002.md").read_text(encoding="utf-8")
+    saved = (fixtures / "TDD-ORD-002.docx").read_bytes()
+    assert saved == export_tdd(parse_tdd(markdown), label="Approved v2 (2026-08-18)")
+    doc = Document(io.BytesIO(saved))
+    assert doc.paragraphs[0].text == "Technical Design Document (TDD)"
+    assert (
+        Path(__file__).parent.parent / "examples/change_requests/TDD-ORD-002.docx"
+    ).read_bytes() == saved

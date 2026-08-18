@@ -170,6 +170,7 @@ def write_test_case_matrix(rows: Iterable[TestCaseRow], summary: TestCaseSummary
             cell.alignment = Alignment(wrap_text=True, vertical="top")
             cell.border = border
     ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(TC_COLUMNS))}{max(1, len(rows) + 1)}"
 
     ss = wb.create_sheet("Summary")
     ss.column_dimensions["A"].width = 32

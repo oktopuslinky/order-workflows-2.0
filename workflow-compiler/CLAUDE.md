@@ -182,6 +182,17 @@ picture before changing pipeline behavior.
   artifact's `## Sources` footer). Long calls are `cr_questions`/`cr_draft`/`cr_revise` jobs
   (scope kind `change_request`); `answer` is synchronous. Store: `storage/change_store.py`.
 
+- **Document export is a deterministic projection (`docs_export/`).** Word/Excel files are
+  rendered from the *parsed* artifacts (`change/parse.py` docs — never re-parse markdown ad hoc)
+  by `docx_writer.py` / `xlsx_writer.py` / `artifacts.py` / `bundle.py` in the manager's
+  reference style (research digest §5; golden-structure tests encode it in
+  `tests/fixtures/change_artifacts/reference_headings.json`). No model call, and identical input
+  → identical bytes (`package.py` pins OOXML timestamps). Exports always state what they are
+  (`Approved vN` / `DRAFT vN — not approved`, `-DRAFT` filename suffix); the stories docx export is
+  a zip with one document per story; the TC preview merges the KB's original matrix rows when
+  present (`KgService.read_bytes`) and degrades to impact-only rows otherwise. Routes
+  `GET …/artifacts/{kind}/export?format=docx|md|xlsx`, `GET …/export.zip`; CLI `cr export`.
+
 - **HTTP auth + time-saved metric.** The API uses local accounts (`api/auth.py`: scrypt +
   HMAC-signed session cookie, users under `<state-root>/users/`); project routes require
   `get_current_user`, projects carry `owner_id` (recorded for attribution). By default

@@ -287,3 +287,11 @@ def test_export_routes(client: tuple[TestClient, str]) -> None:
         json={"email": "other@example.com", "password": "password123", "display_name": "O"},
     )
     assert c.get(f"{base}/export.zip").status_code in (200, 404)
+
+
+def test_export_filename_header_is_exposed_cross_origin(client: tuple[TestClient, str]) -> None:
+    c, _kb_id = client
+    response = c.get("/health", headers={"Origin": "http://127.0.0.1:3010"})
+    assert (
+        "content-disposition" in response.headers.get("access-control-expose-headers", "").lower()
+    )

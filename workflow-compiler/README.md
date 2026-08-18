@@ -136,7 +136,7 @@ workflow-compiler approve-spec <project-id> --spec-dir ./specs   # compile throu
 Generated bundles land under `./generated/<project-id>/<slug>/`. Other commands: `init` (write the
 `.env` configuration — see Install), `edit` (apply an edit-request document to a compiled project),
 `approve` / `reject` (manual override for a below-threshold graph), `show`, `models`, and
-`kb init|list|show|ask|impact|search|delete` (knowledge bases) and `cr create|list|show|draft|approve|export|delete` (change requests — see below). `workflow-compiler <command> --help` is the
+`kb init|list|show|ask|impact|search|delete` (knowledge bases) and `cr create|list|show|draft|approve|export [--format md|docx|xlsx|zip]|delete` (change requests — see below). `workflow-compiler <command> --help` is the
 authoritative flag reference; the full command guide is in
 [`docs/HOW_IT_WORKS.md` §9.2](docs/HOW_IT_WORKS.md).
 
@@ -177,6 +177,23 @@ workflow-compiler cr approve <cr-id> impact && workflow-compiler cr draft <cr-id
 ```
 
 Design and routes: [`docs/HOW_IT_WORKS.md` §8d / §9.3](docs/HOW_IT_WORKS.md).
+
+### Word / Excel export (business-change pipeline, phase 2)
+
+Every artifact exports as a Word document in the manager's template style (22 pt document-type
+title, metadata block, Heading 1/2, shaded tables, ☑/☐ checklists, Consolas code) — one file per
+user story — plus the impact analysis' affected test cases as a `TC-…xlsx` preview and the whole
+change request as a zip with the markdown sources. Exports are deterministic (no model call) and
+say what they are: `Approved vN` or `DRAFT vN — not approved`. Use the `.docx` / `.md` / `.xlsx`
+buttons on the wizard page, **Export all (.zip)**, or the CLI:
+
+```bash
+workflow-compiler cr export <cr-id> tdd --format docx --out TDD-ORD-002.docx   # the Phase 3 input
+workflow-compiler cr export <cr-id> impact --format xlsx                         # TC preview
+workflow-compiler cr export <cr-id> --format zip --out change-request.zip
+```
+
+The sample output for BCR-001 is `examples/change_requests/TDD-ORD-002.docx`.
 
 ### Running a generated bundle
 

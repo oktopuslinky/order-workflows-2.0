@@ -145,7 +145,8 @@ def test_markdown_blocks_and_render() -> None:
     texts = [p.text for p in doc.paragraphs]
     assert "A paragraph with code and bold." in texts
     assert "☐  open" in texts and "☑  done" in texts
-    assert "1.\tfirst" in texts
+    numbered = [p for p in doc.paragraphs if p.text in ("first", "second")]
+    assert len(numbered) == 2 and all(p._p.pPr.numPr is not None for p in numbered)
     assert "Label: value" in texts
     bullets = [p for p in doc.paragraphs if p.style.name == "List Paragraph"]
     assert [p.text for p in bullets][:2] == ["one", "two continued"]
@@ -346,7 +347,7 @@ def test_xlsx_matrix_round_trip_and_summary() -> None:
         and ws["A1"].font.bold
         and ws["A1"].font.color.rgb.endswith("FFFFFF")
     )
-    assert ws.freeze_panes == "A2"
+    assert ws.freeze_panes == "A2" and ws.auto_filter.ref == "A1:I4"
     assert [ws.cell(row=r, column=1).value for r in range(2, 5)] == ["TC-01", "TC-02", "TC-18"]
     ss = wb["Summary"]
     col_a = [ss.cell(row=r, column=1).value for r in range(1, ss.max_row + 1)]

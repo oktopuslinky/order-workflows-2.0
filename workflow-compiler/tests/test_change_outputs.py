@@ -698,3 +698,17 @@ def test_missing_imports_against_rewritten_siblings() -> None:
     }
     # imports from files that were not rewritten (or third parties) are not checked
     assert missing_imports("from src.shared.types import Nope\nimport temporalio\n", siblings, list(CORPUS_TEXTS)) == {}
+
+
+def test_dataclass_problems() -> None:
+    from workflow_compiler.change_outputs.code import dataclass_problems
+
+    bad = (
+        "from dataclasses import dataclass, field\n\n@dataclass\nclass D:\n    a: str\n"
+        "    b: str = field(default='')\n    c: str\n    a: str = ''\n"
+    )
+    problems = dataclass_problems(bad)
+    assert any("non-default field 'c'" in p for p in problems)
+    assert any("'a' is declared twice" in p for p in problems)
+    good = "from dataclasses import dataclass, field\n\n@dataclass\nclass D:\n    a: str\n    b: list = field(default_factory=list)\n"
+    assert dataclass_problems(good) == []

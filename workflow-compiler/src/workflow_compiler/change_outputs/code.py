@@ -574,3 +574,48 @@ def missing_imports(
         if missing:
             problems.setdefault(target, []).extend(missing)
     return problems
+
+
+# --------------------------------------------------------------------------- #
+# Dataclass sanity (import-time errors the syntax check cannot see)
+# --------------------------------------------------------------------------- #
+
+
+def _has_default(node: ast.AnnAssign) -> bool:
+    value = node.value
+    if value is None:
+        return False
+    if isinstance(value, ast.Call) and _unparse(value.func).endswith("field"):
+        return any(kw.arg in ("default", "default_factory") for kw in value.keywords)
+    return True
+
+
+def dataclass_problems(code: str) -> list[str]:
+    """Import-time dataclass errors: duplicate fields, non-default after default."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if not any("dataclass" in _unparse(d) for d in node.decorator_list):
+            continue
+        seen: set[str] = set()
+        defaulted = False
+        for item in node.body:
+            if not isinstance(item, ast.AnnAssign) or not isinstance(item.target, ast.Name):
+                continue
+            name = item.target.id
+            if name in seen:
+                problems.append(f"{node.name}: field {name!r} is declared twice")
+            seen.add(name)
+            if _has_default(item):
+                defaulted = True
+            elif defaulted:
+                problems.append(
+                    f"{node.name}: non-default field {name!r} follows a field with a default "
+                    "(TypeError at import) — give it a default or move it up"
+                )
+    return problems

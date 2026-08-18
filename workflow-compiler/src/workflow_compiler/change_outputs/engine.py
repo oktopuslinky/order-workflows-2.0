@@ -23,6 +23,7 @@ from workflow_compiler.agents.change_outputs import ChangeOutputsAgent
 from workflow_compiler.change_outputs.code import (
     auto_import,
     check_syntax,
+    dataclass_problems,
     exported_names,
     missing_imports,
     missing_symbols,
@@ -590,7 +591,10 @@ class ChangeOutputsEngine:
                 required = self._required_symbols(components)
                 missing = missing_symbols(code, required)
                 bad_imports = missing_imports(code, rewritten, list(texts))
-                if missing:
+                dc_problems = dataclass_problems(code)
+                if dc_problems:
+                    problem = "Dataclass errors:\n" + "\n".join(f"- {d}" for d in dc_problems)
+                elif missing:
                     problem = (
                         "The file must define / use these change-spec symbols but does not: "
                         + ", ".join(missing)

@@ -57,6 +57,7 @@ from workflow_compiler.models.change import (
     WizardQuestion,
     WizardQuestionStatus,
     WizardStep,
+    _now,
 )
 
 from . import ids as idmod
@@ -267,7 +268,7 @@ class ChangeWizardEngine:
             catalog = await self._kg.catalog(cr.kb_id)
             cr.ids = idmod.assign_ids(catalog, target_hint=cr.bcr_meta.target_workflow)
             cr.impact_table = await self._impact_rows(cr)
-            cr.wizard.started_at = cr.wizard.updated_at
+            cr.wizard.started_at = _now()
             cr.stage = ChangeRequestStage.IN_PROGRESS
             cr.touch()
         return cr
@@ -297,7 +298,7 @@ class ChangeWizardEngine:
             if q.question.strip()
         ]
         step.status = StepStatus.ASKING
-        step.started_at = step.started_at or cr.wizard.updated_at
+        step.started_at = step.started_at or _now()
         if step.questions:
             step.say(
                 "assistant",
@@ -403,7 +404,7 @@ class ChangeWizardEngine:
         artifact.sources = brief.sources
         artifact.coverage = brief.coverage
         step.status = StepStatus.DRAFTED
-        step.drafted_at = cr.wizard.updated_at
+        step.drafted_at = _now()
         step.say(
             "assistant", f"Drafted {STEP_LABELS[step.kind]} v{artifact.version}: {note}", "draft"
         )
@@ -664,9 +665,9 @@ class ChangeWizardEngine:
         if index > cr.wizard.cursor:
             self._check_reachable(cr, step)
         artifact.status = ArtifactStatus.APPROVED
-        artifact.approved_at = cr.wizard.updated_at
+        artifact.approved_at = _now()
         step.status = StepStatus.APPROVED
-        step.approved_at = cr.wizard.updated_at
+        step.approved_at = _now()
         step.say("user", f"Approved v{artifact.version}.", "approve")
         if index == cr.wizard.cursor:
             cr.wizard.cursor = index + 1

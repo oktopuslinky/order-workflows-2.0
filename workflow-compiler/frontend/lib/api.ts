@@ -2,6 +2,11 @@
 // The browser talks to the origin directly (CORS is enabled server-side).
 
 import type {
+  ArtifactResponse,
+  ChangeRequestListResponse,
+  ChangeRequestResponse,
+  ChangeRequestSummary,
+  ChangeStepKind,
   CvpaPreviewResponse,
   DialogueResponse,
   SpecChatResponse,
@@ -417,6 +422,95 @@ export const api = {
     request<KbGraphSummaryResponse>(
       `/knowledge-bases/${encodeURIComponent(id)}/graph/summary?top=${top}`,
     ).then((r) => r.summary),
+
+  // ---- change requests --------------------------------------------------- //
+  // A BCR document grounded in a knowledge base, walked through the wizard
+  // (impact → epic → stories → tdd). Slow steps run as cr_* jobs; answers are
+  // synchronous LLM calls.
+  listChangeRequests: () =>
+    request<ChangeRequestListResponse>("/change-requests").then(
+      (r): ChangeRequestSummary[] => r.change_requests,
+    ),
+  getChangeRequest: (id: string) =>
+    request<ChangeRequestResponse>(`/change-requests/${encodeURIComponent(id)}`),
+  createChangeRequest: (opts: {
+    kbId: string;
+    file?: File | null;
+    text?: string;
+    title?: string;
+    provider?: string;
+    model?: string;
+  }) => {
+    const form = new FormData();
+    form.append("kb_id", opts.kbId);
+    if (opts.file) form.append("file", opts.file);
+    else if (opts.text) form.append("text", opts.text);
+    if (opts.title) form.append("title", opts.title);
+    if (opts.provider) form.append("provider", opts.provider);
+    if (opts.model) form.append("model", opts.model);
+    return request<ChangeRequestResponse>("/change-requests", { method: "POST", body: form });
+  },
+  deleteChangeRequest: (id: string) =>
+    request<{ status: string }>(`/change-requests/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  startChangeWizard: (id: string, body: { provider?: string; model?: string } = {}) =>
+    request<ChangeRequestResponse>(
+      `/change-requests/${encodeURIComponent(id)}/wizard/start`,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) },
+    ),
+  answerChangeWizard: (id: string, answer: string, option?: string | null) =>
+    request<ChangeRequestResponse>(
+      `/change-requests/${encodeURIComponent(id)}/wizard/answer`,
+      {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ answer, option: option ?? null }),
+      },
+    ),
+  skipChangeWizard: (id: string) =>
+    request<ChangeRequestResponse>(
+      `/change-requests/${encodeURIComponent(id)}/wizard/skip`,
+      { method: "POST" },
+    ),
+  draftChangeWizard: (id: string, step?: ChangeStepKind) =>
+    request<ChangeRequestResponse>(
+      `/change-requests/${encodeURIComponent(id)}/wizard/draft`,
+      {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ step: step ?? null }),
+      },
+    ),
+  reviseChangeWizard: (id: string, step: ChangeStepKind, message: string) =>
+    request<ChangeRequestResponse>(
+      `/change-requests/${encodeURIComponent(id)}/wizard/revise`,
+      {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ step, message }),
+      },
+    ),
+  getChangeArtifact: (id: string, kind: ChangeStepKind, version?: number) =>
+    request<ArtifactResponse>(
+      `/change-requests/${encodeURIComponent(id)}/artifacts/${kind}${
+        version !== undefined ? `?version=${version}` : ""
+      }`,
+    ),
+  updateChangeArtifact: (id: string, kind: ChangeStepKind, markdown: string, note?: string) =>
+    request<ArtifactResponse>(
+      `/change-requests/${encodeURIComponent(id)}/artifacts/${kind}`,
+      {
+        method: "PUT",
+        headers: jsonHeaders,
+        body: JSON.stringify({ markdown, note: note ?? null }),
+      },
+    ),
+  approveChangeArtifact: (id: string, kind: ChangeStepKind) =>
+    request<ChangeRequestResponse>(
+      `/change-requests/${encodeURIComponent(id)}/artifacts/${kind}/approve`,
+      { method: "POST" },
+    ),
 
   getJob: (jobId: string) => request<Job>(`/jobs/${encodeURIComponent(jobId)}`),
 

@@ -53,6 +53,7 @@ export default function RootLayout({
             <nav className="ml-auto flex items-center gap-1 text-sm">
               <NavLink href="/">Projects</NavLink>
               <NavLink href="/knowledge">Knowledge</NavLink>
+              <NavLink href="/changes">Changes</NavLink>
               <NavLink href="/guide">Guide</NavLink>
               <ThemeToggle />
               <UserMenu />

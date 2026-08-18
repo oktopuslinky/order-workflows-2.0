@@ -360,10 +360,17 @@ export interface CvpaPreviewResponse {
   diagram: string;
 }
 
-export type JobKind = "validate" | "approve" | "predraft" | "kb_ingest";
+export type JobKind =
+  | "validate"
+  | "approve"
+  | "predraft"
+  | "kb_ingest"
+  | "cr_questions"
+  | "cr_draft"
+  | "cr_revise";
 export type JobStatus = "running" | "succeeded" | "failed" | "canceled";
-/** What a job belongs to: a project, or a knowledge base (kb_ingest). */
-export type JobScopeKind = "project" | "knowledge_base";
+/** What a job belongs to: a project, a knowledge base (kb_ingest), or a change request (cr_*). */
+export type JobScopeKind = "project" | "knowledge_base" | "change_request";
 
 export interface JobProgress {
   message: string;
@@ -685,4 +692,180 @@ export interface KbGraphSummary {
 export interface KbGraphSummaryResponse {
   kb_id: string;
   summary: KbGraphSummary;
+}
+
+// ---------------------------------------------------------------- change requests
+
+export type ChangeStepKind = "impact" | "epic" | "stories" | "tdd";
+export type ChangeStage = "created" | "in_progress" | "complete";
+export type WizardStepStatus = "pending" | "asking" | "drafting" | "drafted" | "approved";
+export type ArtifactStatus = "empty" | "drafted" | "approved";
+export type ArtifactSource = "llm_draft" | "llm_revision" | "human_edit";
+
+export interface ChangeRequestSummary {
+  cr_id: string;
+  kb_id: string;
+  kb_name: string;
+  title: string;
+  doc_id: string;
+  stage: ChangeStage;
+  cursor: number;
+  current_step: ChangeStepKind | null;
+  owner_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChangeRequestListResponse {
+  change_requests: ChangeRequestSummary[];
+}
+
+export interface BcrMeta {
+  doc_id: string;
+  status: string;
+  requested_by: string;
+  date_raised: string;
+  target_workflow: string;
+}
+
+export interface CrRequirement {
+  id: string;
+  text: string;
+}
+
+export interface CrImpactRow {
+  node_id: string;
+  type: string;
+  name: string;
+  path: string | null;
+  hops: number;
+  via: string;
+}
+
+export interface CrIds {
+  epic_id: string | null;
+  story_ids: string[];
+  tdd_id: string | null;
+  next_test_case: string | null;
+  prior_epic_id: string | null;
+  prior_tdd_id: string | null;
+}
+
+export interface WizardQuestion {
+  question_id: string;
+  text: string;
+  why: string;
+  options: SuggestedOption[];
+  status: "pending" | "answered" | "skipped";
+  answer: string | null;
+  chosen_option: string | null;
+  followups: string[];
+  followup_options: SuggestedOption[];
+  note: string | null;
+}
+
+export type ChatTurnKind =
+  | "question"
+  | "answer"
+  | "followup"
+  | "note"
+  | "draft"
+  | "revision"
+  | "edit"
+  | "approve"
+  | "status"
+  | "message";
+
+export interface ChatTurn {
+  role: "assistant" | "user" | "system";
+  text: string;
+  kind: ChatTurnKind;
+  at: string;
+}
+
+export interface WizardStep {
+  kind: ChangeStepKind;
+  status: WizardStepStatus;
+  questions: WizardQuestion[];
+  notes: string[];
+  turns: ChatTurn[];
+  error: string | null;
+  started_at: string | null;
+  drafted_at: string | null;
+  approved_at: string | null;
+}
+
+export interface WizardState {
+  steps: WizardStep[];
+  cursor: number;
+  provider: string | null;
+  model: string | null;
+  started_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ArtifactVersion {
+  version: number;
+  markdown: string;
+  source: ArtifactSource;
+  note: string | null;
+  at: string;
+}
+
+export interface SourceRef {
+  path: string;
+  spans: [number, number][];
+}
+
+export interface Artifact {
+  kind: ChangeStepKind;
+  markdown: string;
+  version: number;
+  status: ArtifactStatus;
+  history: ArtifactVersion[];
+  sources: SourceRef[];
+  coverage: number | null;
+  approved_at: string | null;
+}
+
+export interface ChangeRequest {
+  cr_id: string;
+  kb_id: string;
+  kb_name: string;
+  owner_id: string | null;
+  title: string;
+  document_text: string;
+  source_filename: string | null;
+  bcr_meta: BcrMeta;
+  requirements: CrRequirement[];
+  impact_seed_terms: string[];
+  impact_table: CrImpactRow[];
+  ids: CrIds;
+  wizard: WizardState;
+  artifacts: Record<ChangeStepKind, Artifact>;
+  project_ids: string[];
+  stage: ChangeStage;
+  warnings: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChangeRequestResponse {
+  change_request: ChangeRequest;
+  current_step: ChangeStepKind | null;
+  question: string | null;
+  question_options: SuggestedOption[];
+  job: Job | null;
+}
+
+export interface ArtifactResponse {
+  cr_id: string;
+  kind: ChangeStepKind;
+  version: number;
+  status: ArtifactStatus;
+  markdown: string;
+  requested_version: number | null;
+  history: ArtifactVersion[];
+  sources: SourceRef[];
+  coverage: number | null;
 }

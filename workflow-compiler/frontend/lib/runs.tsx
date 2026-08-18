@@ -44,6 +44,8 @@ interface RunsContextValue {
   isRunning: (projectId: string) => boolean;
   /** The most recent ingest job for a knowledge base (active preferred). */
   jobForKnowledgeBase: (kbId: string) => Job | undefined;
+  /** The most recent wizard job for a change request (active preferred). */
+  jobForChangeRequest: (crId: string) => Job | undefined;
   /** Start a run; resolves to the created Job, rejects on 409/other errors. */
   start: (projectId: string, body: JobStartBody) => Promise<Job>;
   /** Cancel a run; the project is left exactly as it was. */
@@ -57,6 +59,15 @@ const KIND_LABEL: Record<JobKind, string> = {
   approve: "Approval",
   predraft: "Question drafting",
   kb_ingest: "Knowledge-base indexing",
+  cr_questions: "Drafting questions",
+  cr_draft: "Drafting artifact",
+  cr_revise: "Revising artifact",
+};
+
+const CR_SUCCESS: Partial<Record<JobKind, string>> = {
+  cr_questions: "Change request: questions are ready.",
+  cr_draft: "Change request: artifact drafted.",
+  cr_revise: "Change request: artifact revised.",
 };
 
 const TERMINAL: ReadonlySet<JobStatus> = new Set([
@@ -107,11 +118,20 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
       seen.current.set(job.job_id, job.status);
       if (prev === job.status || !TERMINAL.has(job.status)) continue;
       const isKb = job.scope_kind === "knowledge_base";
-      const href = isKb ? `/knowledge/${job.scope_id}` : `/projects/${job.project_id}`;
+      const isCr = job.scope_kind === "change_request";
+      const href = isKb
+        ? `/knowledge/${job.scope_id}`
+        : isCr
+          ? `/changes/${job.scope_id}`
+          : `/projects/${job.project_id}`;
       const refresh = () => {
         if (isKb) {
           queryClient.invalidateQueries({ queryKey: ["knowledge-base", job.scope_id] });
           queryClient.invalidateQueries({ queryKey: ["knowledge-bases"] });
+        } else if (isCr) {
+          queryClient.invalidateQueries({ queryKey: ["change-request", job.scope_id] });
+          queryClient.invalidateQueries({ queryKey: ["change-artifact", job.scope_id] });
+          queryClient.invalidateQueries({ queryKey: ["change-requests"] });
         } else {
           queryClient.invalidateQueries({ queryKey: ["project", job.project_id] });
           queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -135,7 +155,9 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
           href,
           message: isKb
             ? "Knowledge base indexed and ready."
-            : job.kind === "approve"
+            : isCr
+              ? (CR_SUCCESS[job.kind] ?? `${label} complete.`)
+              : job.kind === "approve"
               ? "Approval complete — code generated."
               : "Validation complete.",
         });
@@ -180,7 +202,7 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
     jobs,
     jobForProject: (projectId) => {
       const forProject = jobs.filter(
-        (j) => j.scope_kind !== "knowledge_base" && j.project_id === projectId,
+        (j) => j.scope_kind === "project" && j.project_id === projectId,
       );
       return (
         forProject.find((j) => j.status === "running") ?? forProject[0] ?? undefined
@@ -189,7 +211,7 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
     isRunning: (projectId) =>
       jobs.some(
         (j) =>
-          j.scope_kind !== "knowledge_base" &&
+          j.scope_kind === "project" &&
           j.project_id === projectId &&
           j.status === "running",
       ),
@@ -198,6 +220,12 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
         (j) => j.scope_kind === "knowledge_base" && j.scope_id === kbId,
       );
       return forKb.find((j) => j.status === "running") ?? forKb[0] ?? undefined;
+    },
+    jobForChangeRequest: (crId) => {
+      const forCr = jobs.filter(
+        (j) => j.scope_kind === "change_request" && j.scope_id === crId,
+      );
+      return forCr.find((j) => j.status === "running") ?? forCr[0] ?? undefined;
     },
     start: (projectId, body) =>
       startMutation.mutateAsync({ projectId, body }),

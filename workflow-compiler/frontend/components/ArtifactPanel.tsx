@@ -8,6 +8,7 @@ import { fmtRelative } from "@/lib/format";
 import { SpecEditor } from "@/components/SpecEditor";
 import { SpecPreview } from "@/components/SpecPreview";
 import { STEP_LABEL } from "@/components/ChangeStagePill";
+import { ArtifactExportButtons } from "@/components/ExportButtons";
 import type {
   Artifact,
   ArtifactResponse,
@@ -237,6 +238,12 @@ export function ArtifactPanel({
               )}
             </div>
           </div>
+
+          {mode === "preview" && (
+            <div className="mt-2">
+              <ArtifactExportButtons crId={crId} kind={kind} approved={approved} disabled={busy} />
+            </div>
+          )}
 
           {error && (
             <p className="tone-block mt-2 rounded-md border px-2.5 py-2 text-xs">{error}</p>

@@ -9,6 +9,7 @@ import { fmtRelative } from "@/lib/format";
 import { useRuns } from "@/lib/runs";
 import type { ChangeRequestResponse, ChangeStepKind } from "@/lib/types";
 import { ArtifactPanel } from "@/components/ArtifactPanel";
+import { ExportAllButton } from "@/components/ExportButtons";
 import { ChangeChat } from "@/components/ChangeChat";
 import { ChangeStagePill, STEP_LABEL, STEP_ORDER } from "@/components/ChangeStagePill";
 import { ChangeStepper } from "@/components/ChangeStepper";
@@ -173,6 +174,9 @@ export default function ChangeRequestPage() {
           >
             {showDoc ? "Hide document" : "Show document"}
           </button>
+          {cr.wizard.steps.some((s) => s.status === "drafted" || s.status === "approved") && (
+            <ExportAllButton crId={id} disabled={running} />
+          )}
           <button
             type="button"
             className="btn btn-danger text-xs"

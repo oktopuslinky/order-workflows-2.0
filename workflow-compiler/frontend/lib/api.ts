@@ -78,6 +78,40 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/** A downloaded file (Word / Excel / markdown / zip export). */
+export interface Download {
+  blob: Blob;
+  filename: string;
+}
+
+/** Like `request` but returns the body as a Blob plus the server's filename. */
+async function download(path: string, fallback: string): Promise<Download> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { credentials: "include" });
+  } catch {
+    throw new ApiError(0, `Cannot reach the backend at ${API_BASE}.`);
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, await extractDetail(response));
+  }
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const match = /filename="([^"]+)"/.exec(disposition);
+  return { blob: await response.blob(), filename: match ? match[1] : fallback };
+}
+
+/** Hand a downloaded file to the browser's save dialog. */
+export function saveDownload({ blob, filename }: Download): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function extractDetail(response: Response): Promise<string> {
   try {
     const body = await response.json();
@@ -511,6 +545,16 @@ export const api = {
       `/change-requests/${encodeURIComponent(id)}/artifacts/${kind}/approve`,
       { method: "POST" },
     ),
+  /** Deterministic export of one artifact: Word (stories → zip of per-story docs),
+   *  markdown, or the affected-test-cases preview workbook (impact only). */
+  exportChangeArtifact: (id: string, kind: ChangeStepKind, format: "docx" | "md" | "xlsx") =>
+    download(
+      `/change-requests/${encodeURIComponent(id)}/artifacts/${kind}/export?format=${format}`,
+      `${kind}.${format}`,
+    ),
+  /** Every artifact + markdown sources + manifest as one zip. */
+  exportChangeRequestZip: (id: string) =>
+    download(`/change-requests/${encodeURIComponent(id)}/export.zip`, "change-request.zip"),
 
   getJob: (jobId: string) => request<Job>(`/jobs/${encodeURIComponent(jobId)}`),
 

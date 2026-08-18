@@ -10,6 +10,7 @@ const TOC = [
   ["grammar", "Grammar rules"],
   ["reference", "Section reference"],
   ["findings", "Findings"],
+  ["changes", "changes.md"],
 ] as const;
 
 export default function GuidePage() {
@@ -229,6 +230,53 @@ export default function GuidePage() {
             <strong>Approve</strong> opens the Results tab: per-workflow diagram,
             CVPA table, generated files, and Download&nbsp;.zip.
           </p>
+        </Section>
+
+        {/* changes.md */}
+        <Section id="changes" title="changes.md — the change spec">
+          <p>
+            A project compiled <strong>with a knowledge base</strong> (home page →{" "}
+            <em>Ground with knowledge base</em>, or a change request&apos;s{" "}
+            <em>Send to workflow GUI</em>) gets a second kind of file next to the
+            workflow specs: <code>changes.md</code>, one block per component of the
+            existing code base that the design changes, each with what exists today
+            and what is proposed. It goes through the same Save ⇄ Validate ⇄ Resolve
+            ⇄ Approve gate.
+          </p>
+          <pre className="snippet mt-4">
+            <code>{`### provision_order — activity, modify [inferred]
+- path: \`fn:existing_Codebase/activities/order_activities.py:provision_order\`
+- requirements: BCR-01-02, BCR-01-03
+
+#### Existing
+Provisions the whole order and returns one ProvisioningResult.
+
+#### Proposed
+Takes a shipment group and returns one result per group; …`}</code>
+          </pre>
+          <ul className="mt-4 list-disc space-y-1.5 pl-5">
+            <li>
+              Heading: <code>### name — kind, change_type</code> — kind is{" "}
+              <code>module | activity | workflow | type | signal | query | test | diagram | doc</code>,
+              change_type is <code>modify | add | remove | verify</code>. Keep the heading of an
+              existing entry so your edit lands on the right component; a new heading is recorded
+              as human-provided; a deleted heading removes the component.
+            </li>
+            <li>
+              <code>- path:</code> a knowledge-graph node id or corpus path (empty for something
+              new); <code>- requirements:</code> the change request&apos;s requirement ids.
+            </li>
+            <li>
+              <code>#### Existing</code> / <code>#### Proposed</code> are free text.{" "}
+              <strong>An empty Proposed is a BLOCK.</strong> A path the knowledge base does not
+              know, or a requirement id the change request does not declare, is a WARN with
+              suggestions.
+            </li>
+            <li>
+              <em>Grounding</em> and <em>Sources</em> are read-only; Assumptions and Open
+              Questions work exactly like a workflow spec&apos;s.
+            </li>
+          </ul>
         </Section>
       </div>
     </div>

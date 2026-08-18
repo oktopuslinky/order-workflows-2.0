@@ -26,12 +26,14 @@ import {
   TriggerCards,
   ValidateDiff,
 } from "@/components/StructuredWidgets";
-import type {
-  CompilationProject,
-  EditRecord,
-  ProjectResponse,
-  ProjectStage,
-  ResolvedEdit,
+import {
+  CHANGES_FILENAME,
+  CHANGES_SLUG,
+  type CompilationProject,
+  type EditRecord,
+  type ProjectResponse,
+  type ProjectStage,
+  type ResolvedEdit,
 } from "@/lib/types";
 
 const VALIDATED_STAGES: ProjectStage[] = [
@@ -190,6 +192,100 @@ function ProjectIdentity({
   );
 }
 
+/** "Grounded by <KB> · from <CR>" — the visible provenance of a KG-grounded project. */
+function GroundingBadge({ project }: { project: CompilationProject }) {
+  const grounding = project.grounding;
+  if (!project.kb_id || !grounding) return null;
+  const sources = grounding.sources.length;
+  return (
+    <span
+      className="pill tone-accent flex max-w-[28rem] items-center gap-1 truncate"
+      title={[
+        `Grounded by knowledge base ${grounding.kb_name || project.kb_id}`,
+        grounding.change_request_title ? `from change request ${grounding.change_request_title}` : "",
+        sources ? `${sources} corpus source span${sources === 1 ? "" : "s"}` : "",
+        grounding.coverage !== null ? `retrieval coverage ${Math.round(grounding.coverage * 100)}%` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+    >
+      Grounded by{" "}
+      <Link href={`/knowledge/${project.kb_id}`} className="underline-offset-2 hover:underline">
+        {grounding.kb_name || project.kb_id.slice(0, 8)}
+      </Link>
+      {project.change_request_id && (
+        <>
+          {" · from "}
+          <Link
+            href={`/changes/${project.change_request_id}`}
+            className="truncate underline-offset-2 hover:underline"
+          >
+            {grounding.change_request_title || project.change_request_id.slice(0, 8)}
+          </Link>
+        </>
+      )}
+      {grounding.low_confidence && (
+        <span title="Some retrievals reported low confidence — check the Sources in changes.md">
+          ⚠
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Compact read-only view of the change spec, next to changes.md's findings. */
+function ChangeSpecSummary({ project }: { project: CompilationProject }) {
+  const spec = project.change_spec;
+  if (!spec) return null;
+  const counts: Record<string, number> = {};
+  for (const c of spec.components) counts[c.change_type] = (counts[c.change_type] ?? 0) + 1;
+  return (
+    <div className="card p-3 text-xs">
+      <p className="eyebrow mb-2">Change spec · v{spec.version}</p>
+      <p className="mb-2 text-[var(--muted)]">
+        {spec.components.length} component change{spec.components.length === 1 ? "" : "s"}
+        {Object.keys(counts).length > 0 && (
+          <> — {Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ")}</>
+        )}
+      </p>
+      <ul className="max-h-64 space-y-1 overflow-auto">
+        {spec.components.map((c) => (
+          <li key={`${c.kind}:${c.name}`} className="flex items-baseline gap-1.5">
+            <span
+              className={`pill shrink-0 text-[10px] ${
+                c.change_type === "add"
+                  ? "tone-pass"
+                  : c.change_type === "remove"
+                    ? "tone-block"
+                    : c.change_type === "verify"
+                      ? "tone-info"
+                      : "tone-gate"
+              }`}
+            >
+              {c.change_type}
+            </span>
+            <span className="truncate font-mono" title={c.path || c.name}>
+              {c.name}
+            </span>
+            <span className="shrink-0 text-[var(--faint)]">{c.kind}</span>
+            {!c.proposed.trim() && (
+              <span className="shrink-0 text-[var(--block)]" title="No proposed change — blocking">
+                empty
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {spec.sources.length > 0 && (
+        <p className="mt-2 text-[var(--faint)]">
+          Grounded on {spec.sources.length} corpus span{spec.sources.length === 1 ? "" : "s"} (see
+          Sources at the end of the file).
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Workspace({
   data,
   onServerUpdate,
@@ -199,6 +295,8 @@ function Workspace({
 }) {
   const proj = data.project;
   const slugs = proj.specs.map((s) => s.slug);
+  const hasChanges = Boolean(proj.change_spec) && CHANGES_SLUG in data.spec_markdown;
+  const isChanges = (slug: string) => slug === CHANGES_SLUG;
 
   // Background validate/approve runs live in the global RunsProvider, so a run
   // this page started keeps going after the user navigates home and back.
@@ -393,6 +491,7 @@ function Workspace({
         <span className={`pill ${STAGE_TONE[proj.stage]}`}>
           {STAGE_LABEL[proj.stage]}
         </span>
+        <GroundingBadge project={proj} />
         {blockingCount > 0 && (
           <span className="pill tone-block">{blockingCount} blocking</span>
         )}
@@ -609,6 +708,34 @@ function Workspace({
                 </button>
               );
             })}
+            {hasChanges && (
+              <>
+                <p className="eyebrow mt-3 px-1 py-1">Change spec</p>
+                {(() => {
+                  const fc = (proj.validation_findings[CHANGES_SLUG] ?? []).filter(
+                    (f) => f.severity === "blocking",
+                  ).length;
+                  return (
+                    <button
+                      onClick={() => setActive(CHANGES_SLUG)}
+                      title="Existing vs. proposed per component, extracted from the design document and grounded in the knowledge base"
+                      className={`mb-1 flex w-full cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-left text-xs transition ${
+                        active === CHANGES_SLUG
+                          ? "bg-[var(--accent-soft)] font-medium text-[var(--accent)]"
+                          : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--ink)]"
+                      }`}
+                    >
+                      <span className="truncate font-mono">{CHANGES_FILENAME}</span>
+                      {fc > 0 && (
+                        <span className="ml-1 rounded-full bg-[var(--block)] px-1 text-[10px] text-white">
+                          {fc}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })()}
+              </>
+            )}
             {proj.warnings.length > 0 && (
               <div className="tone-gate mt-3 rounded-lg border p-2 text-[11px]">
                 {proj.warnings.map((w, i) => (
@@ -647,16 +774,27 @@ function Workspace({
               {viewMode === "preview" ? (
                 <SpecPreview markdown={md} />
               ) : viewMode === "diagram" ? (
-                <DiagramPanel
-                  source={data.diagrams[active] ?? ""}
-                  slug={active}
-                  stale={dirty}
-                  onClassify={() =>
-                    api.classifyCvpa(proj.project_id, active).then((r) => r.diagram)
-                  }
-                />
+                isChanges(active) ? (
+                  <p className="p-4 text-sm text-[var(--muted)]">
+                    The change spec has no graph of its own — pick a workflow to see its
+                    diagram. The updated system diagrams are produced after approval.
+                  </p>
+                ) : (
+                  <DiagramPanel
+                    source={data.diagrams[active] ?? ""}
+                    slug={active}
+                    stale={dirty}
+                    onClassify={() =>
+                      api.classifyCvpa(proj.project_id, active).then((r) => r.diagram)
+                    }
+                  />
+                )
               ) : (
-                <SpecEditor value={md} onChange={updateActive} />
+                <SpecEditor
+                  value={md}
+                  onChange={updateActive}
+                  grammar={isChanges(active) ? "changes" : "spec"}
+                />
               )}
             </div>
           </section>
@@ -667,10 +805,15 @@ function Workspace({
               <h3 className="eyebrow mb-2">Findings</h3>
               <FindingsPanel findings={findings} />
             </div>
+            {isChanges(active) && <ChangeSpecSummary project={proj} />}
             <OpenQuestions markdown={md} onChange={updateActive} />
-            <DependencyChecklist markdown={md} onChange={updateActive} />
-            <TriggerCards markdown={md} onChange={updateActive} />
-            <EventKindEditor markdown={md} onChange={updateActive} />
+            {!isChanges(active) && (
+              <>
+                <DependencyChecklist markdown={md} onChange={updateActive} />
+                <TriggerCards markdown={md} onChange={updateActive} />
+                <EventKindEditor markdown={md} onChange={updateActive} />
+              </>
+            )}
             <ValidateDiff
               before={preValidate[active] ?? ""}
               after={postValidate[active] ?? ""}

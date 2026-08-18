@@ -202,3 +202,70 @@ so anything you can do in a widget you can also type by hand:
 
 When you’re happy and BLOCK count is 0 (or overrides are ticked), **Approve** → the **Results** tab
 shows the per-workflow diagram, CVPA table, generated files, and a **Download .zip**.
+
+---
+
+## `changes.md` — the change spec of a knowledge-graph-grounded project
+
+When a project is compiled **with a knowledge base** (home page → *Ground with knowledge base*, or
+a change request’s **Send to workflow GUI**), the Spec tab gets a second kind of file next to the
+workflow specs: `changes.md`, the **change spec** — one block per component of the existing code
+base that the design document changes, each with what exists today and what is proposed. It goes
+through the same Save ⇄ Validate ⇄ Resolve ⇄ Approve gate; the header shows *Grounded by ‹KB› ·
+from ‹change request›*.
+
+```
+# Change Spec
+
+## Grounding                      ← read-only (knowledge base, change request, version)
+- knowledge base: Order lifecycle (`86d9…`)
+- change request: BCR-001 … (`dfad…`)
+- version: 1
+
+## Components
+### provision_order — activity, modify [inferred]
+- path: `fn:existing_Codebase/activities/order_activities.py:provision_order`
+- requirements: BCR-01-02, BCR-01-03
+
+#### Existing
+Provisions the whole order and returns one ProvisioningResult.
+
+#### Proposed
+Takes a shipment group and returns one result per group; …
+
+## Assumptions
+- Groups are decided at capture time. [inferred]
+
+## Open Questions
+- [ ] Should a cancelled group be refunded immediately?
+  Answer:
+
+## Sources                        ← read-only (corpus files + line spans the prompts saw)
+- `existing_Codebase/workflows/order_workflow.py — lines 1-112`
+```
+
+Grammar (what the parser depends on):
+
+- **Component heading** `### <name> — <kind>, <change_type> [marker]` — `kind` is one of
+  `module | activity | workflow | type | signal | query | test | diagram | doc`; `change_type` is
+  `modify | add | remove | verify`. Keep the heading of an existing entry so your edit updates the
+  right component; a new heading is recorded as human-provided; a deleted heading removes the
+  component. The trailing `[human]` / `[inferred]` marker is rendered — never type it.
+- **`- path:`** — where the component lives: a knowledge-graph node id
+  (`mod:existing_Codebase/shared/types.py`, `fn:…:provision_order`) or a corpus-relative file path.
+  Empty for something that does not exist yet.
+- **`- requirements:`** — comma-separated change-request requirement ids (`BCR-01-02`).
+- **`#### Existing` / `#### Proposed`** — free text until the next heading. `<!-- none -->` means
+  empty. **An empty Proposed is a BLOCK** — say what changes (for a removal, what is removed and what
+  replaces it).
+- **Assumptions / Open Questions** work exactly like the workflow spec’s (`- text`, `- [ ] (ref)
+  question` + `Answer:`; the *Open questions* widget applies here too).
+- **Grounding** and **Sources** are read-only — whatever you type there is ignored.
+
+Findings for `changes.md` show under the `changes.md` entry in the left rail (and in the Resolve
+tab, where the guided dialogue asks about them):
+
+- **BLOCK** — a component with no proposed change.
+- **WARN** — a `path` that is not in the knowledge base (with *did you mean …* suggestions from the
+  graph); a requirement id the change request does not declare; ingest notes.
+- **INFO** — a folded-in edit.

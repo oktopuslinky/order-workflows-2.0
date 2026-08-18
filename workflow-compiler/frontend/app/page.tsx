@@ -37,9 +37,7 @@ export default function HomePage() {
     queryFn: () => api.listKnowledgeBases(),
     retry: false,
   });
-  const readyKbs = (knowledgeBases.data?.knowledge_bases ?? []).filter(
-    (kb) => kb.status === "ready",
-  );
+  const readyKbs = (knowledgeBases.data ?? []).filter((kb) => kb.status === "ready");
 
   const localModels = useQuery({
     queryKey: ["local-models"],

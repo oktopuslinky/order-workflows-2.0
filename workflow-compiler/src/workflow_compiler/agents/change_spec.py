@@ -69,6 +69,11 @@ def seed_components_text(components: Sequence[ComponentChange]) -> str:
     return "\n".join(lines) if lines else "(none)"
 
 
+def _tail(name: str) -> str:
+    """Last path / node-id segment of ``name``, lower-cased (`a/b/c.py` → `c.py`)."""
+    return re.split(r"[/:]", name.strip().strip("`").lower())[-1]
+
+
 def _grounded(name: str, text: str) -> bool:
     """Whether ``name`` (or its last path/identifier segment) appears in ``text``."""
     needle = name.strip().lower()
@@ -116,8 +121,8 @@ class ChangeSpecAgent:
         parsed impact rows (kept unless the design drops them) and
         ``requirement_ids`` the only ids the model may cite. Provenance:
         components whose name appears in the document are ``document_grounded``,
-        others ``llm_inferred``; seed components the model kept but did not
-        return keep their seed provenance.
+        others ``llm_inferred``; seed components the model did not return are
+        kept verbatim (seed provenance) — dropping one is a human edit.
         """
         if not document_text or not document_text.strip():
             raise CompilationError("Cannot extract a change spec from an empty document.")
@@ -157,6 +162,12 @@ class ChangeSpecAgent:
         """
         allowed = {r.strip().upper() for r in requirement_ids} if requirement_ids else None
         seeds_by_key = {c.key(): c for c in seed_components}
+        # The model tends to write the basename (`order_workflow.py`) where the
+        # impact analysis wrote the corpus path; match on the tail too so the
+        # seed's path/texts are reused instead of the row appearing twice.
+        seeds_by_tail = {
+            f"{c.kind.value}:{_tail(c.name)}": c for c in reversed(seed_components)
+        }
         components: list[ComponentChange] = []
         seen: set[str] = set()
         for item in draft.components:
@@ -165,13 +176,16 @@ class ChangeSpecAgent:
                 continue
             kind = coerce_kind(item.kind)
             key = f"{kind.value}:{name.lower()}"
+            seed = seeds_by_key.get(key) or seeds_by_tail.get(f"{kind.value}:{_tail(name)}")
+            if seed is not None:
+                key = seed.key()
+                name = seed.name if len(seed.name) > len(name) else name
             if key in seen:
                 continue
             seen.add(key)
             reqs = [r.strip() for r in item.requirement_ids if r.strip()]
             if allowed is not None:
                 reqs = [r for r in reqs if r.upper() in allowed]
-            seed = seeds_by_key.get(key)
             path = item.path.strip().strip("`") or (seed.path if seed else "")
             existing = item.existing.strip() or (seed.existing if seed else "")
             proposed = item.proposed.strip() or (seed.proposed if seed else "")
@@ -195,10 +209,15 @@ class ChangeSpecAgent:
             )
             if len(components) >= MAX_COMPONENTS:
                 break
-        if not components and seed_components:
-            # A model that returns nothing has not "dropped" the seeds — it has
-            # failed to answer; the change request's own rows are the floor.
-            components = [c.model_copy(deep=True) for c in seed_components]
+        # The seed rows come from a human-approved impact analysis: they say
+        # WHAT is affected, the model refines HOW. A seed the model did not
+        # return is kept as-is (never silently dropped — Nemotron under-reports
+        # on one pass); removing a component is a human edit in changes.md.
+        for seed in seed_components:
+            if seed.key() in seen or len(components) >= MAX_COMPONENTS:
+                continue
+            seen.add(seed.key())
+            components.append(seed.model_copy(deep=True))
         return ChangeSpec(
             components=components,
             assumptions=[

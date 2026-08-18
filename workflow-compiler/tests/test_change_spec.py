@@ -358,9 +358,14 @@ def test_agent_to_spec_cleans_and_seeds() -> None:
     assert [a.text for a in spec.assumptions] == ["A"]
     assert [q.text for q in spec.open_questions] == ["Q"]
     assert spec.sources == ["s"]
-    # a model that returns nothing keeps the seeds
+    # a model that returns nothing keeps the seeds; seeds it skips are appended
     empty = ChangeSpecAgent.to_spec(ChangeSpecDraft(), TDD_TEXT, seed_components=seeds)
     assert [c.name for c in empty.components] == ["src/orders/workflow.py"]
+    extra = [*seeds, ComponentChange(name="tests/test_x.py", kind=ComponentKind.TEST,
+                                     proposed="new cases", change_type=ChangeType.ADD)]
+    kept = ChangeSpecAgent.to_spec(draft, TDD_TEXT, seed_components=extra)
+    assert [c.name for c in kept.components] == [
+        "src/orders/workflow.py", "OrderState", "tests/test_x.py"]
     assert impact_table_text([]) == "(none)"
 
 

@@ -39,14 +39,23 @@ For each component provide:
 Rules:
 - Cover every file the design says changes: the types/shared module, the
   activities module, the workflow module, the tests, and every diagram the
-  design lists under "Diagrams Needed" — each as its own component. Also add
-  entries for individual activities / types / signals / queries the design
-  changes or adds when the design describes them individually.
+  design lists under "Diagrams Needed" — each as its own component. Existing
+  diagrams whose content the design changes (a state-machine diagram when states
+  are added, a sequence diagram when the activity sequence changes, an
+  architecture diagram when a component is added) are components too
+  (kind diagram, change_type modify), and a system-flow document is kind doc.
+- ALSO add one entry per individual activity, type/enum, signal and query the
+  design changes or adds (kind activity / type / signal / query) — e.g. every
+  row of a "New/Changed Activities" table, every new state enum value's enum,
+  every "Signals:" / "Queries:" item that changes (a query whose return shape
+  changes is a modify) — in addition to the module entries that contain them.
+  A test-case id (TC-06) is kind test with the test module as its path.
 - Prefer names and paths from the KNOWLEDGE-GRAPH CONTEXT and the IMPACT TABLE
   over paraphrases. Do not invent paths.
 - The SEED COMPONENTS (from the approved impact analysis) are the starting
-  point: keep every one that the design confirms (refine its texts), drop only
-  those the design clearly does not touch, and add what the design adds.
+  point and every one of them is kept: return each with refined existing /
+  proposed texts and the right path (a seed you leave out is kept unchanged),
+  and add what the design adds beyond them.
 - Also list "assumptions" (things you had to assume to fill a component) and
   "open_questions" (things the design leaves undecided that engineering must
   settle) — short sentences, empty lists when none.

@@ -1031,6 +1031,77 @@ the bundle skips undrafted artifacts and lists them in the manifest. The stories
 `cr export <cr-id> --format zip`; the UI shows `.docx` / `.md` (/ `.xlsx`) buttons on the artifact
 panel and **Export all (.zip)** in the wizard header.
 
+## 8f. Knowledge-graph-grounded projects + the change spec (`kg/grounding.py`, `spec/change_*.py`)
+
+The "upload the TDD to the workflow GUI" half of the change pipeline. A workflow project compiled
+**with a knowledge base** (`kb_id`, optionally the `change_request_id` whose approved TDD the
+document is) differs from a plain compile in exactly two ways — and in nothing else when the ids
+are absent (`grounder=None` renders every prompt byte-for-byte as before; the 664 pre-Phase-3
+tests are untouched):
+
+1. **Grounded prompts.** `kg/grounding.py::KgGrounder(kg_service, kb_id)` retrieves a
+   `KgPacket` for the text about to be analysed (`grounding_query` = the document's identifiers —
+   the same seed extractor the change request uses — then a slice of prose) and renders it as a
+   self-contained block, *"KNOWLEDGE-GRAPH CONTEXT — prefer these real names / paths"*, that the
+   `discover_workflows` (segmentation), `discover_workflow`, `extract_facts` and `design_temporal`
+   prompts carry as an **optional** `{{ kg_context }}` variable (`optional:` front-matter; the
+   renderer defaults it to `""`). `ProjectCompiler.compile_document(..., grounder=)` passes the
+   block for the whole document to segmentation and per segment to fact extraction
+   (`WorkflowCompiler.extract_facts(kg_context=)` → `WorkflowState.kg_context`); `approve_spec`
+   re-grounds each seeded state so the Temporal-design prompt sees the same names. Retrieval is
+   cached per text, never raises into the pipeline (a broken graph degrades to an ungrounded
+   compile), and the packets' files/spans accumulate into `project.grounding`
+   (`ProjectGrounding{kb_name, change_request_title, sources, coverage, low_confidence,
+   requirement_ids}`) — the visible provenance behind the UI's *Grounded by ‹KB› · from ‹CR›*.
+   The `discover_workflows` prompt also carries a hint that a TDD's state machine / activities
+   table define **one** workflow with per-group sub-steps rather than one workflow per design
+   section (plan Phase 3 design note).
+2. **A change spec.** `agents/change_spec.py::ChangeSpecAgent.extract(tdd_text, kg_context,
+   impact_table, seed_components, requirement_ids)` (prompt `extract_change_spec.md`) returns a
+   `models/change_spec.py::ChangeSpec{components: [ComponentChange{name, kind: module|activity|
+   workflow|type|signal|query|test|diagram|doc, path (KG node id / file), existing, proposed,
+   change_type: modify|add|remove|verify, requirement_ids, provenance}], assumptions,
+   open_questions, sources, version}`. When a change request is linked, `change/spec_seed.py`
+   seeds the components from its approved impact analysis (`AffectedItem` rows + the TDD's
+   Existing/Proposed section texts) and the request's requirement ids are the only ones the model
+   may cite; the deterministic `KgService.impact` table over the document's identifiers goes into
+   the prompt too. Cleaning is deterministic (kind/change-type coercion, de-duplication, provenance
+   = `document_grounded` when the name occurs in the document, seeds kept when the model returns
+   nothing). The spec is stored on `CompilationProject.change_spec` (+ `kb_id`,
+   `change_request_id`) and rendered to **`changes.md`** by `spec/change_renderer.py`
+   (`# Change Spec` → `## Grounding` (read-only) → `## Components` with one
+   `### name — kind, change [marker]` block, `- path:` / `- requirements:` bullets and
+   `#### Existing` / `#### Proposed` free text → `## Assumptions` → `## Open Questions` →
+   `## Sources` (read-only)); `spec/change_ingest.py` folds edits back (match by `kind:name`,
+   changed text → `human_provided`, new heading → new human component, missing heading → removed;
+   `render → ingest(None) → render` is identity and every field, provenance included, round-trips).
+   `spec/change_validator.py` runs no model: **empty Proposed → BLOCKING**, a `path` that
+   `KgService.resolve_ref` cannot find (node id, file path or suffix, `fn:` symbol) → WARNING with
+   `KgService.search` suggestions, a requirement id the change request does not declare → WARNING.
+   Findings land in `validation_findings["__changes__"]` (`CHANGES_SLUG`, never a workflow slug).
+
+**Same gate.** `changes.md` travels through every existing door: `ProjectCompiler.spec_markdown`
+lists it with the workflow files (`ProjectResponse.spec_markdown`, the CLI's spec dir,
+`write_spec_files` / `read_spec_files`); `PUT /projects/{id}/spec` and `validate` fold it in
+(`markdown_by_slug["__changes__"]`); `approve_spec` re-validates it and **refuses on a BLOCKING
+change finding unless `accept_incomplete`** (WARNINGs never block); the Resolve dialogue drafts
+questions from its findings and open questions (`draft_change_questions.md`), and a prose answer
+becomes deterministic `ComponentUpdate`s (`interpret_change_answer.md` → `dialogue/change_ops.py`:
+modify carries only changed fields, add/remove, resolve open questions, one version bump; unmapped
+answers park as a human-provided open question, one follow-up at most). `agenda_fingerprint` /
+`has_anything_to_ask` include the change spec, so pre-drafting stays correct.
+
+**Ingress.** `POST /projects/compile` and `/projects/compile-upload` take `kb_id?` /
+`change_request_id?` (a request implies its KB; a mismatching explicit KB is 422; an unindexed KB
+409); `POST /change-requests/{id}/send-to-workflow {provider?, model?, nickname?}` compiles the
+**approved** TDD markdown (409 otherwise) with both ids, defaults the provider to the wizard's
+(else cloud Nemotron), links the new project into `cr.project_ids`, and runs synchronously like
+`/projects/compile`. CLI: `compile … --kb <id> [--change-request <id>]` writes `changes.md` into
+the spec dir. UI: the home page's *Ground with knowledge base* selector, the wizard's **Send to
+workflow GUI** button (approved TDD only), and in the Spec tab `changes.md` as a second file with
+its own grammar highlighting, a change-spec summary in the right rail, findings under its entry
+and the *Grounded by …* header (grammar: `frontend/SPEC_GUIDE.md`, guide page → *changes.md*).
+
 ## 9. The three entry points (same engine, three faces)
 
 ### 9.1 Library
@@ -1116,6 +1187,8 @@ review pipeline), and writes one editable spec file per workflow plus an `overvi
 | `--persist` / `--no-persist` | persist | Whether to save the resulting project to the store. |
 | `--review` / `--no-review` | review | Sequential review passes (completeness → grounding → consistency) over the LLM stages. |
 | `--spec-dir DIR` | `./specs` | Where to write the spec files. |
+| `--kb ID` | — | Ground the compile with a knowledge base (KG context in every prompt) and write `changes.md` next to the spec files (§8f). |
+| `--change-request ID` | — | The change request whose approved TDD this document is: seeds `changes.md`, restricts its requirement ids, links the project into `cr.project_ids`; implies `--kb`. |
 
 ```bash
 workflow-compiler compile big_business_doc.docx --spec-dir ./specs
@@ -1311,11 +1384,12 @@ Project endpoints (the compile → validate → approve pipeline; spec files tra
 
 | Method | Path                        | Body                                        | Purpose                                        |
 |--------|-----------------------------|---------------------------------------------|------------------------------------------------|
-| POST   | `/projects/compile`         | `{document_text, persist?, model?, nickname?}` | Segment into per-workflow specs (spec gate). `model` picks a local gateway model; `nickname` sets an optional label. |
+| POST   | `/projects/compile`         | `{document_text, persist?, provider?, model?, nickname?, kb_id?, change_request_id?}` | Segment into per-workflow specs (spec gate). `model` picks a local gateway model; `nickname` sets an optional label; `kb_id` grounds every prompt in a knowledge base and adds `changes.md`; `change_request_id` seeds it from the request (implies its KB). |
+| POST   | `/projects/compile-upload`  | multipart `file` + the same form fields          | Parse a `.docx/.pdf/.md/.html/.txt` upload to text, then as `/projects/compile`. |
 | GET    | `/projects`                 | —                                           | List visible projects as summaries (`{projects: [{project_id, nickname, stage, workflow_count, updated_at}]}`, newest first). |
 | GET    | `/projects/{id}`            | —                                           | Load a project + rendered spec files.           |
 | PATCH  | `/projects/{id}`            | `{nickname}`                                | Set or clear the project nickname (metadata only — no recompile). Returns the summary. |
-| PUT    | `/projects/{id}/spec`       | `{spec_markdown}`                           | Fold edited spec Markdown back in (no LLM).     |
+| PUT    | `/projects/{id}/spec`       | `{spec_markdown}`                           | Fold edited spec Markdown back in (no LLM); `spec_markdown["__changes__"]` is `changes.md`. |
 | POST   | `/projects/{id}/edit`       | `{edit_document, workflows?, author?, resolved?}` | Apply an edit-request document; re-arms the gate. Pass `resolved` from a preview to replay it with no LLM call (stale preview → 409). |
 | POST   | `/projects/{id}/edit/preview` | `{edit_document, workflows?}`             | Dry-run the edit: would-be summary, post-edit spec Markdown, and the `resolved` handoff blob. Persists nothing. |
 | POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes (synchronous). |
@@ -1392,6 +1466,7 @@ Knowledge bases (§8c). Uploading a corpus answers `202` with the knowledge base
 | POST   | `/change-requests/{id}/artifacts/{kind}/approve` | —                                                | Approve; the cursor advances and the next step's questions job starts. |
 | GET    | `/change-requests/{id}/artifacts/{kind}/export` | `?format=docx\|md\|xlsx`                          | Download the artifact as Word (stories: zip of per-story docs) / markdown / TC preview workbook (impact only). Deterministic; `Content-Disposition` names the file; DRAFT-labelled until approved. |
 | GET    | `/change-requests/{id}/export.zip`     | —                                                          | Every artifact as Word/Excel + `markdown/*.md` + `MANIFEST.txt`. |
+| POST   | `/change-requests/{id}/send-to-workflow` | `{provider?, model?, nickname?}`                       | Compile the **approved** TDD into a KB-grounded workflow project (`kb_id` + `change_request_id` set, `changes.md` seeded), append it to `project_ids`, return the `ProjectResponse` (201; 409 while the TDD is unapproved). Synchronous; provider defaults to the wizard's, else cloud Nemotron. |
 
 Project responses include `time_saved`: each pipeline step's measured wall-clock seconds
 (persisted per project as `stage_timings`) compared against configurable human-team estimates

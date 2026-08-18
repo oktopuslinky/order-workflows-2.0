@@ -336,6 +336,45 @@ GET …/export.zip · CLI cr export · UI Export buttons"] --> svc["ChangeReques
 
 See `docs/HOW_IT_WORKS.md` §8e.
 
+## KG-grounded projects + change spec (phase 3 of the change pipeline)
+
+The approved TDD becomes an ordinary workflow project whose prompts are grounded in the knowledge
+graph and which carries a second editable file, `changes.md`, through the same gate.
+
+```mermaid
+flowchart TD
+    tdd["TDD (.docx / .md)
+home-page upload with KB · CR 'Send to workflow GUI' · CLI --kb/--change-request"] --> pc["ProjectCompiler.compile_document
+(grounder=KgGrounder, change_request=)"]
+    kg["KgService.retrieve
+(BM25 → BFS → spans)"] --> gr["KgGrounder.context_for(text)
+'KNOWLEDGE-GRAPH CONTEXT — prefer these real names / paths'"]
+    gr -. "{{ kg_context }} (optional)" .-> seg["discover_workflows
+(+ TDD hint)"]
+    gr -. "{{ kg_context }}" .-> facts["discover_workflow · extract_facts"]
+    gr -. "{{ kg_context }}" .-> design["design_temporal (at approve)"]
+    pc --> seg --> facts --> specs["WorkflowSpec × N → <slug>.md"]
+    cr["ChangeRequest
+impact AffectedItem rows · TDD Existing/Proposed · requirement ids"] --> seed["change/spec_seed.py"]
+    seed --> csa["ChangeSpecAgent.extract
+(extract_change_spec.md)"]
+    gr --> csa
+    imp["KgService.impact(seed terms)"] --> csa
+    csa --> cs["ChangeSpec → changes.md
+(change_renderer ⇄ change_ingest, identity)"]
+    specs & cs --> gate{{"Spec gate
+Save ⇄ Validate ⇄ Resolve ⇄ Approve"}}
+    gate --> val["change_validator (no LLM)
+empty Proposed → BLOCK · unknown path → WARN + search suggestions · unknown req id → WARN
+→ validation_findings['__changes__']"]
+    gate --> dlg["DialogueEngine
+draft_change_questions → interpret_change_answer → change_ops (ComponentUpdate)"]
+    gate --> appr["approve_spec: BLOCK in changes.md refuses (unless accept_incomplete)"]
+    appr --> outs["Phase 4: updated diagrams · modified code + diff · test docs"]
+```
+
+See `docs/HOW_IT_WORKS.md` §8f.
+
 ## Request sequence (compile → approve)
 
 ```mermaid

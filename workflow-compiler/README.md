@@ -195,6 +195,26 @@ workflow-compiler cr export <cr-id> --format zip --out change-request.zip
 
 The sample output for BCR-001 is `examples/change_requests/TDD-ORD-002.docx`.
 
+### KG-grounded projects + change spec (business-change pipeline, phase 3)
+
+Compile the TDD **with the knowledge base** and every extraction prompt sees the graph's real
+module / activity / state / test names, and the project gets a second editable file,
+`changes.md` — the change spec, one *existing vs. proposed* block per component — that goes
+through the same Save ⇄ Validate ⇄ Resolve ⇄ Approve gate as the workflow specs (empty
+*Proposed* blocks approval; unknown paths / requirement ids warn with suggestions):
+
+```bash
+workflow-compiler compile examples/change_requests/TDD-ORD-002.docx --spec-dir ./specs \
+    --kb <kb-id> --change-request <cr-id>        # writes <slug>.md + changes.md + overview.md
+workflow-compiler validate <project-id> --spec-dir ./specs   # folds changes.md back in too
+```
+
+In the UI: pick *Ground with knowledge base* next to the provider on the home page, or press
+**Send to workflow GUI** on an approved TDD in the change-request wizard (`POST
+/change-requests/{id}/send-to-workflow`); the project header then reads *Grounded by ‹KB› · from
+‹change request›* and `changes.md` sits under *Change spec* in the Spec tab. Grammar:
+`frontend/SPEC_GUIDE.md`.
+
 ### Running a generated bundle
 
 Each generated bundle is standalone — it needs the Temporal SDK and a local Temporal dev server

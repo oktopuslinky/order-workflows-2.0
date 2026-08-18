@@ -193,6 +193,28 @@ picture before changing pipeline behavior.
   present (`KgService.read_bytes`) and degrades to impact-only rows otherwise. Routes
   `GET …/artifacts/{kind}/export?format=docx|md|xlsx`, `GET …/export.zip`; CLI `cr export`.
 
+- **KG-grounded projects carry a change spec through the same gate (`kg/grounding.py`,
+  `spec/change_*.py`, `models/change_spec.py`).** `ProjectCompiler.compile_document(...,
+  grounder=KgGrounder(kg_service, kb_id), change_request=)` prepends a *"KNOWLEDGE-GRAPH CONTEXT —
+  prefer these real names / paths"* block to the segmentation / discovery / fact-extraction (and,
+  at approve, Temporal-design) prompts through an **optional** `{{ kg_context }}` variable — with
+  `grounder=None` every prompt renders exactly as before, which is why the pre-Phase-3 tests are
+  untouched — and extracts a `ChangeSpec` (`ChangeSpecAgent`, prompt `extract_change_spec.md`,
+  seeded from the linked change request's impact rows + TDD Existing/Proposed texts, requirement
+  ids restricted to the request's). Rules: `changes.md` is a deterministic projection
+  (`change_renderer` ⇄ `change_ingest`, identity round trip incl. provenance) that travels under
+  the pseudo-slug `__changes__` (`CHANGES_SLUG`) in `spec_markdown`, `PUT /spec`, `validate`,
+  `approve`, spec dirs and the dialogue; `change_validator` is LLM-free (empty Proposed →
+  BLOCKING; unresolvable `path` → WARNING with `KgService.search` suggestions; unknown requirement
+  id → WARNING) and **a BLOCKING change finding refuses `approve_spec` unless
+  `accept_incomplete`**; dialogue answers about it become `ComponentUpdate`s applied by
+  `dialogue/change_ops.py` (human authority, one version bump, park otherwise); the visible
+  grounding record is `project.grounding` (KB name, CR title, sources, coverage). Ingress:
+  `kb_id?`/`change_request_id?` on `/projects/compile*`, `POST /change-requests/{id}/send-to-workflow`
+  (approved TDD only, provider = wizard's else cloud Nemotron, links `project_ids`), CLI
+  `compile --kb/--change-request`. `ProjectCompiler` gets a read-only `KgService` from
+  `from_settings` (never indexes).
+
 - **HTTP auth + time-saved metric.** The API uses local accounts (`api/auth.py`: scrypt +
   HMAC-signed session cookie, users under `<state-root>/users/`); project routes require
   `get_current_user`, projects carry `owner_id` (recorded for attribution). By default

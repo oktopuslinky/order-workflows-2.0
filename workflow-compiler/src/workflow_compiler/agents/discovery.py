@@ -94,7 +94,11 @@ class WorkflowDiscoveryAgent(BaseAgent):
         if not state.document_text or not state.document_text.strip():
             raise CompilationError("Cannot discover a workflow from empty document_text.")
 
-        prompt = self._prompts.render(_PROMPT_NAME, document_text=state.document_text)
+        prompt = self._prompts.render(
+            _PROMPT_NAME,
+            document_text=state.document_text,
+            kg_context=state.kg_context or "",
+        )
         discovery = await self._llm.structured(prompt, WorkflowDiscovery, system=_SYSTEM)
 
         metadata = self._to_metadata(discovery)

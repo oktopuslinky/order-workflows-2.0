@@ -414,6 +414,39 @@ class KgService:
             )
         return hits
 
+    async def resolve_ref(self, kb_id: str, ref: str) -> str | None:
+        """Resolve a component reference to a graph node id, or ``None``.
+
+        ``ref`` may be a node id (``mod:existing_Codebase/shared/types.py``,
+        ``fn:…:provision_order``), a corpus-relative file path
+        (``existing_Codebase/shared/types.py``, any suffix of one), or a bare
+        symbol name (``provision_order``, ``OrderState``). Matching is exact on
+        node ids, then on file paths (full or trailing suffix, ``/`` normalised),
+        then on the ``fn:`` symbol name; the first hit wins. Used by the change
+        validator to check that a change spec points at things that exist.
+        """
+        needle = ref.strip().replace("\\", "/")
+        if not needle:
+            return None
+        graph = await self._graph(kb_id)
+        if needle in graph.nodes:
+            return needle
+        suffix = "/" + needle.lstrip("/")
+        by_path: str | None = None
+        by_symbol: str | None = None
+        for node_id, node in graph.nodes.items():
+            path = _node_path(node)
+            if path is not None and by_path is None:
+                norm = str(path).replace("\\", "/")
+                if norm == needle or norm.endswith(suffix):
+                    # Prefer the file-level node (mod:/doc:) over its chunks.
+                    if node.type.value in ("Module", "Document"):
+                        return node_id
+                    by_path = node_id
+            if by_symbol is None and node_id.startswith("fn:") and node_id.endswith(":" + needle):
+                by_symbol = node_id
+        return by_path or by_symbol
+
     async def impact(
         self, kb_id: str, seeds: Iterable[str], *, max_hops: int = 2
     ) -> list[KgImpactRow]:

@@ -383,6 +383,7 @@ class WorkflowCompiler:
         persist: bool = True,
         workflow_id: str | None = None,
         progress: ProgressCallback | None = None,
+        kg_context: str | None = None,
     ) -> WorkflowState:
         """Compile a raw workflow document into a review-ready WorkflowState.
 
@@ -393,12 +394,15 @@ class WorkflowCompiler:
 
         When ``review_mode`` is ``True`` (the default) compilation stops at the
         approval gate; when ``False`` the graph is auto-approved and the full
-        pipeline runs end-to-end in one call.
+        pipeline runs end-to-end in one call. ``kg_context`` (a rendered
+        knowledge-graph block from :class:`~workflow_compiler.kg.KgGrounder`)
+        rides on the state and is prepended to the LLM prompts; ``None`` leaves
+        every prompt exactly as before.
         """
         if not document_text or not document_text.strip():
             raise CompilationError("Cannot compile an empty document.")
 
-        state = WorkflowState(document_text=document_text)
+        state = WorkflowState(document_text=document_text, kg_context=kg_context)
         if workflow_id is not None:
             state.workflow_id = workflow_id
 
@@ -420,15 +424,20 @@ class WorkflowCompiler:
         workflow_id: str | None = None,
         project_id: str | None = None,
         progress: ProgressCallback | None = None,
+        kg_context: str | None = None,
     ) -> WorkflowState:
         """Run only the front half (discovery → facts) plus the checklist.
 
         Used by the spec-centric :class:`ProjectCompiler` to extract one
         workflow segment at a time; nothing is persisted and no graph is built.
+        ``kg_context`` grounds the discovery / fact-extraction prompts (see
+        :meth:`compile_document`).
         """
         if not document_text or not document_text.strip():
             raise CompilationError("Cannot extract facts from an empty document.")
-        state = WorkflowState(document_text=document_text, project_id=project_id)
+        state = WorkflowState(
+            document_text=document_text, project_id=project_id, kg_context=kg_context
+        )
         if workflow_id is not None:
             state.workflow_id = workflow_id
         pre_agents, _post = self._split_on_graph(self._agents)

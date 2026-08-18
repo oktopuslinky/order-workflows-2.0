@@ -8,6 +8,7 @@ grounded context packets, run a deterministic ``impact`` traversal, read the
 ``catalog`` of business ids, ``search`` anchors, or read corpus files.
 """
 
+from workflow_compiler.kg.grounding import GroundingResult, KgGrounder
 from workflow_compiler.kg.models import (
     KbCatalog,
     KbFile,
@@ -32,6 +33,7 @@ from workflow_compiler.kg.store import (
 
 __all__ = [
     "FileKnowledgeBaseStore",
+    "GroundingResult",
     "InMemoryKnowledgeBaseStore",
     "KbCatalog",
     "KbFile",
@@ -39,6 +41,7 @@ __all__ = [
     "KbStats",
     "KgFileRef",
     "KgGraphSummary",
+    "KgGrounder",
     "KgImpactRow",
     "KgPacket",
     "KgSearchHit",

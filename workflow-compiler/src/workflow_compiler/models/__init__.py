@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+from workflow_compiler.models.change_spec import (
+    CHANGES_SLUG,
+    ChangeAnswerPlan,
+    ChangeSpec,
+    ChangeSpecDraft,
+    ChangeType,
+    ComponentChange,
+    ComponentDraft,
+    ComponentKind,
+    ComponentUpdate,
+)
 from workflow_compiler.models.checklist import (
     ChecklistItem,
     ChecklistSeverity,
@@ -58,6 +69,7 @@ from workflow_compiler.models.patch import (
 )
 from workflow_compiler.models.project import (
     CompilationProject,
+    ProjectGrounding,
     ProjectStage,
     WorkflowSegment,
 )
@@ -114,8 +126,19 @@ __all__ = [
     "WorkflowState",
     # project (spec-centric front-end aggregate)
     "CompilationProject",
+    "ProjectGrounding",
     "ProjectStage",
     "WorkflowSegment",
+    # change spec (existing vs. proposed per component)
+    "CHANGES_SLUG",
+    "ChangeAnswerPlan",
+    "ChangeSpec",
+    "ChangeSpecDraft",
+    "ChangeType",
+    "ComponentChange",
+    "ComponentDraft",
+    "ComponentKind",
+    "ComponentUpdate",
     # spec (the human-reviewed primary artifact)
     "CrossReference",
     "Provenance",

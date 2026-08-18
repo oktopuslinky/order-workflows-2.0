@@ -208,7 +208,11 @@ class FactExtractionAgent(BaseAgent):
         if not state.document_text or not state.document_text.strip():
             raise CompilationError("Cannot extract facts from empty document_text.")
 
-        prompt = self._prompts.render(_PROMPT_NAME, document_text=state.document_text)
+        prompt = self._prompts.render(
+            _PROMPT_NAME,
+            document_text=state.document_text,
+            kg_context=state.kg_context or "",
+        )
         extraction = await self._llm.structured(prompt, FactExtraction, system=_SYSTEM)
 
         structure: WorkflowStructure | None = None

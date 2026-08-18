@@ -273,6 +273,7 @@ class TemporalGeneratorAgent(BaseAgent):
             workflow_graph=graph_to_text(state.workflow_graph),
             workflow_facts=facts_text,
             cvpa_classification=cvpa_to_text(state.cvpa_classification),
+            kg_context=state.kg_context or "",
         )
         result = await self._llm.structured(prompt, TemporalDesignOutput, system=_SYSTEM)
 

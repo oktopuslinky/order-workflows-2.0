@@ -387,14 +387,16 @@ class WorkflowSegmentationAgent:
             self._report(name, status, index, total, **extra)
 
     async def run(
-        self, document_text: str
+        self, document_text: str, *, kg_context: str | None = None
     ) -> tuple[list[WorkflowSegment], list[CrossReference], list[WorkflowTrigger], list[str]]:
         """Discover workflows, review the discovery, and assemble segments.
 
         Returns ``(segments, cross_references, triggers, warnings)``. A document
         that describes a single workflow yields one segment holding the full
         document text, so the single-workflow path is byte-identical to compiling
-        the document directly.
+        the document directly. ``kg_context`` (a rendered knowledge-graph block)
+        is prepended to the discovery prompt when given; ``None`` renders the
+        prompt exactly as before.
         """
         if self._llm is None:
             raise CompilationError("WorkflowSegmentationAgent requires an LLM provider.")
@@ -404,7 +406,9 @@ class WorkflowSegmentationAgent:
         steps = 1 + (len(_REVIEW_PASSES) if self._review_enabled else 0)
         self._emit("discover", "start", 1, steps)
         started = time.perf_counter()
-        prompt = self._prompts.render(_PROMPT_NAME, document_text=document_text)
+        prompt = self._prompts.render(
+            _PROMPT_NAME, document_text=document_text, kg_context=kg_context or ""
+        )
         discovery = await self._llm.structured(prompt, WorkflowsDiscovery, system=_SYSTEM)
         self._emit("discover", "done", 1, steps, seconds=time.perf_counter() - started)
 

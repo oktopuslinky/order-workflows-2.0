@@ -38,6 +38,15 @@ class WorkflowState(WorkflowBaseModel):
         default=None,
         description="Owning CompilationProject id when compiled via the spec front-end.",
     )
+    kg_context: str | None = Field(
+        default=None,
+        description=(
+            "Rendered knowledge-graph context packet for this run (real module / "
+            "activity / test names and file spans). Prepended to the discovery, "
+            "fact-extraction and Temporal-design prompts when set; None means the "
+            "run is ungrounded and every prompt renders exactly as before."
+        ),
+    )
 
     workflow_metadata: WorkflowMetadata | None = Field(
         default=None, description="Extracted workflow metadata."

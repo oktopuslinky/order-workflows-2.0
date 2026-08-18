@@ -2,6 +2,7 @@
 name: design_temporal
 description: Design a Temporal workflow blueprint (declarations + typed plan IR) from the graph, facts, and CVPA classification.
 variables: [workflow_graph, workflow_facts, cvpa_classification]
+optional: [kg_context]
 ---
 You are a Temporal solutions architect. Using the canonical workflow graph, the
 extracted facts, and the CVPA classification, design a Temporal workflow
@@ -79,7 +80,7 @@ PLAN (the ordered control-and-data flow; this is what becomes runnable code):
 
 Return only the requested structured data.
 
-WORKFLOW GRAPH:
+{{ kg_context }}WORKFLOW GRAPH:
 {{ workflow_graph }}
 
 FACTS:

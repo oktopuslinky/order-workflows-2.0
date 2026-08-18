@@ -10,7 +10,7 @@ from workflow_compiler.prompts.models import Prompt
 #: Default location of bundled prompt templates.
 DEFAULT_TEMPLATE_DIR = Path(__file__).parent / "templates"
 
-_LIST_KEYS = frozenset({"variables", "tags"})
+_LIST_KEYS = frozenset({"variables", "tags", "optional"})
 
 
 def _parse_scalar(value: str) -> str:
@@ -87,6 +87,7 @@ class PromptLoader:
         metadata, body = parse_front_matter(text)
 
         variables = metadata.pop("variables", [])
+        optional = metadata.pop("optional", [])
         description = metadata.pop("description", None)
         metadata.pop("name", None)
         metadata.pop("tags", None)
@@ -96,6 +97,7 @@ class PromptLoader:
             template=body,
             description=str(description) if description is not None else None,
             variables=[str(v) for v in variables] if isinstance(variables, list) else [],
+            optional=[str(v) for v in optional] if isinstance(optional, list) else [],
             metadata={k: str(v) for k, v in metadata.items()},
             path=path,
         )

@@ -2,6 +2,7 @@
 name: extract_facts
 description: Extract categorized workflow facts and an id-referenced relational structure.
 variables: [document_text]
+optional: [kg_context]
 ---
 You are a workflow analyst. From the document below, extract atomic facts. Every
 item must be supported by the document — do not invent details. Use an empty list
@@ -74,5 +75,5 @@ Also include `confidence`: your overall confidence (0.0-1.0).
 
 Return a single JSON object with exactly these keys and nothing else.
 
-DOCUMENT:
+{{ kg_context }}DOCUMENT:
 {{ document_text }}

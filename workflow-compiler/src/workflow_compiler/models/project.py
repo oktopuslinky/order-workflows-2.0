@@ -17,6 +17,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from workflow_compiler.models.base import WorkflowBaseModel
+from workflow_compiler.models.change_spec import ChangeSpec
 from workflow_compiler.models.dialogue import DialogueSession, PreparedAgenda
 from workflow_compiler.models.edit import EditRecord
 from workflow_compiler.models.enums import ApprovalStatus
@@ -57,6 +58,29 @@ class WorkflowSegment(WorkflowBaseModel):
             "failed and the full document was used — the segment is contaminated "
             "with the other workflows' content and must not be silently compiled."
         ),
+    )
+
+
+class ProjectGrounding(WorkflowBaseModel):
+    """What a knowledge-graph-grounded project was grounded on (visible provenance).
+
+    Recorded at compile time so the UI can say "Grounded by <KB> · from <CR>" and
+    list the corpus files/spans the prompts saw, without re-querying the graph.
+    """
+
+    kb_name: str = Field(default="", description="Knowledge-base display name at compile time.")
+    change_request_title: str = Field(
+        default="", description="Change-request title when the project came from one."
+    )
+    sources: list[str] = Field(
+        default_factory=list,
+        description="Corpus files (`path — lines a-b`) the grounding packets dereferenced.",
+    )
+    coverage: float | None = Field(
+        default=None, description="Lowest retrieval coverage seen while grounding (0-1)."
+    )
+    low_confidence: bool = Field(
+        default=False, description="True when any grounding retrieval reported low confidence."
     )
 
 
@@ -136,6 +160,27 @@ class CompilationProject(WorkflowBaseModel):
             "Optional human-friendly label shown in the UI in place of the "
             "project_id. None for legacy projects and until the user names it."
         ),
+    )
+    kb_id: str | None = Field(
+        default=None,
+        description=(
+            "Knowledge base the compile was grounded with (KG context in every prompt); "
+            "None for ungrounded projects."
+        ),
+    )
+    change_request_id: str | None = Field(
+        default=None,
+        description="Change request whose approved TDD this project was compiled from, if any.",
+    )
+    change_spec: ChangeSpec | None = Field(
+        default=None,
+        description=(
+            "The change spec (existing vs. proposed per component) extracted alongside the "
+            "workflow specs when a knowledge base is set; rendered as changes.md."
+        ),
+    )
+    grounding: ProjectGrounding | None = Field(
+        default=None, description="Visible grounding record (KB name, CR title, sources)."
     )
     stage_timings: dict[str, float] = Field(
         default_factory=dict,

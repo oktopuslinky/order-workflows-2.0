@@ -32,6 +32,13 @@ class PromptRenderer:
     def render(self, prompt: Prompt, values: Mapping[str, Any] | None = None) -> str:
         """Render ``prompt`` using ``values``, returning the final text."""
         provided = dict(values or {})
+        # Optional variables default to '' so a template may carry an optional
+        # block (a `{{ kg_context }}` grounding section) that renders to nothing
+        # for callers that do not supply it.
+        for name in prompt.optional:
+            provided.setdefault(name, "")
+            if provided[name] is None:
+                provided[name] = ""
 
         if self.strict:
             required = set(prompt.variables) | self.referenced_variables(prompt.template)

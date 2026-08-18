@@ -2,6 +2,7 @@
 name: discover_workflows
 description: Discover every distinct workflow in a business document and which sections belong to each.
 variables: [document_text]
+optional: [kg_context]
 ---
 You are a senior business-process analyst. The document below may describe ONE
 workflow or SEVERAL distinct business workflows. Identify every distinct
@@ -50,10 +51,21 @@ escalate to the review workflow"). For each trigger provide:
 Only report workflows, dependencies, and triggers that are supported by the
 document. Do not invent workflows, sections, conditions, or field names.
 
+If the document is a technical design document (TDD) rather than a process
+narrative — it has an Overview / Architecture / State Machine / Activities /
+Saga / Signals & Queries / Data Contracts / Testing structure, possibly with
+"Existing" and "Proposed" parts per section — then its state machine and its
+activities table define ONE workflow (the one the design names, e.g.
+"OrderWorkflow"): the activities are its steps, the states its start/end and
+intermediate states, the saga section its compensations, and per-group or
+per-shipment sub-flows are sub-steps of that workflow, NOT separate workflows.
+Do not report design sections (Data Contracts, Observability, Testing Strategy,
+Open Items) as workflows.
+
 Return a single JSON object of the form
 {"workflows": [...], "dependencies": [...], "triggers": [...],
  "confidence": <0.0-1.0>}
 and nothing else.
 
-DOCUMENT:
+{{ kg_context }}DOCUMENT:
 {{ document_text }}

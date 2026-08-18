@@ -22,6 +22,14 @@ class Prompt(WorkflowBaseModel):
     variables: list[str] = Field(
         default_factory=list, description="Declared required variables."
     )
+    optional: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Declared optional variables: rendered as an empty string when the caller "
+            "omits them, so a template can carry an optional block (e.g. knowledge-graph "
+            "context) without changing every call site."
+        ),
+    )
     metadata: dict[str, str] = Field(
         default_factory=dict, description="Additional front-matter metadata."
     )

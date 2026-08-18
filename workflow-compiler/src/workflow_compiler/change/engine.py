@@ -847,9 +847,15 @@ class ChangeWizardEngine:
             f"- {self._ids_line(cr)}",
             "",
         ]
-        step = cr.wizard.step(kind)
-        lines += ["### Requester decisions from the clarifying questions"]
-        lines += [f"- {n}" for n in step.notes] or ["- (none yet)"]
+        # Decisions are cumulative: what the requester settled for the impact
+        # analysis still binds the epic, the stories and the TDD, and must not be
+        # asked again.
+        lines += [
+            "### Requester decisions from the clarifying questions "
+            "(all steps so far — already settled, do not ask again)"
+        ]
+        decided = [f"- [{STEP_LABELS[s.kind]}] {n}" for s in cr.wizard.steps for n in s.notes]
+        lines += decided or ["- (none yet)"]
         lines.append("")
         if cr.impact_table:
             lines += [

@@ -19,7 +19,9 @@ Rules for the questions:
 - Ask only what the brief cannot answer and what genuinely changes the
   artifact — a scope decision, an unresolved dependency, an option the change
   request leaves open ("consolidated vs itemized invoice"), a sizing choice.
-- Never ask the requester to confirm what the brief already states, and never
+- Never ask something the brief's "Requester decisions" section already
+  settles (those answers were given in earlier steps and still bind), never
+  ask the requester to confirm what the brief already states, and never
   ask about data structures or JSON — ask about the business/design decision.
 - Each question must stand alone: name the requirement id, component or
   document concerned in a sentence or two.

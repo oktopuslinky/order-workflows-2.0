@@ -125,6 +125,54 @@ _DEMO_RESPONSES: dict[str, dict[str, Any]] = {
         "needs_followup": False,
         "note": "canned mock change answer plan",
     },
+    "DiagramUpdatePlan": {
+        "diagrams": [
+            {
+                "name": "order-state-machine.mmd",
+                "kind": "state",
+                "mermaid": (
+                    "stateDiagram-v2\n    [*] --> RECEIVED\n    RECEIVED --> PROVISIONING\n"
+                    "    PROVISIONING --> PARTIALLY_PROVISIONED\n"
+                    "    PARTIALLY_PROVISIONED --> DISPATCHED\n    DISPATCHED --> COMPLETED\n"
+                    "    COMPLETED --> [*]\n"
+                ),
+                "notes": "Mock update: added PARTIALLY_PROVISIONED.",
+            },
+            {
+                "name": "order-state-machine-partial-shipment.mmd",
+                "kind": "state-partial",
+                "mermaid": (
+                    "stateDiagram-v2\n    [*] --> GROUP_PENDING\n"
+                    "    GROUP_PENDING --> PARTIALLY_PROVISIONED\n"
+                    "    PARTIALLY_PROVISIONED --> [*]\n"
+                ),
+                "notes": "Mock companion diagram.",
+            },
+        ],
+        "notes": "canned mock diagram plan",
+    },
+    "TestCaseUpdatePlan": {
+        "new_cases": [
+            {
+                "title": "Split shipment — two groups provisioned independently",
+                "preconditions": "Order with one in-stock and one backordered line.",
+                "steps": "1. Start the workflow. 2. Let provisioning split the order.",
+                "expected": "Order reaches PARTIALLY_PROVISIONED; two shipment groups exist.",
+                "type": "Functional",
+                "automated": "Yes",
+                "linked": "US-008",
+                "notes": "mock",
+            }
+        ],
+        "updated_cases": [
+            {"tc_id": "TC-06", "notes": "Now verified per shipment group (mock)."}
+        ],
+        "addendum": {
+            "out_of_scope_removed": ["Partial shipment (BCR-001) — now in scope."],
+            "test_types_added": ["Fan-out — per-group provisioning and dispatch."],
+            "notes": ["canned mock addendum"],
+        },
+    },
     "AnswerPlan": {
         "patches": [
             {

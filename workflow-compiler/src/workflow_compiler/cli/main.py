@@ -277,6 +277,14 @@ def approve_spec_cmd(
     provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
     model: str = typer.Option(None, "--model", help="Override the model id."),
     timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+    change_outputs: bool = typer.Option(
+        False, "--change-outputs",
+        help=(
+            "After every workflow compiled, produce the post-approval change outputs "
+            "(updated diagrams, modified code + diff, test documents) for a "
+            "knowledge-base-grounded project; written under <out-dir>/<project-id>/change-outputs/."
+        ),
+    ),
 ) -> None:
     """Approve the specs and compile every workflow through graph → code."""
     import asyncio
@@ -285,8 +293,29 @@ def approve_spec_cmd(
         _run_approve_spec(
             project_id, spec_dir, list(workflow or []), reviewer, out_dir,
             accept_incomplete, allow_unconfirmed, provider, model, timeout,
+            change_outputs=change_outputs,
         )
     )
+
+
+@app.command(name="change-outputs")
+def change_outputs_cmd(
+    project_id: str = typer.Argument(..., help="Approved, knowledge-base-grounded project id."),
+    stage: str = typer.Option(
+        "all", "--stage", help="Stage to (re)run: all | diagrams | code | tests_doc."
+    ),
+    out_dir: Path = typer.Option(
+        Path("./generated"), "--out-dir",
+        help="Root for output; the bundle lands in <out-dir>/<project-id>/change-outputs/.",
+    ),
+    provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
+    model: str = typer.Option(None, "--model", help="Override the model id."),
+    timeout: float = typer.Option(400.0, "--timeout", help="Per-request timeout in seconds."),
+) -> None:
+    """(Re)generate the post-approval change outputs of a grounded project."""
+    import asyncio
+
+    asyncio.run(_run_change_outputs(project_id, stage, out_dir, provider, model, timeout))
 
 
 @app.command()
@@ -756,6 +785,8 @@ async def _run_approve_spec(
     provider_name: str | None,
     model: str | None,
     timeout: float,
+    *,
+    change_outputs: bool = False,
 ) -> None:
     provider = _build_provider(provider_name, model, timeout)
     console.print(f"[bold]Provider[/]: {provider.name}")
@@ -772,8 +803,11 @@ async def _run_approve_spec(
             accept_incomplete=accept_incomplete,
             allow_unconfirmed_references=allow_unconfirmed,
             progress=_make_progress(),
+            change_outputs=change_outputs,
         )
         await _write_project_code(compiler, project, out_dir)
+        if change_outputs and project.change_outputs is not None:
+            _write_change_outputs(project, out_dir)
     finally:
         await _aclose(provider)
 
@@ -795,6 +829,91 @@ async def _run_approve_spec(
         )
     else:
         console.print("\n[bold green]All workflows compiled.[/]")
+
+
+async def _run_change_outputs(
+    project_id: str,
+    stage: str,
+    out_dir: Path | None,
+    provider_name: str | None,
+    model: str | None,
+    timeout: float,
+) -> None:
+    from workflow_compiler.change_outputs.engine import ChangeOutputsError
+
+    provider = _build_provider(provider_name, model, timeout)
+    console.print(f"[bold]Provider[/]: {provider.name}")
+    compiler = _project_compiler(provider, review=True)
+    failed: str | None = None
+    try:
+        console.print(f"[bold]Generating change outputs[/] ({stage}) for {project_id} ...")
+        try:
+            project = await compiler.generate_change_outputs(
+                project_id, stages=[stage], progress=_make_progress()
+            )
+        except ChangeOutputsError as exc:
+            failed = str(exc)
+            project = await compiler.load_project(project_id)
+    finally:
+        await _aclose(provider)
+    if project.change_outputs is not None:
+        _write_change_outputs(project, out_dir)
+        _print_change_outputs(project)
+    if failed:
+        console.print(f"\n[bold red]{failed}[/]")
+        raise typer.Exit(code=1)
+
+
+def _write_change_outputs(project: object, out_dir: Path | None) -> None:
+    """Unpack the change-outputs bundle under ``<out-dir>/<project-id>/change-outputs/``."""
+    import io
+    import zipfile
+
+    from workflow_compiler.change_outputs.engine import change_label_of
+    from workflow_compiler.change_outputs.export import export_zip
+    from workflow_compiler.models import CompilationProject
+
+    assert isinstance(project, CompilationProject)
+    outputs = project.change_outputs
+    if outputs is None or out_dir is None:
+        return
+    label = outputs.tests_doc.change_request_id or change_label_of(project)
+    root = out_dir / project.project_id / "change-outputs"
+    root.mkdir(parents=True, exist_ok=True)
+    data = export_zip(outputs, project_id=project.project_id, label=label)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        archive.extractall(root)
+    console.print(f"[dim]Change outputs written to[/] {root}")
+
+
+def _print_change_outputs(project: object) -> None:
+    from workflow_compiler.models import CompilationProject
+
+    assert isinstance(project, CompilationProject)
+    outputs = project.change_outputs
+    if outputs is None:
+        return
+    console.print("\n[bold]Change outputs[/]")
+    for name, record in outputs.stages.items():
+        secs = f"{record.seconds:.0f}s" if record.seconds is not None else "-"
+        err = f"  {record.error}" if record.error else ""
+        console.print(f"  {name:10} {record.status:8} {secs}{err}")
+    for d in outputs.diagrams:
+        console.print(f"  diagram {d.name}  {'ok' if not d.checks else '; '.join(d.checks)}")
+    for f in outputs.code.files:
+        if f.status.value == "unchanged":
+            continue
+        console.print(
+            f"  {f.status.value:9} {f.path}  ast={'ok' if f.checks.ast_ok else 'FAIL'}"
+        )
+    tests = outputs.tests_doc
+    if tests.test_cases:
+        console.print(
+            f"  test cases: {len(tests.test_cases)} rows, new {', '.join(tests.new_ids) or '-'}, "
+            f"updated {', '.join(tests.changed_ids) or '-'}"
+        )
+    for w in outputs.warnings:
+        console.print(f"  [yellow]warning[/] {w}")
 
 
 async def _write_project_code(compiler: object, project: object, out_dir: Path | None) -> None:

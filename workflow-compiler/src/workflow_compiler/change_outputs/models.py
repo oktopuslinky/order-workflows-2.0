@@ -23,6 +23,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from workflow_compiler.docs_export.xlsx_writer import TestCaseRow
 from workflow_compiler.models.base import WorkflowBaseModel
 
+
+class _ContentModel(WorkflowBaseModel):
+    """Base for records that carry file text verbatim (no whitespace stripping)."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        validate_assignment=True,
+        use_enum_values=False,
+        str_strip_whitespace=False,
+        frozen=False,
+    )
+
+
 #: The stages, in the order the engine runs them.
 STAGES: tuple[str, ...] = ("diagrams", "code", "tests_doc")
 StageName = Literal["diagrams", "code", "tests_doc"]
@@ -38,7 +51,7 @@ class DiagramKind(StrEnum):
     WORKFLOW = "workflow"  # the per-workflow spec mermaid (D10, section 4)
 
 
-class UpdatedDiagram(WorkflowBaseModel):
+class UpdatedDiagram(_ContentModel):
     """One diagram file: its original text (when it existed) and the update."""
 
     name: str = Field(..., description="File name, e.g. 'order-state-machine.mmd'.")
@@ -78,7 +91,7 @@ class FileChecks(WorkflowBaseModel):
     )
 
 
-class ChangedFile(WorkflowBaseModel):
+class ChangedFile(_ContentModel):
     """One file of the code bundle: original, updated and the unified diff."""
 
     path: str = Field(..., description="Corpus-relative path (POSIX).")
@@ -113,9 +126,10 @@ class CodeChangeBundle(WorkflowBaseModel):
         return [f for f in self.files if f.status is not FileStatus.UNCHANGED]
 
 
-class TestDocUpdate(WorkflowBaseModel):
+class TestDocUpdate(_ContentModel):
     """The updated test-case matrix and the test-plan addendum."""
 
+    __test__ = False  # not a pytest class despite the name
     test_cases: list[TestCaseRow] = Field(
         default_factory=list, description="The full updated matrix (existing + new rows)."
     )
@@ -141,7 +155,7 @@ class StageRecord(WorkflowBaseModel):
     model: str = Field(default="")
 
 
-class ChangeOutputs(WorkflowBaseModel):
+class ChangeOutputs(_ContentModel):
     """Everything produced after approval for a grounded project."""
 
     diagrams: list[UpdatedDiagram] = Field(default_factory=list)
@@ -198,6 +212,7 @@ class TestCaseDraft(BaseModel):
     """A new test-case row (the engine assigns the id)."""
 
     model_config = ConfigDict(extra="ignore")
+    __test__ = False  # not a pytest class despite the name
 
     title: str = ""
     preconditions: str = ""
@@ -213,6 +228,7 @@ class TestCaseUpdate(BaseModel):
     """An update to an existing row: only non-empty fields replace the original."""
 
     model_config = ConfigDict(extra="ignore")
+    __test__ = False  # not a pytest class despite the name
 
     tc_id: str = ""
     title: str = ""
@@ -229,6 +245,7 @@ class TestPlanAddendumDraft(BaseModel):
     """Structured test-plan addendum; rendered to markdown deterministically."""
 
     model_config = ConfigDict(extra="ignore")
+    __test__ = False  # not a pytest class despite the name
 
     out_of_scope_removed: list[str] = Field(default_factory=list)
     in_scope_added: list[str] = Field(default_factory=list)
@@ -244,6 +261,7 @@ class TestCaseUpdatePlan(BaseModel):
     """The model's answer for ``update_test_cases``."""
 
     model_config = ConfigDict(extra="ignore")
+    __test__ = False  # not a pytest class despite the name
 
     new_cases: list[TestCaseDraft] = Field(default_factory=list)
     updated_cases: list[TestCaseUpdate] = Field(default_factory=list)

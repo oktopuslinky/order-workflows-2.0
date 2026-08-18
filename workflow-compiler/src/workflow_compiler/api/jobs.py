@@ -44,9 +44,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
-JobKind = Literal["validate", "approve", "predraft", "kb_ingest"]
+JobKind = Literal[
+    "validate", "approve", "predraft", "kb_ingest", "cr_questions", "cr_draft", "cr_revise"
+]
 JobStatus = Literal["running", "succeeded", "failed", "canceled"]
-ScopeKind = Literal["project", "knowledge_base"]
+ScopeKind = Literal["project", "knowledge_base", "change_request"]
 
 #: Speculative work: started by the system rather than the user, and never worth
 #: making the user wait for. It is exempt from the one-run-per-project rule and
@@ -67,7 +69,9 @@ class JobConflictError(Exception):
     """A run is already in flight for this scope (one active run per scope)."""
 
     def __init__(self, scope_id: str, job_id: str, scope_kind: ScopeKind = "project") -> None:
-        noun = "project" if scope_kind == "project" else "knowledge base"
+        noun = {"project": "project", "knowledge_base": "knowledge base"}.get(
+            scope_kind, "change request"
+        )
         super().__init__(f"A run is already in progress for {noun} {scope_id!r}.")
         self.project_id = scope_id
         self.scope_id = scope_id

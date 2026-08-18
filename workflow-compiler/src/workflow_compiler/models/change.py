@@ -220,7 +220,9 @@ class ChatTurn(WorkflowBaseModel):
     text: str
     kind: str = Field(
         default="message",
-        description="question | answer | followup | note | draft | revision | edit | approve | status",
+        description=(
+            "question | answer | followup | note | draft | revision | edit | approve | status"
+        ),
     )
     at: datetime = Field(default_factory=_now)
 
@@ -392,7 +394,9 @@ class AffectedItem(BaseModel):
         description="module | function | class | type | document | story | test_case | "
         "test_plan | epic | diagram | requirement | other",
     )
-    ref: str = Field(default="", description="Id or path, e.g. `existing_Codebase/shared/types.py`.")
+    ref: str = Field(
+        default="", description="Id or path, e.g. `existing_Codebase/shared/types.py`."
+    )
     change_type: str = Field(default="modify", description="modify | add | remove | verify")
     rationale: str = ""
     kg_ref: str = Field(default="", description="Knowledge-graph node id when known.")

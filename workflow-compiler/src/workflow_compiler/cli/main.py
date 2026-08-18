@@ -36,9 +36,11 @@ app = typer.Typer(
 console = Console()
 
 # Knowledge bases live in their own module; registered as the ``kb`` sub-command.
+from workflow_compiler.cli.cr import cr_app  # noqa: E402
 from workflow_compiler.cli.kb import kb_app  # noqa: E402
 
 app.add_typer(kb_app, name="kb")
+app.add_typer(cr_app, name="cr")
 
 
 def _version_callback(value: bool) -> None:

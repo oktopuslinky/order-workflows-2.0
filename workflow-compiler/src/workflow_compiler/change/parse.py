@@ -53,7 +53,7 @@ _META = re.compile(r"^\*\*([^*]+?):\*\*\s*(.*)$")
 _CHECK = re.compile(r"^[-*]\s+\[( |x|X)\]\s+(.*)$")
 _BULLET = re.compile(r"^[-*]\s+(?!\[[ xX]\]\s)(.*)$")
 _SOURCE = re.compile(r"^[-*]\s+`([^`]+)`(?:\s+—\s+(.*))?$")
-_SPAN = re.compile(r"lines?\s+(\d+)\s*[–-]\s*(\d+)")
+_SPAN = re.compile(r"lines?\s+(\d+)\s*[-–]\s*(\d+)")  # noqa: RUF001 (en dash is valid in the reference docs)
 _EMPTY_MARKERS = {"_None._", "_To be determined._", "_No traversal rows._"}
 
 

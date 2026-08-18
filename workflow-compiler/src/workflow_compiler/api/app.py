@@ -44,6 +44,11 @@ graph that later grounds change requests and specs; see ``kg/``):
 - ``GET    /knowledge-bases/{id}/search``     — BM25 anchor candidates (``?q=…``).
 - ``GET    /knowledge-bases/{id}/files``      — corpus file list, or one file (``?path=``).
 - ``GET    /knowledge-bases/{id}/graph/summary`` — counts by type + best-connected nodes.
+- ``POST   /change-requests``                 — register a BCR against a knowledge base.
+- ``GET    /change-requests[/{id}]``          — list / one change request (wizard + artifacts).
+- ``POST   /change-requests/{id}/wizard/start|answer|skip|draft|revise`` — the guided wizard
+  (start/draft/revise run as ``cr_questions``/``cr_draft``/``cr_revise`` jobs).
+- ``GET/PUT /change-requests/{id}/artifacts/{kind}``, ``POST …/approve`` — versioned artifacts.
 
 Per-workflow endpoints (viewing plus the manual override for workflows whose
 graph health fell below the auto-approve threshold):
@@ -71,7 +76,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -100,6 +105,7 @@ from workflow_compiler.api.auth import (
 )
 from workflow_compiler.api.dependencies import (
     SELECTABLE_PROVIDERS,
+    get_change_service,
     get_compiler,
     get_executor,
     get_kg_service,
@@ -108,9 +114,14 @@ from workflow_compiler.api.dependencies import (
     project_compiler_for_model,
     project_compiler_for_selection,
 )
-from workflow_compiler.api.jobs import Job, JobConflictError, JobManager, JobProgress
+from workflow_compiler.api.jobs import Job, JobConflictError, JobKind, JobManager, JobProgress
 from workflow_compiler.api.schemas import (
     ApproveRequest,
+    ArtifactResponse,
+    ArtifactUpdateRequest,
+    ChangeRequestListResponse,
+    ChangeRequestResponse,
+    ChangeRequestSummary,
     CvpaPreviewRequest,
     CvpaPreviewResponse,
     DialogueAnswerRequest,
@@ -157,10 +168,15 @@ from workflow_compiler.api.schemas import (
     StartRunRequest,
     TemporalHealth,
     UserPublic,
+    WizardAnswerRequest,
+    WizardDraftRequest,
+    WizardReviseRequest,
+    WizardStartRequest,
     WorkflowIdList,
     WorkflowInputFieldSchema,
     WorkflowStateResponse,
 )
+from workflow_compiler.change.service import ChangeRequestService
 from workflow_compiler.codegen.temporal.project_generator import generate_project_files
 from workflow_compiler.compiler import WorkflowCompiler
 from workflow_compiler.config import get_settings
@@ -175,6 +191,7 @@ from workflow_compiler.exceptions import (
     CompilationError,
     EditPreviewStaleError,
     LLMProviderError,
+    ParseError,
     ProviderConnectionError,
     ProviderTimeoutError,
     StateNotFoundError,
@@ -207,6 +224,13 @@ from workflow_compiler.models import (
     SpecChatSession,
     TemporalWorkflowDesign,
     WorkflowState,
+)
+from workflow_compiler.models.change import (
+    STEP_LABELS,
+    ArtifactKind,
+    ArtifactVersion,
+    ChangeRequest,
+    StepStatus,
 )
 from workflow_compiler.models.user import User
 from workflow_compiler.project_compiler import ProjectCompiler
@@ -433,7 +457,6 @@ def create_app() -> FastAPI:
             },
         }
 
-
     @app.post("/auth/register", response_model=UserPublic, tags=["auth"])
     async def register(
         request: RegisterRequest,
@@ -443,9 +466,7 @@ def create_app() -> FastAPI:
         """Create a local account and sign it in."""
         email = request.email.strip().lower()
         if "@" not in email:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "Enter a valid email address."
-            )
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Enter a valid email address.")
         if await store.get_by_email(email) is not None:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "An account with this email already exists."
@@ -473,9 +494,7 @@ def create_app() -> FastAPI:
         if user is None or not verify_password(
             request.password, user.password_hash, user.password_salt
         ):
-            raise HTTPException(
-                status.HTTP_401_UNAUTHORIZED, "Invalid email or password."
-            )
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password.")
         set_session_cookie(response, user)
         return _public(user)
 
@@ -539,9 +558,7 @@ def create_app() -> FastAPI:
             await provider.aclose()  # type: ignore[attr-defined]
 
         if not probe:
-            return LocalModelList(
-                models=ids, entries=[LocalModel(id=i) for i in ids], probed=False
-            )
+            return LocalModelList(models=ids, entries=[LocalModel(id=i) for i in ids], probed=False)
 
         entries: list[LocalModel] = []
         for model_id in ids:
@@ -552,9 +569,7 @@ def create_app() -> FastAPI:
                 )
                 entries.append(LocalModel(id=model_id, available=True))
             except LLMProviderError as exc:
-                entries.append(
-                    LocalModel(id=model_id, available=False, detail=str(exc)[:200])
-                )
+                entries.append(LocalModel(id=model_id, available=False, detail=str(exc)[:200]))
             finally:
                 await checked.aclose()  # type: ignore[attr-defined]
         return LocalModelList(models=ids, entries=entries, probed=True)
@@ -641,8 +656,7 @@ def create_app() -> FastAPI:
             if provider not in SELECTABLE_PROVIDERS:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    f"Unknown provider '{provider}'. "
-                    f"Available: {', '.join(SELECTABLE_PROVIDERS)}.",
+                    f"Unknown provider '{provider}'. Available: {', '.join(SELECTABLE_PROVIDERS)}.",
                 )
             return project_compiler_for_selection(provider, model)
         if model:
@@ -667,9 +681,7 @@ def create_app() -> FastAPI:
             await compiler.save_project(project)
         return await _project_response(project, compiler, user)
 
-    @app.post(
-        "/projects/compile-upload", response_model=ProjectResponse, tags=["projects"]
-    )
+    @app.post("/projects/compile-upload", response_model=ProjectResponse, tags=["projects"])
     async def compile_project_upload(
         file: UploadFile = File(..., description="A .docx/.pdf/.md/.html/.txt document."),
         persist: bool = Form(default=True),
@@ -716,9 +728,7 @@ def create_app() -> FastAPI:
             except (StateNotFoundError, ValidationError):
                 # One corrupt/legacy project file must not take down the whole
                 # metrics page; per-project endpoints still surface the error.
-                logger.warning(
-                    "Skipping unloadable project %r in metrics summary", project_id
-                )
+                logger.warning("Skipping unloadable project %r in metrics summary", project_id)
                 continue
             if not shared and project.owner_id not in (None, user.user_id):
                 continue
@@ -750,9 +760,7 @@ def create_app() -> FastAPI:
             try:
                 project = await compiler.load_project(project_id)
             except (StateNotFoundError, ValidationError):
-                logger.warning(
-                    "Skipping unloadable project %r in project listing", project_id
-                )
+                logger.warning("Skipping unloadable project %r in project listing", project_id)
                 continue
             if not shared and project.owner_id not in (None, user.user_id):
                 continue
@@ -771,9 +779,7 @@ def create_app() -> FastAPI:
         _check_owner(project, user)
         return await _project_response(project, compiler, user)
 
-    @app.patch(
-        "/projects/{project_id}", response_model=ProjectSummary, tags=["projects"]
-    )
+    @app.patch("/projects/{project_id}", response_model=ProjectSummary, tags=["projects"])
     async def rename_project(
         project_id: str,
         request: RenameProjectRequest,
@@ -789,9 +795,7 @@ def create_app() -> FastAPI:
         await compiler.save_project(project)
         return _project_summary(project)
 
-    @app.get(
-        "/projects/{project_id}/files", response_model=ProjectFilesResponse, tags=["projects"]
-    )
+    @app.get("/projects/{project_id}/files", response_model=ProjectFilesResponse, tags=["projects"])
     async def get_project_files(
         project_id: str,
         project_compiler: ProjectCompiler = Depends(get_project_compiler),
@@ -829,14 +833,10 @@ def create_app() -> FastAPI:
     ) -> ProjectResponse:
         """Fold edited spec Markdown back onto the structured specs (no LLM)."""
         _check_owner(await _guard(compiler.load_project(project_id)), user)
-        project = await _guard(
-            compiler.update_specs(project_id, request.spec_markdown)
-        )
+        project = await _guard(compiler.update_specs(project_id, request.spec_markdown))
         return await _project_response(project, compiler, user)
 
-    @app.post(
-        "/projects/{project_id}/edit", response_model=ProjectResponse, tags=["projects"]
-    )
+    @app.post("/projects/{project_id}/edit", response_model=ProjectResponse, tags=["projects"])
     async def edit_project(
         project_id: str,
         request: ProjectEditRequest,
@@ -895,9 +895,7 @@ def create_app() -> FastAPI:
             workflows_removed=preview.record.workflows_removed,
         )
 
-    @app.post(
-        "/projects/{project_id}/validate", response_model=ProjectResponse, tags=["projects"]
-    )
+    @app.post("/projects/{project_id}/validate", response_model=ProjectResponse, tags=["projects"])
     async def validate_project(
         project_id: str,
         request: SpecUpdateRequest,
@@ -907,15 +905,11 @@ def create_app() -> FastAPI:
         """Ingest edits (if any) and run the spec validator review passes."""
         _check_owner(await _guard(compiler.load_project(project_id)), user)
         project = await _guard(
-            compiler.validate_specs(
-                project_id, markdown_by_slug=request.spec_markdown or None
-            )
+            compiler.validate_specs(project_id, markdown_by_slug=request.spec_markdown or None)
         )
         return await _project_response(project, compiler, user)
 
-    @app.post(
-        "/projects/{project_id}/approve", response_model=ProjectResponse, tags=["projects"]
-    )
+    @app.post("/projects/{project_id}/approve", response_model=ProjectResponse, tags=["projects"])
     async def approve_project(
         project_id: str,
         request: ProjectApproveRequest,
@@ -1005,9 +999,7 @@ def create_app() -> FastAPI:
             answered=session.answered_count if session is not None else 0,
             total=len(session.questions) if session is not None else 0,
             remaining=(
-                max(len(session.questions) - session.cursor, 0)
-                if session is not None
-                else 0
+                max(len(session.questions) - session.cursor, 0) if session is not None else 0
             ),
             changes=outcome.changes if outcome is not None else [],
             parked_as=outcome.parked_as if outcome is not None else None,
@@ -1102,9 +1094,7 @@ def create_app() -> FastAPI:
         """Answer the current question in prose; the spec is patched in place."""
         _check_owner(await _guard(compiler.load_project(project_id)), user)
         project, session, outcome = await _guard(
-            compiler.answer_dialogue(
-                project_id, request.answer, chosen_option=request.option
-            )
+            compiler.answer_dialogue(project_id, request.answer, chosen_option=request.option)
         )
         return _dialogue_response(project, session, outcome=outcome)
 
@@ -1266,8 +1256,7 @@ def create_app() -> FastAPI:
         if provider and provider not in SELECTABLE_PROVIDERS:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                f"Unknown provider '{provider}'. "
-                f"Available: {', '.join(SELECTABLE_PROVIDERS)}.",
+                f"Unknown provider '{provider}'. Available: {', '.join(SELECTABLE_PROVIDERS)}.",
             )
 
     async def _start_kb_ingest(
@@ -1344,9 +1333,7 @@ def create_app() -> FastAPI:
         )
         return _kb_response(kb, job)
 
-    @app.get(
-        "/knowledge-bases", response_model=KnowledgeBaseListResponse, tags=["knowledge-bases"]
-    )
+    @app.get("/knowledge-bases", response_model=KnowledgeBaseListResponse, tags=["knowledge-bases"])
     async def list_knowledge_bases(
         kg: KgService = Depends(get_kg_service),
         user: User = Depends(get_current_user),
@@ -1496,6 +1483,375 @@ def create_app() -> FastAPI:
         return KbGraphSummaryResponse(kb_id=kb_id, summary=summary)
 
     # ------------------------------------------------------------------ #
+    # Change requests: BCR + knowledge base → guided wizard → artifacts
+    # ------------------------------------------------------------------ #
+
+    def _check_cr_owner(cr: ChangeRequest, user: User) -> None:
+        if get_settings().projects_shared:
+            return
+        if cr.owner_id is not None and cr.owner_id != user.user_id:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"No change request with id {cr.cr_id!r}."
+            )
+
+    def _cr_summary(cr: ChangeRequest) -> ChangeRequestSummary:
+        current = cr.wizard.current
+        return ChangeRequestSummary(
+            cr_id=cr.cr_id,
+            kb_id=cr.kb_id,
+            kb_name=cr.kb_name,
+            title=cr.title,
+            doc_id=cr.bcr_meta.doc_id,
+            stage=cr.stage.value,
+            cursor=cr.wizard.cursor,
+            current_step=current.kind.value if current else None,
+            owner_id=cr.owner_id,
+            created_at=cr.created_at,
+            updated_at=cr.updated_at,
+        )
+
+    def _cr_response(cr: ChangeRequest, job: Job | None = None) -> ChangeRequestResponse:
+        current = cr.wizard.current
+        question = current.current_question if current else None
+        active = job or jobs.active_for_scope(cr.cr_id, scope_kind="change_request")
+        return ChangeRequestResponse(
+            change_request=cr,
+            current_step=current.kind.value if current else None,
+            question=question.prompt if question else None,
+            question_options=question.prompt_options if question else [],
+            job=_job_response(active) if active is not None else None,
+        )
+
+    async def _start_cr_job(
+        cr: ChangeRequest,
+        *,
+        kind: JobKind,
+        user: User,
+        run: Callable[[JobProgress], Awaitable[object]],
+    ) -> Job:
+        progress = JobProgress(message="queued")
+        try:
+            return await jobs.start(
+                scope_id=cr.cr_id,
+                scope_kind="change_request",
+                kind=kind,
+                owner_id=user.user_id,
+                run=lambda: run(progress),
+                progress=progress,
+            )
+        except JobConflictError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+
+    async def _maybe_ask(
+        changes: ChangeRequestService, cr: ChangeRequest, user: User
+    ) -> Job | None:
+        """Kick a ``cr_questions`` job when the current step has not been asked yet."""
+        current = cr.wizard.current
+        if current is None or current.status != StepStatus.PENDING or current.questions:
+            return None
+        if jobs.active_for_scope(cr.cr_id, scope_kind="change_request") is not None:
+            return None
+        kind = current.kind
+
+        async def run(progress: JobProgress) -> object:
+            progress.update(f"drafting {STEP_LABELS[kind].lower()} questions")
+            return await changes.start_questions(cr.cr_id, kind)
+
+        return await _start_cr_job(cr, kind="cr_questions", user=user, run=run)
+
+    @app.post(
+        "/change-requests",
+        response_model=ChangeRequestResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["change-requests"],
+    )
+    async def create_change_request(
+        kb_id: str = Form(...),
+        file: UploadFile | None = File(default=None, description="BCR as .docx/.md/.txt."),
+        text: str | None = Form(default=None),
+        title: str | None = Form(default=None),
+        provider: str | None = Form(default=None),
+        model: str | None = Form(default=None),
+        changes: ChangeRequestService = Depends(get_change_service),
+        kg: KgService = Depends(get_kg_service),
+        user: User = Depends(get_current_user),
+    ) -> ChangeRequestResponse:
+        """Register a change request against a knowledge base (no LLM call yet).
+
+        The document is parsed deterministically (metadata block, numbered
+        requirements, impact seed terms). Start the wizard with
+        ``POST /change-requests/{id}/wizard/start``. ``provider``/``model``
+        select the LLM for every wizard call (default: cloud Nemotron).
+        """
+        _validate_provider(provider)
+        _check_kb_owner(await _guard(kg.get(kb_id)), user)
+        data = await file.read() if file is not None else None
+
+        async def create() -> ChangeRequest:
+            try:
+                return await changes.create(
+                    kb_id,
+                    data=data,
+                    text=text,
+                    filename=file.filename if file is not None else None,
+                    title=title,
+                    owner_id=user.user_id,
+                    provider=provider,
+                    model=model,
+                )
+            except UnsupportedFormatError as exc:
+                raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, str(exc)) from exc
+            except ParseError as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+        return _cr_response(await _guard(create()))
+
+    @app.get("/change-requests", response_model=ChangeRequestListResponse, tags=["change-requests"])
+    async def list_change_requests(
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ChangeRequestListResponse:
+        shared = get_settings().projects_shared
+        items = [
+            _cr_summary(cr)
+            for cr in await _guard(changes.list_all())
+            if shared or cr.owner_id in (None, user.user_id)
+        ]
+        return ChangeRequestListResponse(change_requests=items)
+
+    @app.get(
+        "/change-requests/{cr_id}",
+        response_model=ChangeRequestResponse,
+        tags=["change-requests"],
+    )
+    async def get_change_request(
+        cr_id: str,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ChangeRequestResponse:
+        cr = await _guard(changes.get(cr_id))
+        _check_cr_owner(cr, user)
+        return _cr_response(cr)
+
+    @app.get(
+        "/change-requests/{cr_id}/wizard",
+        response_model=ChangeRequestResponse,
+        tags=["change-requests"],
+    )
+    async def get_change_wizard(
+        cr_id: str,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ChangeRequestResponse:
+        """Same payload as ``GET /change-requests/{id}`` (the wizard lives on it)."""
+        cr = await _guard(changes.get(cr_id))
+        _check_cr_owner(cr, user)
+        return _cr_response(cr)
+
+    @app.delete("/change-requests/{cr_id}", tags=["change-requests"])
+    async def delete_change_request(
+        cr_id: str,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> dict[str, str]:
+        cr = await _guard(changes.get(cr_id))
+        _check_cr_owner(cr, user)
+        active = jobs.active_for_scope(cr_id, scope_kind="change_request")
+        if active is not None:
+            await jobs.cancel(active.job_id)
+        await _guard(changes.delete(cr_id))
+        return {"status": "deleted", "cr_id": cr_id}
+
+    @app.post(
+        "/change-requests/{cr_id}/wizard/start",
+        response_model=ChangeRequestResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["change-requests"],
+    )
+    async def start_change_wizard(
+        cr_id: str,
+        request: WizardStartRequest | None = None,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ChangeRequestResponse:
+        """Start the wizard (ids + impact traversal, no LLM) and ask the current step's
+        clarifying questions as a ``cr_questions`` job. Idempotent: calling it on a
+        step that already has its questions just returns the state."""
+        request = request or WizardStartRequest()
+        _validate_provider(request.provider)
+        cr = await _guard(changes.get(cr_id))
+        _check_cr_owner(cr, user)
+        cr = await _guard(changes.start(cr_id, provider=request.provider, model=request.model))
+        job = await _maybe_ask(changes, cr, user)
+        return _cr_response(cr, job)
+
+    @app.post(
+        "/change-requests/{cr_id}/wizard/answer",
+        response_model=ChangeRequestResponse,
+        tags=["change-requests"],
+    )
+    async def answer_change_wizard(
+        cr_id: str,
+        request: WizardAnswerRequest,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ChangeRequestResponse:
+        """Answer the current question (one short LLM call, synchronous)."""
+        _check_cr_owner(await _guard(changes.get(cr_id)), user)
+        cr, _outcome = await _guard(changes.answer(cr_id, request.answer, option=request.option))
+        return _cr_response(cr)
+
+    @app.post(
+        "/change-requests/{cr_id}/wizard/skip",
+        response_model=ChangeRequestResponse,
+        tags=["change-requests"],
+    )
+    async def skip_change_wizard(
+        cr_id: str,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ChangeRequestResponse:
+        _check_cr_owner(await _guard(changes.get(cr_id)), user)
+        return _cr_response(await _guard(changes.skip(cr_id)))
+
+    @app.post(
+        "/change-requests/{cr_id}/wizard/draft",
+        response_model=ChangeRequestResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["change-requests"],
+    )
+    async def draft_change_wizard(
+        cr_id: str,
+        request: WizardDraftRequest | None = None,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ChangeRequestResponse:
+        """Draft the step's artifact as a ``cr_draft`` job (unanswered questions are skipped)."""
+        request = request or WizardDraftRequest()
+        cr = await _guard(changes.get(cr_id))
+        _check_cr_owner(cr, user)
+        step_kind = request.step or (cr.wizard.current.kind.value if cr.wizard.current else None)
+        if step_kind is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "The wizard is complete.")
+        try:
+            kind = ArtifactKind(step_kind)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+        async def run(progress: JobProgress) -> object:
+            return await changes.draft(cr_id, kind, progress=progress.update)
+
+        job = await _start_cr_job(cr, kind="cr_draft", user=user, run=run)
+        return _cr_response(cr, job)
+
+    @app.post(
+        "/change-requests/{cr_id}/wizard/revise",
+        response_model=ChangeRequestResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["change-requests"],
+    )
+    async def revise_change_wizard(
+        cr_id: str,
+        request: WizardReviseRequest,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ChangeRequestResponse:
+        """Apply a chat instruction to a drafted artifact as a ``cr_revise`` job."""
+        cr = await _guard(changes.get(cr_id))
+        _check_cr_owner(cr, user)
+        try:
+            kind = ArtifactKind(request.step)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        if not cr.artifacts.get(kind).markdown:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Draft the artifact before revising it.")
+
+        async def run(progress: JobProgress) -> object:
+            progress.update(f"revising {STEP_LABELS[kind].lower()}")
+            return await changes.revise(cr_id, kind, request.message)
+
+        job = await _start_cr_job(cr, kind="cr_revise", user=user, run=run)
+        return _cr_response(cr, job)
+
+    def _artifact_response(
+        cr: ChangeRequest, kind: ArtifactKind, version: ArtifactVersion | None
+    ) -> ArtifactResponse:
+        artifact = cr.artifacts.get(kind)
+        return ArtifactResponse(
+            cr_id=cr.cr_id,
+            kind=kind.value,
+            version=artifact.version,
+            status=artifact.status.value,
+            markdown=version.markdown if version is not None else artifact.markdown,
+            requested_version=version.version if version is not None else None,
+            history=artifact.history,
+            sources=artifact.sources,
+            coverage=artifact.coverage,
+        )
+
+    def _artifact_kind(kind: str) -> ArtifactKind:
+        try:
+            return ArtifactKind(kind)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"Unknown artifact kind {kind!r}."
+            ) from exc
+
+    @app.get(
+        "/change-requests/{cr_id}/artifacts/{kind}",
+        response_model=ArtifactResponse,
+        tags=["change-requests"],
+    )
+    async def get_change_artifact(
+        cr_id: str,
+        kind: str,
+        version: int | None = Query(default=None, ge=1),
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ArtifactResponse:
+        akind = _artifact_kind(kind)
+        cr, _artifact, entry = await _guard(changes.artifact(cr_id, akind, version=version))
+        _check_cr_owner(cr, user)
+        return _artifact_response(cr, akind, entry)
+
+    @app.put(
+        "/change-requests/{cr_id}/artifacts/{kind}",
+        response_model=ArtifactResponse,
+        tags=["change-requests"],
+    )
+    async def update_change_artifact(
+        cr_id: str,
+        kind: str,
+        request: ArtifactUpdateRequest,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ArtifactResponse:
+        """A human edit: stored as a new ``human_edit`` version (must still parse)."""
+        akind = _artifact_kind(kind)
+        _check_cr_owner(await _guard(changes.get(cr_id)), user)
+        cr = await _guard(changes.edit(cr_id, akind, request.markdown, note=request.note))
+        return _artifact_response(cr, akind, None)
+
+    @app.post(
+        "/change-requests/{cr_id}/artifacts/{kind}/approve",
+        response_model=ChangeRequestResponse,
+        tags=["change-requests"],
+    )
+    async def approve_change_artifact(
+        cr_id: str,
+        kind: str,
+        changes: ChangeRequestService = Depends(get_change_service),
+        user: User = Depends(get_current_user),
+    ) -> ChangeRequestResponse:
+        """Approve the artifact; the cursor advances and the next step's questions are
+        drafted in the background (``cr_questions`` job)."""
+        akind = _artifact_kind(kind)
+        _check_cr_owner(await _guard(changes.get(cr_id)), user)
+        cr = await _guard(changes.approve(cr_id, akind))
+        job = await _maybe_ask(changes, cr, user)
+        return _cr_response(cr, job)
+
+    # ------------------------------------------------------------------ #
     # Background jobs: cancelable validate/approve that survive navigation
     # ------------------------------------------------------------------ #
     # The synchronous /validate and /approve above stay for the CLI-parity path
@@ -1507,9 +1863,7 @@ def create_app() -> FastAPI:
         if get_settings().projects_shared:
             return
         if job.owner_id is not None and job.owner_id != user.user_id:
-            raise HTTPException(
-                status.HTTP_404_NOT_FOUND, f"No job with id {job.job_id!r}."
-            )
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"No job with id {job.job_id!r}.")
 
     def _job_response(job: Job, project: ProjectResponse | None = None) -> JobResponse:
         progress = (
@@ -1607,9 +1961,7 @@ def create_app() -> FastAPI:
         narrows to ``project`` or ``knowledge_base`` jobs.
         """
         owner_filter = None if get_settings().projects_shared else user.user_id
-        kind_filter = (
-            scope_kind if scope_kind in ("project", "knowledge_base") else None
-        )
+        kind_filter = scope_kind if scope_kind in ("project", "knowledge_base") else None
         return [
             _job_response(j)
             for j in jobs.list(
@@ -1652,9 +2004,7 @@ def create_app() -> FastAPI:
         assert settled is not None  # just fetched above; cancel returns the same job
         return _job_response(settled)
 
-    @app.post(
-        "/projects/{project_id}/cvpa", response_model=CvpaPreviewResponse, tags=["projects"]
-    )
+    @app.post("/projects/{project_id}/cvpa", response_model=CvpaPreviewResponse, tags=["projects"])
     async def classify_project_workflow(
         project_id: str,
         request: CvpaPreviewRequest,
@@ -1693,9 +2043,7 @@ def create_app() -> FastAPI:
         workflows: list[RunnableWorkflowSchema] = []
         for slug, workflow_id in project.workflow_ids.items():
             state = await _guard(states.load_state(workflow_id))
-            runnable = describe_runnable(
-                slug=slug, state=state, root=root, project_id=project_id
-            )
+            runnable = describe_runnable(slug=slug, state=state, root=root, project_id=project_id)
             workflows.append(
                 RunnableWorkflowSchema(
                     slug=runnable.slug,
@@ -1706,14 +2054,10 @@ def create_app() -> FastAPI:
                     bundle_dir=runnable.bundle_dir,
                     materialized=is_materialized(bundle_dir(root, project_id, slug)),
                     inputs=[
-                        WorkflowInputFieldSchema(
-                            name=f.name, type=f.type, sample=f.sample
-                        )
+                        WorkflowInputFieldSchema(name=f.name, type=f.type, sample=f.sample)
                         for f in runnable.inputs
                     ],
-                    signals=[
-                        SignalSchema(name=s.name, params=s.params) for s in runnable.signals
-                    ],
+                    signals=[SignalSchema(name=s.name, params=s.params) for s in runnable.signals],
                 )
             )
         return RunnableListResponse(
@@ -1725,9 +2069,7 @@ def create_app() -> FastAPI:
             workflows=workflows,
         )
 
-    @app.post(
-        "/projects/{project_id}/runs", response_model=RunResponse, tags=["runs"]
-    )
+    @app.post("/projects/{project_id}/runs", response_model=RunResponse, tags=["runs"])
     async def start_run(
         project_id: str,
         request: StartRunRequest,
@@ -1760,8 +2102,7 @@ def create_app() -> FastAPI:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"{request.slug!r} has no generated bundle to run — approve "
-                    "the specs first."
+                    f"{request.slug!r} has no generated bundle to run — approve the specs first."
                 ),
             )
 
@@ -1804,9 +2145,7 @@ def create_app() -> FastAPI:
             kept=materialized.kept,
         )
 
-    @app.get(
-        "/projects/{project_id}/runs", response_model=list[RunResponse], tags=["runs"]
-    )
+    @app.get("/projects/{project_id}/runs", response_model=list[RunResponse], tags=["runs"])
     async def list_runs(
         project_id: str,
         compiler: ProjectCompiler = Depends(get_project_compiler),
@@ -1815,9 +2154,9 @@ def create_app() -> FastAPI:
         """Runs for this project, newest first (cached states, no Temporal call)."""
         _check_owner(await _guard(compiler.load_project(project_id)), user)
         visible = None if get_settings().projects_shared else user.user_id
-        return [_cached_run_response(run) for run in runs.list(
-            owner_id=visible, project_id=project_id
-        )]
+        return [
+            _cached_run_response(run) for run in runs.list(owner_id=visible, project_id=project_id)
+        ]
 
     @app.get("/runs/{run_id}", response_model=RunResponse, tags=["runs"])
     async def get_run(

@@ -30,6 +30,7 @@ from workflow_compiler.models import (
     SuggestedOption,
     WorkflowState,
 )
+from workflow_compiler.models.change import ArtifactVersion, ChangeRequest, SourceRef
 from workflow_compiler.models.user import UserPreferences
 
 
@@ -762,3 +763,82 @@ class KbFileListResponse(BaseModel):
 class KbGraphSummaryResponse(BaseModel):
     kb_id: str
     summary: KgGraphSummary
+
+
+# --------------------------------------------------------------------------- #
+# Change requests (guided wizard: Impact → EPIC → Stories → TDD)
+# --------------------------------------------------------------------------- #
+
+
+class ChangeRequestSummary(BaseModel):
+    """List row for ``GET /change-requests``."""
+
+    cr_id: str
+    kb_id: str
+    kb_name: str = ""
+    title: str
+    doc_id: str | None = None
+    stage: str
+    cursor: int = 0
+    current_step: str | None = Field(
+        default=None, description="impact | epic | stories | tdd | None."
+    )
+    owner_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChangeRequestListResponse(BaseModel):
+    change_requests: list[ChangeRequestSummary]
+
+
+class ChangeRequestResponse(BaseModel):
+    """The full change request (wizard + artifacts) plus the job just started, if any."""
+
+    change_request: ChangeRequest
+    current_step: str | None = None
+    question: str | None = Field(
+        default=None, description="Text awaiting an answer on the current step (follow-up if open)."
+    )
+    question_options: list[SuggestedOption] = Field(default_factory=list)
+    job: JobResponse | None = None
+
+
+class WizardStartRequest(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+
+
+class WizardAnswerRequest(BaseModel):
+    answer: str = Field(..., min_length=1)
+    option: str | None = Field(
+        default=None, description="Label of the suggested option taken verbatim."
+    )
+
+
+class WizardDraftRequest(BaseModel):
+    step: str | None = Field(
+        default=None, description="impact | epic | stories | tdd (default: current)."
+    )
+
+
+class WizardReviseRequest(BaseModel):
+    step: str = Field(..., description="impact | epic | stories | tdd")
+    message: str = Field(..., min_length=1)
+
+
+class ArtifactUpdateRequest(BaseModel):
+    markdown: str = Field(..., min_length=1)
+    note: str = ""
+
+
+class ArtifactResponse(BaseModel):
+    cr_id: str
+    kind: str
+    version: int
+    status: str
+    markdown: str = Field(..., description="Requested version's markdown (latest by default).")
+    requested_version: int | None = None
+    history: list[ArtifactVersion]
+    sources: list[SourceRef]
+    coverage: float | None = None

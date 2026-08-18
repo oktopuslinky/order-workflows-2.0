@@ -79,9 +79,35 @@ _CONTAINER_TYPES = frozenset({"Repository", "Service", "Domain", "Subdomain"})
 _BUSINESS_ID_RE = re.compile(r"^[A-Z][A-Z0-9]{1,6}-\d+[A-Za-z0-9-]*$")
 _TEXT_LIKE = frozenset(
     {
-        ".md", ".txt", ".py", ".mmd", ".mermaid", ".json", ".yaml", ".yml", ".toml",
-        ".ini", ".cfg", ".csv", ".tsv", ".html", ".htm", ".xml", ".rst", ".js", ".ts",
-        ".tsx", ".jsx", ".java", ".go", ".rs", ".sql", ".sh", ".ps1", ".env", ".gitignore",
+        ".md",
+        ".txt",
+        ".py",
+        ".mmd",
+        ".mermaid",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".csv",
+        ".tsv",
+        ".html",
+        ".htm",
+        ".xml",
+        ".rst",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".java",
+        ".go",
+        ".rs",
+        ".sql",
+        ".sh",
+        ".ps1",
+        ".env",
+        ".gitignore",
     }
 )
 

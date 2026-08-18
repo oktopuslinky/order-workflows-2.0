@@ -11,12 +11,15 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from fastapi import Depends
+
 from workflow_compiler.compiler import WorkflowCompiler
+from workflow_compiler.kg.service import KgService
 
 if TYPE_CHECKING:
+    from workflow_compiler.change.service import ChangeRequestService
     from workflow_compiler.interfaces.executor import WorkflowExecutor
     from workflow_compiler.interfaces.llm import BaseLLMProvider
-    from workflow_compiler.kg.service import KgService
     from workflow_compiler.project_compiler import ProjectCompiler
 
 
@@ -171,4 +174,24 @@ def get_kg_service() -> KgService:
         kb_provider_factory,
         max_upload_bytes=settings.kg_max_upload_mb * 1024 * 1024,
         default_budget=settings.kg_retrieve_budget,
+    )
+
+
+def get_change_service(kg: KgService = Depends(get_kg_service)) -> ChangeRequestService:
+    """Provide the :class:`ChangeRequestService` (file store under the state root).
+
+    Built per request on top of whatever ``get_kg_service`` resolves to, so a
+    test that overrides the KG service gets a change service on the same
+    knowledge bases; tests may also override this dependency directly.
+    """
+    from workflow_compiler.change.service import ChangeRequestService
+    from workflow_compiler.config import get_settings
+    from workflow_compiler.storage.change_store import FileChangeRequestStore
+
+    settings = get_settings()
+    return ChangeRequestService(
+        FileChangeRequestStore(settings.state_store_path),
+        kg,
+        kb_provider_factory,
+        kg_budget=settings.change_kg_budget,
     )

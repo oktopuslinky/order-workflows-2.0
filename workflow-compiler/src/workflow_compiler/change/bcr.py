@@ -36,8 +36,10 @@ _META_LABELS: dict[str, str] = {
 
 _META_LINE = re.compile(r"^\s*\**\s*([A-Za-z][A-Za-z ]{1,24}?)\s*\**\s*:\s*\**\s*(.+?)\s*\**\s*$")
 _REQ_ROW = re.compile(r"^\s*\|?\s*((?:BCR|BR|REQ|CR|FR)-\d+(?:-\d+)*)\s*\|\s*(.+?)\s*\|?\s*$")
-_REQ_LINE = re.compile(r"^\s*\**\s*((?:BCR|BR|REQ|CR|FR)-\d+(?:-\d+)*)\s*\**\s*[:—–-]\s*(.+?)\s*$")
-_DOC_ID = re.compile(r"\b(BCR-\d{2,4})\b")
+_REQ_LINE = re.compile(
+    r"^\s*(?:[-*]\s+)?\**\s*((?:BCR|BR|REQ|CR|FR)-\d+(?:-\d+)*)\s*\**\s*[:—–-]\s*(.+?)\s*$"  # noqa: RUF001
+)
+_DOC_ID = re.compile(r"\b(BCR-\d{2,4})\b(?!-\d)")
 
 _PATH = re.compile(r"\b[\w./-]+?\.(?:py|mmd|md|docx|xlsx|yaml|yml|json|txt)\b")
 _IDENT = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")

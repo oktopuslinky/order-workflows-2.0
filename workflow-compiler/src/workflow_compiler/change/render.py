@@ -66,7 +66,9 @@ def bullets(items: Iterable[str], *, empty: str = "_None._") -> list[str]:
     return out or [empty]
 
 
-def checklist(items: Iterable[str], done: Sequence[bool] = (), *, empty: str = "_None._") -> list[str]:
+def checklist(
+    items: Iterable[str], done: Sequence[bool] = (), *, empty: str = "_None._"
+) -> list[str]:
     out: list[str] = []
     for i, item in enumerate(items):
         text = one_line(item)
@@ -119,7 +121,7 @@ def sources_footer(sources: Sequence[SourceRef]) -> list[str]:
         return lines
     for src in sources:
         if src.spans:
-            spans = ", ".join(f"lines {a}–{b}" for a, b in src.spans)
+            spans = ", ".join(f"lines {a}-{b}" for a, b in src.spans)
             lines.append(f"- `{src.path}` — {spans}")
         else:
             lines.append(f"- `{src.path}`")

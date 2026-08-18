@@ -3,7 +3,7 @@
 The wizard walks a :class:`~workflow_compiler.models.change.ChangeRequest`
 through **Impact → EPIC → Stories → TDD**. Per step:
 
-``start_step``  → the agent drafts 2–5 clarifying questions (grounded in a brief)
+``start_step``  → the agent drafts 2-5 clarifying questions (grounded in a brief)
 ``answer/skip`` → each answer becomes one brief line (one follow-up at most)
 ``draft``       → brief = BCR + answers + KG retrievals + impact traversal +
                   previously approved artifacts → agent plan → **engine assigns
@@ -207,7 +207,9 @@ class ChangeWizardEngine:
             await self.start_step(cr, current.kind)
         return cr
 
-    async def start_step(self, cr: ChangeRequest, kind: ArtifactKind | str | None = None) -> ChangeRequest:
+    async def start_step(
+        self, cr: ChangeRequest, kind: ArtifactKind | str | None = None
+    ) -> ChangeRequest:
         """Draft the clarifying questions for ``kind`` (default: the current step)."""
         self._require_started(cr)
         step = self._step(cr, kind)
@@ -329,7 +331,9 @@ class ChangeWizardEngine:
         artifact.coverage = brief.coverage
         step.status = StepStatus.DRAFTED
         step.drafted_at = cr.wizard.updated_at
-        step.say("assistant", f"Drafted {STEP_LABELS[step.kind]} v{artifact.version}: {note}", "draft")
+        step.say(
+            "assistant", f"Drafted {STEP_LABELS[step.kind]} v{artifact.version}: {note}", "draft"
+        )
         cr.touch()
         return cr
 
@@ -447,7 +451,7 @@ class ChangeWizardEngine:
         diagrams: list[str] = []
         for n, chunk in enumerate(_TDD_CHUNKS):
             spec = [(key, *by_key[key]) for key in chunk]
-            report(f"drafting TDD sections {spec[0][1]}–{spec[-1][1]}", n, len(_TDD_CHUNKS))
+            report(f"drafting TDD sections {spec[0][1]}-{spec[-1][1]}", n, len(_TDD_CHUNKS))
             plan = await self._agent.draft_tdd_sections(
                 brief.text,
                 tdd_id=cr.ids.tdd_id,
@@ -549,7 +553,9 @@ class ChangeWizardEngine:
             artifact.status = ArtifactStatus.DRAFTED
         if step.status in (StepStatus.PENDING, StepStatus.ASKING, StepStatus.APPROVED):
             step.status = StepStatus.DRAFTED
-        step.say("user", f"Edited the {STEP_LABELS[step.kind].lower()} (v{artifact.version}).", "edit")
+        step.say(
+            "user", f"Edited the {STEP_LABELS[step.kind].lower()} (v{artifact.version}).", "edit"
+        )
         cr.touch()
         return cr
 
@@ -632,9 +638,7 @@ class ChangeWizardEngine:
             except Exception as exc:  # pragma: no cover - retrieval must never block drafting
                 log.warning("kg retrieve failed for %r: %s", query, exc)
         sections, sources = _pack_sections(packets, self._total_budget)
-        coverage = (
-            sum(p.coverage for p in packets) / len(packets) if packets else 0.0
-        )
+        coverage = sum(p.coverage for p in packets) / len(packets) if packets else 0.0
         uncovered: list[str] = []
         for p in packets:
             for term in p.uncovered_terms:
@@ -649,7 +653,9 @@ class ChangeWizardEngine:
         elif not packets:
             note = "No knowledge-base context could be retrieved for this artifact."
         text = self._brief_text(cr, step_kind, sections, note)
-        return Brief(text=text, sources=sources, coverage=coverage, coverage_note=note, packets=packets)
+        return Brief(
+            text=text, sources=sources, coverage=coverage, coverage_note=note, packets=packets
+        )
 
     def brief_lite(self, cr: ChangeRequest, step: WizardStep) -> str:
         parts = [f"Change request {cr.doc_id} — {cr.title}", ""]
@@ -666,7 +672,10 @@ class ChangeWizardEngine:
             bits[-1] += f" (extends {cr.ids.prior_epic_id})"
         if cr.ids.story_ids:
             bits.append(f"stories {cr.ids.story_ids[0]}…{cr.ids.story_ids[-1]}")
-        bits.append(f"new TDD {cr.ids.tdd_id}" + (f" (supersedes {cr.ids.prior_tdd_id})" if cr.ids.prior_tdd_id else ""))
+        bits.append(
+            f"new TDD {cr.ids.tdd_id}"
+            + (f" (supersedes {cr.ids.prior_tdd_id})" if cr.ids.prior_tdd_id else "")
+        )
         if cr.ids.next_test_case:
             bits.append(f"next test case {cr.ids.next_test_case}")
         return "; ".join(bits)
@@ -676,10 +685,19 @@ class ChangeWizardEngine:
     ) -> str:
         lines: list[str] = []
         src = f" (source file: {cr.source_filename})" if cr.source_filename else ""
-        lines += [f"### Change request {cr.doc_id} — {cr.title}{src}", "", cr.document_text.strip(), ""]
+        lines += [
+            f"### Change request {cr.doc_id} — {cr.title}{src}",
+            "",
+            cr.document_text.strip(),
+            "",
+        ]
         if cr.requirements:
             lines += ["### Requirements"] + [f"- {r.id}: {r.text}" for r in cr.requirements] + [""]
-        lines += ["### Assigned identifiers (use verbatim; never invent others)", f"- {self._ids_line(cr)}", ""]
+        lines += [
+            "### Assigned identifiers (use verbatim; never invent others)",
+            f"- {self._ids_line(cr)}",
+            "",
+        ]
         step = cr.wizard.step(kind)
         lines += ["### Requester decisions from the clarifying questions"]
         lines += [f"- {n}" for n in step.notes] or ["- (none yet)"]
@@ -703,7 +721,7 @@ class ChangeWizardEngine:
         for section in sections:
             where = section.path or section.node_id
             span = (
-                f" — lines {section.start_line}–{section.end_line}"
+                f" — lines {section.start_line}-{section.end_line}"
                 if section.start_line and section.end_line
                 else ""
             )
@@ -713,11 +731,18 @@ class ChangeWizardEngine:
             lines += ["### Artifacts already drafted/approved for this change"]
             for k in prior:
                 art = cr.artifacts.get(k)
-                lines += [f"#### {STEP_LABELS[k]} (v{art.version}, {art.status.value})", "", art.markdown.strip(), ""]
+                lines += [
+                    f"#### {STEP_LABELS[k]} (v{art.version}, {art.status.value})",
+                    "",
+                    art.markdown.strip(),
+                    "",
+                ]
         return "\n".join(lines).strip() + "\n"
 
 
-def _pack_sections(packets: Sequence[KgPacket], budget: int) -> tuple[list[KgSection], list[SourceRef]]:
+def _pack_sections(
+    packets: Sequence[KgPacket], budget: int
+) -> tuple[list[KgSection], list[SourceRef]]:
     """Round-robin sections across packets, dedupe by node id, stop at ``budget`` tokens."""
     seen: set[str] = set()
     picked: list[KgSection] = []

@@ -1007,7 +1007,7 @@ def splice_sections(markdown: str, sections: Sequence[RevisedSection]) -> str:
             continue
         key = _norm_heading(heading)
         if key in replacements:
-            out.append(replacements[key])
+            out.append(_merge_tables(f"{heading}\n{body}", replacements[key]))
             matched.add(key)
         else:
             out.append(f"{heading}\n{body}")
@@ -1025,6 +1025,61 @@ def splice_sections(markdown: str, sections: Sequence[RevisedSection]) -> str:
         out[insert_at:insert_at] = additions
     text = "\n".join(part.rstrip("\n") + "\n" for part in out)
     return text.rstrip() + "\n"
+
+
+def _table_rows(text: str) -> list[str]:
+    """Data rows of the pipe tables in ``text`` (header/separator/ellipsis rows excluded)."""
+    rows: list[str] = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        st = line.strip()
+        if not st.startswith("|"):
+            continue
+        cells = [c.strip() for c in st.strip("|").split("|")]
+        if all(set(c) <= set("-: ") for c in cells):
+            continue  # separator
+        if i + 1 < len(lines) and lines[i + 1].strip().startswith("|"):
+            nxt = [c.strip() for c in lines[i + 1].strip().strip("|").split("|")]
+            if all(set(c) <= set("-: ") for c in nxt):
+                continue  # header row (followed by the separator)
+        if all(c in ("...", "…", "") for c in cells):
+            continue  # ellipsis the model used to abbreviate
+        rows.append(st)
+    return rows
+
+
+def _merge_tables(original: str, replacement: str) -> str:
+    """Guard against a model abbreviating a long table when it returns a section.
+
+    If the replacement's table has fewer data rows than the original's, keep
+    the original section and append only the genuinely new rows to its table
+    (rows never silently disappear; deleting a row is a hand edit). Otherwise
+    the replacement stands, minus ``| … |`` ellipsis rows.
+    """
+    orig_rows = _table_rows(original)
+    new_rows = _table_rows(replacement)
+    if not orig_rows or not new_rows:
+        return replacement
+    if len(new_rows) >= len(orig_rows):
+        return "\n".join(
+            ln
+            for ln in replacement.splitlines()
+            if not all(c.strip() in ("...", "…", "") for c in ln.strip().strip("|").split("|"))
+            or not ln.strip().startswith("|")
+        )
+    known = {" ".join(r.lower().split()) for r in orig_rows}
+    additions: list[str] = []
+    for row in new_rows:
+        key = " ".join(row.lower().split())
+        if key not in known:
+            known.add(key)
+            additions.append(row)
+    if not additions:
+        return original
+    lines = original.splitlines()
+    last_row = max(i for i, ln in enumerate(lines) if ln.strip().startswith("|"))
+    lines[last_row + 1 : last_row + 1] = additions
+    return "\n".join(lines)
 
 
 def _first_line_with(text: str, needle: str, *, width: int = 220) -> str:

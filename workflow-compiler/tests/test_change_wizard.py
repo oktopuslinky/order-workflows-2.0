@@ -710,3 +710,33 @@ def test_splice_sections_replaces_by_heading_and_protects_footer() -> None:
     appendix = "## Appendix A — Knowledge-graph traversal (deterministic)"
     assert headings.index("## 7. Extra") < headings.index(appendix)
     assert doc.affected == _impact_doc().affected  # untouched sections verbatim
+
+
+def test_splice_keeps_table_rows_when_the_model_abbreviates() -> None:
+    from workflow_compiler.change.engine import splice_sections
+    from workflow_compiler.models.change import RevisedSection
+
+    doc = _impact_doc()
+    doc.affected = [
+        AffectedItem(kind="module", ref=f"m{i}.py", change_type="modify", rationale=f"r{i}")
+        for i in range(6)
+    ]
+    md = render_impact(doc)
+    abbreviated = "\n".join(
+        [
+            "## 3. Affected Components",
+            "",
+            "| Kind | Component | Change | Rationale | KG reference |",
+            "| --- | --- | --- | --- | --- |",
+            "| module | m0.py | modify | r0 |  |",
+            "| ... | ... | ... | ... | ... |",
+            "| epic | EPIC-001 | modify | DoD item |  |",
+            "| epic | EPIC-001 | modify | DoD item |  |",
+        ]
+    )
+    out = splice_sections(
+        md, [RevisedSection(heading="## 3. Affected Components", markdown=abbreviated)]
+    )
+    refs = [a.ref for a in parse_impact(out).affected]
+    # nothing lost, the new row added once
+    assert refs == [f"m{i}.py" for i in range(6)] + ["EPIC-001"]

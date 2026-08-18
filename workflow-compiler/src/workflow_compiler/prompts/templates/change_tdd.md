@@ -25,6 +25,35 @@ below write two parts:
   Honour every decision the requester made in the brief. Where nothing changes,
   say "No change." and state briefly why.
 
+Depth — this is an implementable design, not a summary. For each section the
+`proposed` part is normally 120–350 words, and:
+
+- **State Machine**: enumerate EVERY state after the change — the existing
+  ones, every new state the change request introduces (its PARTIALLY_* states,
+  for instance) and any nested sub-state-machine it calls for (e.g. per
+  shipment group: PENDING → PROVISIONED → DISPATCHED → DELIVERED / CANCELLED /
+  FAILED) with the transitions between them, as a bullet list or table; name
+  the companion diagram.
+- **Activities**: a markdown table `Activity | Purpose | Idempotency strategy |
+  Retry policy` listing every activity after the change (per-group
+  provision/dispatch/compensation, consolidated completion, per-group
+  idempotency keys), marking new/changed ones.
+- **Data Contracts**: a ```python fence with the changed/new dataclasses and
+  enum members exactly as they should read after the change (new record types
+  the change request names, list-valued results keyed by the new grouping,
+  new fields on the state record, new status members).
+- **Saga / Compensation**: pseudo-code (```python fence) for the per-group
+  saga inside the order-level saga, including partial failure and cancel of a
+  single group vs the whole order.
+- **Signals & Queries**: exact signal/query names and payloads after the change
+  (which existing signals gain parameters, what the status query returns).
+- **Timeouts & SLAs**: a table `Stage | Activity StartToCloseTimeout | Business
+  SLA` with per-group rows.
+- **Testing Strategy**: name the existing test cases that change (by TC id) and
+  the new scenarios to add (one per requirement of the change request), and the
+  test doubles needed.
+- **Open Items**: decisions still open, each with an owner.
+
 Sections to write in this call (use these keys verbatim):
 
 {{ sections_block }}

@@ -503,7 +503,7 @@ export const api = {
       {
         method: "PUT",
         headers: jsonHeaders,
-        body: JSON.stringify({ markdown, note: note ?? null }),
+        body: JSON.stringify({ markdown, note: note ?? "" }),
       },
     ),
   approveChangeArtifact: (id: string, kind: ChangeStepKind) =>

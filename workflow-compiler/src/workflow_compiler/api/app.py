@@ -1829,7 +1829,7 @@ def create_app() -> FastAPI:
         """A human edit: stored as a new ``human_edit`` version (must still parse)."""
         akind = _artifact_kind(kind)
         _check_cr_owner(await _guard(changes.get(cr_id)), user)
-        cr = await _guard(changes.edit(cr_id, akind, request.markdown, note=request.note))
+        cr = await _guard(changes.edit(cr_id, akind, request.markdown, note=request.note or ""))
         return _artifact_response(cr, akind, None)
 
     @app.post(

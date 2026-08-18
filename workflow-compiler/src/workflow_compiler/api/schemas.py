@@ -829,7 +829,7 @@ class WizardReviseRequest(BaseModel):
 
 class ArtifactUpdateRequest(BaseModel):
     markdown: str = Field(..., min_length=1)
-    note: str = ""
+    note: str | None = Field(default=None, description="Optional note for the new version.")
 
 
 class ArtifactResponse(BaseModel):

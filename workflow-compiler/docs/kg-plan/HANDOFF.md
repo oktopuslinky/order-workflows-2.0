@@ -1,8 +1,9 @@
 # KG change pipeline — handoff
 
-**Current phase:** Phase 1 **complete** (2026-08-18). Next: Phase 2 (document export — `.docx` /
-`.xlsx` in the manager's template style) — read `KG_CHANGE_PIPELINE_PLAN.md` §0 + Phase 2, then this
-file, then `RUNBOOK.md`, then `research/reference-repo-digest.md` §5 (the docx/xlsx conventions).
+**Current phase:** Phase 2 **complete** (2026-08-18). Next: Phase 3 (KG-grounded workflow project +
+change spec — "upload the TDD to the GUI") — read `KG_CHANGE_PIPELINE_PLAN.md` §0 + Phase 3, then this
+file, then `RUNBOOK.md`, then `research/workflow-compiler-digest.md` (extension points of the spec
+pipeline) and `research/kg-context-digest.md` (retrieval signatures for the grounder).
 
 **Worktree:** `C:\Users\devag\Documents\Code (local)\order-workflows-kg`, branch
 `feat/kg-change-pipeline` (from `demo/dialogue-plus-run` @ `0a6e84d`). Own `.venv` (Python 3.12,
@@ -49,7 +50,49 @@ Frontend: `app/knowledge/page.tsx`, `app/knowledge/[id]/page.tsx`, `components/K
 | Tests | `tests/test_change_wizard.py` (BCR parsing, ids, round trips, store, engine flow with `ScriptedAnalyst`, splice guards), `tests/test_api_change_requests.py`, `tests/test_cli_cr.py`, `tests/test_change_fixtures.py`; fixtures `tests/fixtures/change_artifacts/{BCR-001-impact-analysis,EPIC-002,US-008-015-stories,TDD-ORD-002}.md` (live Nemotron output, approved). |
 | Docs | `docs/HOW_IT_WORKS.md` §8d + §9.2/§9.3 rows, `docs/architecture.md` (change-request diagram), `README.md`, `CLAUDE.md`, `docs/kg-plan/RUNBOOK.md` (Phase 1 section). |
 
-## Ids / facts Phase 2 will need
+## What exists after Phase 2 (document export)
+
+| Path | Role |
+|---|---|
+| `docs_export/docx_writer.py` | `DocxWriter` (python-docx) in the reference look: 22 pt bold `2F5496` title, 14 pt `444444` subtitle, `rule()` (bottom-bordered paragraph), `meta(label, value)`, `heading(text, 1..3)`, `paragraph`/`note`/`callout`, `bullet` (• numbering), `numbered` (real decimal numbering, restarts at 1), `checklist_item` (☑  /☐  ), `code_block`, `table(columns, rows)` (2F5496 header, tblHeader, FFFFFF body, 9500 dxa), `sources`, `bytes()`. Body font Times New Roman 10 pt (Word's fallback for the reference files). `parse_inline` → `Span`s (`` `code` `` → Consolas `AA3377`, `**bold**`, `*italic*`). |
+| `docs_export/markdown_to_docx.py` | `parse_blocks` / `render_blocks` / `render_markdown(writer, md, heading_offset)` for our artifact grammar (headings, paragraphs, bullets, `1.` lists, checklists, pipe tables with `<br>`/`\|`, code fences, `>` notes, `**Label:** value`); `markdown_document(md, doc_type)` whole-document fallback. |
+| `docs_export/xlsx_writer.py` | `TestCaseRow` (9 columns), `TestCaseSummary`, `TC_COLUMNS`, `TC_TYPES` (reference vocabulary order), `write_test_case_matrix(rows, summary) -> bytes` (sheets **Test Cases** + **Summary**, literal totals), `read_test_case_rows(bytes)` (first sheet whose header starts with `TC ID`). **Phase 4 renders the updated matrix with this writer.** |
+| `docs_export/artifacts.py` | `export_impact/epic/story/stories/tdd(doc, *, label, approved)`, `export_test_case_preview(doc, existing, …)`, `preview_test_case_rows`, filenames (`impact_filename`, `epic_filename`, `story_filename`, `tdd_filename`, `stories_zip_filename`, `test_case_preview_filename`, `markdown_filename`; `-DRAFT` suffix when not approved), `export_label(artifact)`, `slugify`, `zip_bytes`, **`export_artifact(cr, kind, fmt) -> ArtifactExport{filename, media_type, data}`** (`docx` \| `md` \| `xlsx`; stories docx = zip of per-story documents; xlsx only for impact; `ValueError` on empty artifact / bad format). |
+| `docs_export/bundle.py` | `export_change_request(cr, existing_test_cases=()) -> bytes` zip (`Impact-Analysis-BCR-001.docx`, `EPIC-002-<slug>.docx`, `US-00N-<slug>.docx` ×N, `TDD-ORD-002-<slug>.docx`, `TC-preview-BCR-001.xlsx`, `markdown/*.md`, `MANIFEST.txt`), `bundle_entries`, `manifest_lines`, `bundle_filename`. |
+| `docs_export/package.py` | `stabilise_package(bytes)` — fixed zip-member timestamps + `dcterms:created/modified` so docx/xlsx are byte-deterministic. |
+| `change/service.py` | `existing_test_cases(cr)` (every `*.xlsx` in the KB corpus through `read_test_case_rows`, never raises), `export(cr_id, kind, fmt)`, `export_bundle(cr_id)`; `kg/service.py::KgService.read_bytes(kb_id, rel_path)`. |
+| `api/app.py` | `GET /change-requests/{id}/artifacts/{kind}/export?format=docx\|md\|xlsx`, `GET /change-requests/{id}/export.zip` (attachment, `Content-Disposition` CORS-exposed). |
+| `cli/cr.py` | `cr export <cr-id> [STEP] --format md\|docx\|xlsx\|zip [--version N (md only)] [--out PATH]`. |
+| Frontend | `components/ExportButtons.tsx` (`ArtifactExportButtons` on the artifact panel: `.docx` `.md` (+ `.xlsx` for impact); `ExportAllButton` in the wizard header), `lib/api.ts` `download()`/`saveDownload()`, `exportChangeArtifact`, `exportChangeRequestZip`. |
+| Tests / fixtures | `tests/test_docs_export.py` (15), `tests/fixtures/change_artifacts/reference_headings.json` (digest §5 encoded), `tests/fixtures/change_artifacts/TDD-ORD-002.docx` (= `examples/change_requests/TDD-ORD-002.docx`, asserted identical to the render of `TDD-ORD-002.md`), API/CLI export tests. |
+| Docs | `docs/HOW_IT_WORKS.md` §8e + CLI/route rows, `docs/architecture.md` (export diagram), `README.md`, `CLAUDE.md`, `RUNBOOK.md` Phase 2, screenshots `docs/kg-plan/screenshots/phase2-*.png`. |
+
+Locked in Phase 2 (user decisions): unapproved artifacts **export, clearly labelled** (`DRAFT vN — not
+approved` in subtitle + `Export:` meta line + `-DRAFT` filename); the KG appendix and Sources are
+**always** in the docx; the stories `docx` export is **a zip of per-story documents**; the TC preview
+**merges the KB's original matrix rows when available and falls back to impact-only rows**.
+
+## Ids / facts Phase 3 will need
+
+- **Phase 3 input:** `examples/change_requests/TDD-ORD-002.docx` (identical to
+  `tests/fixtures/change_artifacts/TDD-ORD-002.docx`) — upload it via the home page with the KB
+  selected, and once via the future "Send to workflow GUI" button. Its text (Word) starts with the
+  22 pt "Technical Design Document (TDD)" title, then the metadata block (`Document ID: TDD-ORD-002`,
+  `Linked EPIC: EPIC-002`, `Supersedes: TDD-ORD-001`, …, `Export: Approved v2 (2026-08-18)`), then
+  `1. Overview` … `8. Open Items / Future Work` each with `Existing` / `Proposed` (Heading 3), a
+  `Diagrams Needed` section and a `Sources` section — the existing `.docx` ingestion
+  (`workflow_compiler.ingestion`) reads it as plain paragraphs, so the segmentation prompt will see
+  "Existing"/"Proposed" as ordinary lines. The markdown twin is `TDD-ORD-002.md` (same content, `###
+  Existing`/`### Proposed`) if md ingress is easier for the change-spec extractor.
+- Live KB `86d9919378bd4ebe8329f8ff950a2a27`; live CR `dfad0d257db847919029f11dbef3c47d` (all four
+  artifacts approved; `ids`: EPIC-002, US-008…US-015, TDD-ORD-002, next TC TC-18) — both under
+  `.workflow_state/` on this machine; the CR page's Export buttons and `cr export` produce the files
+  in the RUNBOOK's Phase 2 table.
+- The impact analysis' `AffectedItem` rows (kind/ref/change_type/rationale/kg_ref) are the natural
+  seed of Phase 3's `ChangeSpec.components` (`parse_impact(cr.artifacts.impact.markdown).affected`);
+  `TddDoc.sections[*].existing/proposed` per `TDD_SECTIONS` key are the existing-vs-proposed text.
+- Provider factory / KgService / ChangeRequestService wiring is unchanged from Phase 1 (below).
+
 
 - Live KB `86d9919378bd4ebe8329f8ff950a2a27` (enriched, 401 nodes); live CR
   `dfad0d257db847919029f11dbef3c47d` (BCR-001, stage `complete`, all four artifacts approved) and a
@@ -66,7 +109,7 @@ Frontend: `app/knowledge/page.tsx`, `app/knowledge/[id]/page.tsx`, `components/K
   subtitle, bold `Label: value` block, Heading 1/2, List Paragraph bullets, `2F5496` header shading,
   `☑ `/`☐ ` checklists, Consolas inline code; numbered headings for BRD/TDD/TP/BCR, unnumbered for
   EPIC, H2-only for US docs).
-- Provider factory `(provider_name | None, model | None) -> BaseLLMProvider`; the API's is
+- (from Phase 1) Provider factory `(provider_name | None, model | None) -> BaseLLMProvider`; the API's is
   `api/dependencies.py::kb_provider_factory` (also used by `get_change_service`), the CLI's wraps
   `_build_provider`.
 
@@ -80,8 +123,14 @@ Frontend: `app/knowledge/page.tsx`, `app/knowledge/[id]/page.tsx`, `components/K
 - The KG appendix in the impact analysis lists node *names* (no ids) — the brief's traversal table
   has ids; the docx export may want the appendix as an optional annex.
 - The frontend hides Edit/Revise for approved artifacts; the API allows editing an approved artifact
-  (it flips back to `drafted` and must be re-approved) — Phase 2's export should only export
-  approved versions (or the latest, clearly labelled).
+  (it flips back to `drafted` and must be re-approved). Exports render the *latest* version and label
+  it `DRAFT vN — not approved` until re-approved (decision recorded above).
+- Export cosmetics still open (none blocking): story filenames truncate long titles at 40 chars
+  (`US-008-split-order-into-shipment-groups-based.docx`); the Summary sheet uses literal totals
+  instead of `COUNTIF`; the KG appendix table (86 rows) makes the impact docx 3–4 pages longer than
+  the reference BCR — kept by decision.
+- `npm run lint` has 2 pre-existing `react-hooks/set-state-in-effect` findings (`RunPanel`,
+  `SpecChatPanel`) untouched by Phases 0–2.
 - The 2026-08-14 audit P0s (id sanitisation) are handled for both new stores; CAS-on-save remains
   for Phase 5.
 
@@ -96,3 +145,7 @@ Frontend: `app/knowledge/page.tsx`, `app/knowledge/[id]/page.tsx`, `components/K
   handoff. Gates: pytest 646 passed (620 + 26 new), ruff clean, mypy strict clean (166 files), `npm run
   build` clean; live browser run on Nemotron recorded in RUNBOOK with screenshots; BCR-001 artifacts
   saved as fixtures.
+- **Phase 2 — 2026-08-18 — done.** Commits: docs_export core + API + CLI + tests → frontend Export
+  buttons → reference-look polish + CORS filename + TDD-ORD-002.docx fixture + docs → RUNBOOK →
+  handoff. Gates: pytest 664 passed (646 + 18 new), ruff clean, mypy strict clean (173 files), `npm
+  run build` clean; live UI export of CR `dfad0d25…` + Word/Excel side-by-side screenshots in RUNBOOK.

@@ -1,7 +1,7 @@
 # KG-Grounded Business-Change Pipeline — Multi-Phase Plan
 
 **Branch:** `feat/kg-change-pipeline` (worktree `../order-workflows-kg`, based on `demo/dialogue-plus-run` @ `0a6e84d`)
-**Written:** 2026-08-17 · **Status:** plan approved by the user; **Phases 0–2 done 2026-08-17/18** (see `HANDOFF.md`), Phase 3 next
+**Written:** 2026-08-17 · **Status:** plan approved by the user; **Phases 0–3 done 2026-08-17/18** (see `HANDOFF.md`), Phase 4 next
 
 This document is the contract for a sequence of implementation sessions. Each phase is sized to
 fit one context window, ends with a green test suite + a live run against the real corpus, and

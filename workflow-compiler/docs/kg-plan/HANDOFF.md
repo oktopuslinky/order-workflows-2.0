@@ -1,9 +1,10 @@
 # KG change pipeline — handoff
 
-**Current phase:** Phase 2 **complete** (2026-08-18). Next: Phase 3 (KG-grounded workflow project +
-change spec — "upload the TDD to the GUI") — read `KG_CHANGE_PIPELINE_PLAN.md` §0 + Phase 3, then this
-file, then `RUNBOOK.md`, then `research/workflow-compiler-digest.md` (extension points of the spec
-pipeline) and `research/kg-context-digest.md` (retrieval signatures for the grounder).
+**Current phase:** Phase 3 **complete** (2026-08-18). Next: Phase 4 (post-approval change outputs —
+updated diagrams, modified codebase + diff, test docs) — read `KG_CHANGE_PIPELINE_PLAN.md` §0 + Phase 4,
+then this file (especially "What exists after Phase 3" and "Ids / facts Phase 4 will need"), then
+`RUNBOOK.md` (Phase 3 section: timings, the two hand edits the live run needed, gotchas), then
+`research/workflow-compiler-digest.md` §6 (codegen / bundles / diagrams) for the output layer.
 
 **Worktree:** `C:\Users\devag\Documents\Code (local)\order-workflows-kg`, branch
 `feat/kg-change-pipeline` (from `demo/dialogue-plus-run` @ `0a6e84d`). Own `.venv` (Python 3.12,
@@ -72,7 +73,55 @@ approved` in subtitle + `Export:` meta line + `-DRAFT` filename); the KG appendi
 **always** in the docx; the stories `docx` export is **a zip of per-story documents**; the TC preview
 **merges the KB's original matrix rows when available and falls back to impact-only rows**.
 
-## Ids / facts Phase 3 will need
+## What exists after Phase 3 (KG-grounded projects + change spec)
+
+| Path | Role |
+|---|---|
+| `models/change_spec.py` | `ChangeSpec{components[ComponentChange{name, kind module\|activity\|workflow\|type\|signal\|query\|test\|diagram\|doc, path (KG node id / corpus file), existing, proposed, change_type modify\|add\|remove\|verify, requirement_ids, provenance}], assumptions[SpecItem], open_questions[SpecItem], sources[str], version}` (+ `component(name, kind)`, `unresolved_questions()`), `CHANGES_SLUG = "__changes__"`; LLM plans `ChangeSpecDraft/ComponentDraft`, `ChangeAnswerPlan/ComponentUpdate`. |
+| `models/project.py` | `CompilationProject += kb_id, change_request_id, change_spec, grounding: ProjectGrounding{kb_name, change_request_title, sources, coverage, low_confidence, requirement_ids}`; `models/state.py` `WorkflowState.kg_context`. |
+| `kg/grounding.py` | `KgGrounder(kg, kb_id, kb_name, budget=3000, max_hops=2)`: `context_for(text, budget) -> GroundingResult{block, sources, coverage, low_confidence, total_tokens, seeds}` (cached per text; never raises), `block_for`, `render(packet)`, `sources_seen`, `min_coverage`, `any_low_confidence`; `grounding_query(text)` (seed_terms first, then prose); block header *"KNOWLEDGE-GRAPH CONTEXT — prefer these real names / paths"*. `KgService.resolve_ref(kb_id, ref)` (node id / file path or suffix / `fn:` symbol / `fn:<file>:<method>` when the file defines it). |
+| `prompts/` | `optional:` front-matter list (`Prompt.optional`, renderer defaults to `""`); `{{ kg_context }}` in `discover_workflows` (+ TDD hint), `discover_workflow`, `extract_facts`, `design_temporal`; new `extract_change_spec.md`, `interpret_change_answer.md`, `draft_change_questions.md`. |
+| `agents/change_spec.py` | `ChangeSpecAgent(llm)`: `extract(document_text, kg_context, impact_table, seed_components, requirement_ids, sources)`, `to_spec` (kind/change coercion by word **and name**, dedupe, requirement filter, provenance, **every seed kept**, basename matching), `draft_questions`, `interpret_answer`; `change/spec_seed.py::seed_components(cr)` (impact `AffectedItem` rows + TDD Existing/Proposed texts). |
+| `spec/change_renderer.py` ⇄ `spec/change_ingest.py` | `changes.md` grammar (`# Change Spec`, `## Grounding` ro, `## Components` `### name — kind, change [marker]` + `- path:`/`- requirements:` + `#### Existing`/`#### Proposed`, `## Assumptions`, `## Open Questions` (`- [ ] (ref) text [marker]` + `Answer:`), `## Sources` ro); `render_change_spec(spec, kb_id, kb_name, change_request_id, change_request_title)`, `ingest_change_markdown(spec\|None, md) -> ChangeIngestResult{spec, changes, warnings}` (identity round trip incl. provenance; merge by `kind:name`); `coerce_kind(value, name)`, `coerce_change_type`. |
+| `spec/change_validator.py` | `validate_change_spec(spec, kg, kb_id, requirement_ids)` — empty Proposed → BLOCKING; unresolvable path → WARNING + `KgService.search` suggestions; unknown requirement id → WARNING; findings `workflow=__changes__`. |
+| `dialogue/` | `change_ops.py` (`apply_component_updates`, `park_change_question`, `replace_change_spec`); `agenda.py` counts the change spec (`change_spec_has_anything_to_ask`, fingerprint); `engine.py` `DialogueEngine(change_agent=)`, `_answer_change` / `_dispose_change` / `_park_change`. |
+| `project_compiler.py` | ctor `kg_service=`, `from_settings` builds a read-only `KgService`; `compile_document(..., grounder=None, change_request=None)` (grounded segmentation/facts, `_extract_change_spec`, `_record_grounding`); `grounder_for(project)`; `render_changes`, `spec_markdown` (all files incl. `__changes__`), `_fold_changes`, `_validate_changes`; `validate_specs`/`update_specs`/`approve_spec` handle `markdown_by_slug["__changes__"]`; approve refuses on BLOCKING change findings unless `accept_incomplete`; approve re-grounds each seeded state (`state.kg_context`); `write_spec_files`/`read_spec_files` include `changes.md`; overview lists it. |
+| `api/` | `ProjectCompileRequest += kb_id, change_request_id`; `compile-upload` form fields `kb_id`, `change_request_id`; `_grounding_for` (CR implies KB; 422 mismatch; 409 unready KB); `_finish_compile` (owner, nickname, save, `ChangeRequestService.link_project`); `POST /change-requests/{id}/send-to-workflow` (`SendToWorkflowRequest{provider, model, nickname}`, 409 unless TDD approved, provider = wizard's else `KB_DEFAULT_PROVIDER`); `get_compiler_selector` dependency (tests override); every `spec_markdown` in responses = `ProjectCompiler.spec_markdown`. |
+| `cli/main.py` | `compile … --kb <id> [--change-request <id>]` (links `project_ids`), `_project_compiler` wires `kg_service`, `_print_project` lists `changes.md`. |
+| Frontend | `lib/types.ts` (`CHANGES_SLUG`, `ChangeSpec`, `ProjectGrounding`, project fields), `lib/api.ts` (`compileText/compileUpload(kbId, changeRequestId)`, `sendToWorkflow`), `app/page.tsx` KB selector, `app/changes/[id]/page.tsx` **Send to workflow GUI** + linked projects, `app/projects/[id]/page.tsx` (`GroundingBadge`, `ChangeSpecSummary`, `changes.md` under *Change spec*, diagram note, widgets hidden for changes), `components/SpecEditor.tsx` `grammar="spec"\|"changes"`, `lib/changesHighlight.ts`, `globals.css` `.cm-changes-*`, `SPEC_GUIDE.md` + guide page section *changes.md*, `spec-grammar.ts` strips markers in the Open-questions widget. |
+| Tests | `tests/test_change_spec.py` (13), `tests/test_api_grounded_projects.py` (4); `MockProvider` demo defaults for `ChangeSpecDraft` / `ChangeAnswerPlan`. |
+| Docs | `docs/HOW_IT_WORKS.md` §8f + CLI flags + route rows, `docs/architecture.md` (phase-3 diagram), `README.md` (phase 3), `CLAUDE.md`, `RUNBOOK.md` Phase 3, screenshots `docs/kg-plan/screenshots/phase3-*.png`. |
+
+Locked in Phase 3 (user decisions, memory `kg-phase3-decisions`): send-to-workflow is **synchronous**;
+the Resolve dialogue gives **full Q&A** on `changes.md`; a BLOCKING `changes.md` finding **refuses
+approve unless `accept_incomplete`**; the change spec is extracted **whenever a KB is set**.
+
+## Ids / facts Phase 4 will need
+
+- **Live projects** (`.workflow_state/projects/`, this machine): `d64a03d8-939d-425a-b649-8816dce80ff3`
+  — sent from CR `dfad0d257db847919029f11dbef3c47d`, **COMPLETED** (approved with `accept_incomplete`,
+  graph health 0.95, workflow state `0b5e0676-0eff-4ced-a7c0-35f313e1adc3` with `temporal_design`,
+  7 generated files and `kg_context`), `change_spec` v2 with 39 components incl. KG node ids
+  (`mod:existing_Codebase/workflows/order_workflow.py`, `fn:existing_Codebase/shared/types.py:OrderState`,
+  `doc:Business_Docs/diagrams/mermaid/order-state-machine.mmd`, …) — the natural Phase 4 input;
+  `9fd540d5-c345-4bd1-a7ed-5d2d6625c909` (home-page upload, KB only, spec drafted);
+  `f64d88c4-b6e7-4529-9471-4dbc56f2c61b` (first send, 10-component change spec, spec drafted).
+- `project.change_spec.components[*].path` is a KG node id or corpus path — resolve with
+  `KgService.resolve_ref` / `read_file`; `project.grounding.sources` lists the spans the prompts saw;
+  `project.kb_id` / `change_request_id` are set on every grounded project; `ProjectCompiler.grounder_for(project)`
+  gives a ready grounder for the diagram / code-rewrite prompts.
+- The workflow spec's `state_transitions` for a TDD are descriptive (R9) and were deleted at the gate
+  in the live run — Phase 4's diagram stage should take states from the change spec + the original
+  `.mmd`, not from the spec graph.
+- The KB corpus files Phase 4 rewrites: `existing_Codebase/{shared/types.py, activities/order_activities.py,
+  workflows/order_workflow.py, worker.py, starter.py}`, `tests/test_order_workflow.py`,
+  `Business_Docs/diagrams/mermaid/{order-state-machine,order-sequence,system-architecture}.mmd`,
+  `Business_Docs/diagrams/system-flow-diagram.md`, `Business_Docs/test-cases/TC-order-workflow.xlsx`,
+  TP docx; catalog `next_test_case` = TC-18 (CR `ids`).
+- Live KB `86d9919378bd4ebe8329f8ff950a2a27`; CR `dfad0d257db847919029f11dbef3c47d`
+  (`project_ids` = `[f64d88c4…, d64a03d8…]`).
+
+## Ids / facts Phase 3 needed (kept for reference)
 
 - **Phase 3 input:** `examples/change_requests/TDD-ORD-002.docx` (identical to
   `tests/fixtures/change_artifacts/TDD-ORD-002.docx`) — upload it via the home page with the KB
@@ -115,6 +164,22 @@ approved` in subtitle + `Export:` meta line + `-DRAFT` filename); the KG appendi
 
 ## Open issues / notes
 
+- (Phase 3) `validate` still strips the human `- triggers:` metadata line (pre-existing OPEN defect,
+  memory `llm-timeout-and-trigger-stripping-defects`); the live approve needed `accept_incomplete`.
+- (Phase 3) A TDD's State Transitions become orphan state nodes in the graph (health 0.25) although
+  R9 marks them descriptive — deleted at the gate in the live run; candidate fix: skip state nodes
+  once R9 is confirmed.
+- (Phase 3) The Approve-overrides card is only visible while the buffers are dirty; after a clean
+  validate the override cannot be ticked in the UI (sent through `POST /projects/{id}/jobs` here).
+- (Phase 3) Opening the Resolve tab starts `predraft`; clicking *Start resolving* before it finishes
+  drafts the agenda a second time (11.8 min for 7 questions live).
+- (Phase 3) `WorkflowFacts` has no signal/query category — `get_status` lives only in `changes.md`
+  (and reaches the Temporal design through the grounded prompt); `complete_order` is named
+  `consolidate_complete` by the Phase-1 TDD.
+- (Phase 3) `order-sequence.mmd` / `system-architecture.mmd` are not in `changes.md` because neither
+  the TDD nor the approved impact analysis names them; Phase 4 regenerates all three by decision D10
+  regardless.
+
 - Nemotron sometimes re-asks a decision already recorded (the brief lists cumulative decisions and
   the prompt forbids it, but it is not enforced deterministically). Answer consistently or skip.
 - Revisions: the model still elides long tables — the table-merge guard means a revision can add
@@ -149,3 +214,9 @@ approved` in subtitle + `Export:` meta line + `-DRAFT` filename); the KG appendi
   buttons → reference-look polish + CORS filename + TDD-ORD-002.docx fixture + docs → RUNBOOK →
   handoff. Gates: pytest 664 passed (646 + 18 new), ruff clean, mypy strict clean (173 files), `npm
   run build` clean; live UI export of CR `dfad0d25…` + Word/Excel side-by-side screenshots in RUNBOOK.
+- **Phase 3 — 2026-08-18 — done.** Commits: WIP (model/renderer/ingest/validator/grounder/agent/prompts)
+  → ProjectCompiler wiring + `__changes__` dialogue + API/CLI + tests → frontend → docs → seed-keeping
+  + per-signal/query prompt → kind-by-name → `resolve_ref` methods → RUNBOOK/HANDOFF. Gates: pytest
+  681 passed (664 + 17 new), ruff clean, mypy strict clean (181 files), `npm run build` clean; live
+  runs on Nemotron: home-page upload with KB (338 s), Send to workflow GUI (223 s / 212 s), validate →
+  resolve → approve to COMPLETED on `d64a03d8…`, screenshots in RUNBOOK.

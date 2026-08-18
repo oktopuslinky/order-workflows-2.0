@@ -289,3 +289,104 @@ on :3010). Steps (Chrome via DevTools):
   `__test__ = False`.
 - Bash-tool heredocs still unescape `\n`, `\"` and backticks — patch scripts and doc edits went
   through the Write tool.
+
+## Phase 3 — KG-grounded workflow project + change spec, "upload the TDD to the GUI" (2026-08-18)
+
+### Automated gates
+
+| Gate | Result |
+|---|---|
+| `pytest -q -p no:warnings` | **681 passed** (664 from Phase 2 + 17 new: 13 `test_change_spec.py` — prompts with/without `kg_context`, grounder no-op + block/sources/cache, render⇄parse identity incl. provenance, human-edit merge, validator findings, agent cleaning/seeds, change_ops, agenda, grounded compile → validate → approve gate, dialogue over `__changes__`; 4 `test_api_grounded_projects.py` — upload with `kb_id` + `PUT /spec` + validate job, kb/cr error codes, send-to-workflow links ids, CLI `compile --kb`) |
+| `ruff check src tests` | clean |
+| `mypy src` (strict) | clean, 181 files |
+| `npm run build` | clean; `npx tsc --noEmit` clean; `npm run lint` = the same 2 pre-existing `RunPanel`/`SpecChatPanel` findings |
+
+### Bring-up used for the live run
+
+As at the top of this file (backend `127.0.0.1:8010` without `--reload`, frontend `127.0.0.1:3010`,
+demo account `kgdemo@example.com`). The Chrome DevTools MCP server did not connect this session, so
+the browser was driven with Playwright (`scratchpad/pw/run.mjs`, staged: `login` → `upload` /
+`send` → `shots` → `validate` → `resolve` → `approve` → `results`; cookies persisted in
+`state.json`; the ms-playwright Chromium already on the machine). The backend was restarted three
+times between runs to pick up prompt/agent fixes found during the run (see gotchas) — never while
+a job was running.
+
+### Live run 1 — home page upload with the KB selected (Nemotron `nvidia/llama-3.3-nemotron-super-49b-v1`)
+
+`/` → drop `examples/change_requests/TDD-ORD-002.docx`, provider **Nemotron (cloud)**, *Ground with
+knowledge base* = **Order lifecycle (Existing_KG)** (`86d9919378bd4ebe8329f8ff950a2a27`), nickname →
+**Compile** (`phase3-home-kb-selector.png`, `phase3-home-compiling.png`) → redirected to
+`/projects/9fd540d5-c345-4bd1-a7ed-5d2d6625c909` (`phase3-project-after-upload.png`).
+
+| Item | Measured |
+|---|---|
+| Compile (docx parse → grounded segmentation → grounded facts → change spec) | **338 s** wall-clock: segmentation 41 s, `extract:orderlifecycleworkflow` 223 s (3-pass review on), `change_spec` 50 s |
+| Segmentation | **one** workflow segment (`orderlifecycleworkflow`, 7.5 KB) — the TDD hint held; Nemotron also emitted a self-dependency/trigger `OrderLifecycleWorkflow → OrderLifecycleWorkflow` which the assembler dropped with a warning (shown in the left rail) |
+| Grounding record | KB name, 6 corpus source spans (TDD-ORD-001 docx lines 1-60, US-004/US-005, BRD, TP, `order_workflow.py`), coverage 0.81, `low_confidence` (⚠ on the header pill) |
+| Spec names | activities `capture_order`, `validate_order`, `provision_order`, `dispatch_order`, `provision_group`, `dispatch_group`, `compensate_provisioning`, `compensate_dispatch`, `compensate_group_provision`, `consolidate_complete`; events `cancel_order`, `delivery_confirmed`, `cancel_shipment_group`; states RECEIVED → … → COMPLETED / REJECTED / CANCELLED, `PARTIALLY_DISPATCHED` as an end state — **not** `complete_order` (the Phase-1 TDD itself names the completion step `consolidate_complete`, "Generate final invoice") and **not** `get_status` (a query; `WorkflowFacts` has no query category — the change spec carries it) |
+| `changes.md` (KB only, no CR → no seed rows, no requirement ids) | 6 components: `order_workflow.py`, `order_activities.py`, `shared/types.py` (modify), `order-state-machine-partial-shipment.mmd` (add), `TC-06, TC-09, TC-10` + `TC-18…20` under `tests/test_order_workflow.py`; 2 assumptions, 2 open questions, 6 sources — file paths corpus-relative, no node ids yet |
+
+### Live run 2 — "Send to workflow GUI" from CR `dfad0d257db847919029f11dbef3c47d`
+
+`/changes/dfad0d25…` shows the new **Send to workflow GUI** button next to Export all (TDD approved;
+`phase3-wizard-send-button.png`) → overlay "Compiling the TDD into a grounded workflow project"
+(`phase3-wizard-sending.png`) → redirected to the new project; the CR page then lists the project
+under "Workflow project from this TDD" (`phase3-wizard-linked-project.png`). Run 2 (project
+`f64d88c4…`, 223 s) surfaced two things fixed before run 2b: Nemotron kept only 10 of the 30
+approved impact rows, and `get_status`/signals were folded into module entries. Run 2b (project
+**`d64a03d8-939d-425a-b649-8816dce80ff3`**, the one driven through the gate):
+
+| Item | Measured |
+|---|---|
+| Send → project (TDD markdown, seeded, requirement ids restricted) | **212 s**: segmentation 27 s, extraction 150 s, `change_spec` 35 s; nickname `TDD-ORD-002 — Partial Shipment Support for Multi-Line Orders`; `cr.project_ids` = `[f64d88c4…, d64a03d8…]` |
+| Grounding record | KB + CR title, 7 source spans (adds `shared/types.py`, `tests/test_order_workflow.py`), coverage 0.85, `requirement_ids` BCR-01-01…06 |
+| Spec | same activity/event names as run 1 plus 5 decisions and 5 exceptions; `PARTIALLY_PROVISIONED`/`PARTIALLY_DISPATCHED` in the state transitions |
+| `changes.md` | **39 components** (28 modify, 1 remove, 8 add, 2 verify): `mod:existing_Codebase/workflows/order_workflow.py`, `fn:…shared/types.py:OrderState` / `ProvisioningResult` / `DispatchResult` / `CompletionResult`, activities `provision_order` (remove) / `provision_group` (add) / `dispatch_order` / `compensate_*` / `complete_order`, query `get_status`, signal `cancel_shipment_group`, diagrams `order-state-machine.mmd` (modify) + `order-state-machine-partial-shipment.mmd` (add) + `system-flow-diagram.md`, tests TC-01/06/09/10/12/16 + TC-18, docs US-003/004/005, TP-ORD-001 (+§3.2), EPIC-001/002, BR-06/07/09, TC matrix; requirement ids on the model's rows (BCR-01-01…06); Sources footer with 7 spans (`phase3-spec-changes-md.png`) — `order-sequence.mmd` / `system-architecture.mmd` are **absent** because neither the TDD nor the approved impact analysis names them |
+| Validate (Nemotron 3 passes + deterministic change validator) | **113 s** (`validate:orderlifecycleworkflow` 112 s, `validate:__changes__` < 1 s); workflow: 6 grounding WARNs + 2 BLOCK (no trigger event; `d5` missing branch); `__changes__`: 1 WARN — `get_status` path `fn:…order_workflow.py:get_status` not in the KB with *did you mean* `chk:` suggestions (methods are not `fn:` nodes; `resolve_ref` now accepts `fn:<file>:<method>` when the file defines it — fixed after this run) (`phase3-validated-changes-findings.png`) |
+| Resolve (guided) | agenda 7 questions across both files (`phase3-resolve-first-question.png`); `dialogue:start` **707 s** because the predraft job and a live `start` drafted concurrently (the first driver attempt aborted mid-flow — see gotchas); answers 6–36 s each (`dialogue:answer` 125 s total); result **4 answered, 3 parked** (`phase3-resolve-done.png`); the `get_status` chip answer set the path to `fn:existing_CodeBase/…` (the LLM-drafted option carried a typo — the next validate flagged it again: the gate works, suggestions are model text) — change spec v2, `human_provided` |
+| Approve | 1st: 2 s — workflow **skipped** by the 2 BLOCKs (`needs_attention`), `changes.md` WARN does not block. Hand edits via `PUT /spec` (`- triggers: order request received`, `[d5] … yes: a7; no: e5`, dropped the junk `d6`) → validate 60 s → approve: compiled but **graph health 0.25** (15 orphan/unreachable *state* nodes from the descriptive State Transitions section) → dropped those bullets (R9 says descriptive) → validate 55 s → the trigger line was **stripped again** (pre-existing OPEN defect, memory `llm-timeout-and-trigger-stripping-defects`) → approve with `accept_incomplete=true` (the Approve-overrides toggle): **231 s**, `compile:orderlifecycleworkflow` 375 s cumulative → **COMPLETED**, health **0.95**, design `OrderWorkflow` with activities CaptureOrder…ConsolidateComplete, signal `delivery_confirmed`, query `get_status`, 7 generated files; `WorkflowState.kg_context` present (13 KB — the design prompt was grounded) (`phase3-results.png`) |
+| Screenshots | `docs/kg-plan/screenshots/phase3-*.png` (home selector, compiling, project after upload, wizard send button/sending/linked project, spec workflow, spec changes.md, validating, validated workflow/changes findings, resolve first question/answered/done, pre-approve, approving, results) |
+
+Plan checks, as observed: spec names `capture_order`, `validate_order`, `provision_order`,
+`dispatch_order`, `cancel_order`, `delivery_confirmed`, states incl. `PARTIALLY_*` ✔;
+`complete_order` ✘ (the TDD says `consolidate_complete`), `get_status` ✘ in the *workflow* spec
+(no query category) but ✔ in `changes.md` and in the Temporal design; `changes.md` lists
+`shared/types.py`, `workflows/order_workflow.py`, `activities/order_activities.py`,
+`tests/test_order_workflow.py` ✔, the state-machine diagram + the new companion + the system-flow
+doc ✔ (the sequence/architecture diagrams are not named by the inputs); validate → resolve →
+approve completes ✔ (with two hand edits and the `accept_incomplete` override, both explained above).
+
+### Gotchas found in this phase
+
+- **`send-to-workflow` names a provider by design (cloud Nemotron default), so it bypassed the test
+  override of `get_project_compiler` and built a real Nemotron provider — the API test hung on a
+  network call.** Fixed with a `get_compiler_selector` dependency (`api/dependencies.py`) that
+  `_select_compiler` uses for explicit selections; tests override it to return the mock compiler.
+- **Nemotron under-reports change-spec rows on one pass** (10 of 30 approved impact rows kept). The
+  approved impact analysis is human-approved: `ChangeSpecAgent.to_spec` now keeps every seed the
+  model does not return (dropping is a hand edit in `changes.md`) and matches model rows to seeds
+  by basename (`order_workflow.py` ↔ `existing_Codebase/workflows/order_workflow.py`); the prompt
+  asks for one entry per activity / type / signal / query and for affected existing diagrams.
+  39 rows on the next run.
+- **Seed kinds**: impact rows say `document` for `.mmd` files and `requirement` for `BR-xx`;
+  `coerce_kind(value, name)` now decides by name (`.mmd` → diagram, `.py` → module) and maps
+  requirement/other → doc.
+- **Methods are not `fn:` nodes** in the vendored ingest (only top-level defs/classes), so a change
+  spec path like `fn:…/order_workflow.py:get_status` looked unknown. `KgService.resolve_ref` accepts
+  `fn:<file>:<symbol>` when the file exists and defines the symbol (`def`/`class`).
+- **The TDD's state machine becomes free-form State Transitions facts**, which the graph builder
+  turns into orphan/unreachable state nodes → graph health 0.25 and a manual-review gate even
+  though R9 says they are descriptive. Deleting the bullets at the gate fixes it; the pipeline was
+  not forked (plan design note) — a Phase 4/5 candidate: skip state nodes when R9 is confirmed.
+- **Validate strips the human `- triggers:` line** (pre-existing OPEN defect); the way through is
+  the `accept_incomplete` override, which the UI only offers while the buffers are dirty — the
+  override was sent through the jobs API here.
+- **Predraft + live start ran concurrently**: opening the Resolve tab starts the `predraft` job, and
+  clicking *Start resolving* before it finishes drafts the same agenda live (11.8 min for 7
+  questions). Wait for "Questions ready." before starting, or accept the double cost.
+- **LLM-drafted suggested answers are model text**: a chip carried `existing_CodeBase` (wrong case);
+  applying it is by design (human authority), and the next validate flagged the path again.
+- **Playwright's request context got `ECONNRESET` from uvicorn while approve ran** (codegen is CPU
+  heavy); `curl` and the browser poller were fine — retry the poll.
+- Bash-tool heredocs in this harness still turn `\b` into backspaces and unescape `\n` — every
+  patch script went through the Write tool.

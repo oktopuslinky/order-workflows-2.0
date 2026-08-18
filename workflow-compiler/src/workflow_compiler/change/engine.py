@@ -205,6 +205,7 @@ class Brief:
     coverage: float = 1.0
     coverage_note: str = ""
     packets: list[KgPacket] = field(default_factory=list)
+    glossary: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -425,7 +426,9 @@ class ChangeWizardEngine:
                 "\n".join(f"- {a.kind} `{a.ref}` ({a.change_type})" for a in affected) or "- (none)"
             )
             candidates_block = "\n".join(
-                f"- kind={kind} ref={ref} kg_ref={node_id}" for kind, ref, node_id in candidates
+                f"- kind={kind} ref={ref} kg_ref={node_id}"
+                + (f" — {brief.glossary[node_id]}" if node_id in brief.glossary else "")
+                for kind, ref, node_id in candidates
             )
             try:
                 extra = await self._agent.draft_impact_coverage(
@@ -704,6 +707,45 @@ class ChangeWizardEngine:
         kept.sort(key=lambda r: (r.hops, _IMPACT_TYPE_ORDER.get(r.type, 99), r.node_id))
         return kept[: self._max_impact_rows]
 
+    async def id_glossary(self, cr: ChangeRequest, *, limit: int = 80) -> dict[str, str]:
+        """One corpus line per business id the traversal reached (``TC-05: title …``).
+
+        Ids such as ``TC-05`` are graph nodes with no text of their own, and BM25
+        does not anchor on them reliably, so the drafter would otherwise see bare
+        ids. For each UserStory/TestCase/Requirement row we follow one hop to the
+        chunks that mention it, read those files and keep the first line that
+        contains the id. Deterministic; cached per file.
+        """
+        ids = [
+            r.node_id
+            for r in cr.impact_table
+            if r.type in ("TestCase", "UserStory", "Requirement", "Epic")
+        ][:limit]
+        if not ids:
+            return {}
+        texts: dict[str, str] = {}
+        glossary: dict[str, str] = {}
+        for node_id in ids:
+            try:
+                rows = await self._kg.impact(cr.kb_id, [node_id], max_hops=1)
+            except Exception:  # pragma: no cover - a missing node must not block drafting
+                continue
+            paths: list[str] = []
+            for row in rows:
+                if row.path and row.path not in paths and row.node_id != node_id:
+                    paths.append(row.path)
+            for path in paths[:4]:
+                if path not in texts:
+                    try:
+                        texts[path] = (await self._kg.read_file(cr.kb_id, path)).text
+                    except Exception:  # pragma: no cover
+                        texts[path] = ""
+                line = _first_line_with(texts[path], node_id)
+                if line:
+                    glossary[node_id] = f"{line}  ({path})"
+                    break
+        return glossary
+
     def _queries(self, cr: ChangeRequest, kind: ArtifactKind) -> list[str]:
         queries: list[str] = []
         head = f"{cr.doc_id} {cr.title}".strip()
@@ -748,9 +790,15 @@ class ChangeWizardEngine:
             )
         elif not packets:
             note = "No knowledge-base context could be retrieved for this artifact."
-        text = self._brief_text(cr, step_kind, sections, note)
+        glossary = await self.id_glossary(cr)
+        text = self._brief_text(cr, step_kind, sections, note, glossary)
         return Brief(
-            text=text, sources=sources, coverage=coverage, coverage_note=note, packets=packets
+            text=text,
+            sources=sources,
+            coverage=coverage,
+            coverage_note=note,
+            packets=packets,
+            glossary=glossary,
         )
 
     def brief_lite(self, cr: ChangeRequest, step: WizardStep) -> str:
@@ -777,7 +825,12 @@ class ChangeWizardEngine:
         return "; ".join(bits)
 
     def _brief_text(
-        self, cr: ChangeRequest, kind: ArtifactKind, sections: Sequence[KgSection], note: str
+        self,
+        cr: ChangeRequest,
+        kind: ArtifactKind,
+        sections: Sequence[KgSection],
+        note: str,
+        glossary: dict[str, str] | None = None,
     ) -> str:
         lines: list[str] = []
         src = f" (source file: {cr.source_filename})" if cr.source_filename else ""
@@ -810,6 +863,13 @@ class ChangeWizardEngine:
                 f"| {r.hops} | {r.type} | {r.name} | {r.path or ''} | {r.node_id} |"
                 for r in cr.impact_table
             ]
+            lines.append("")
+        if glossary:
+            lines += [
+                "### Business ids reached by the traversal (one corpus line each — "
+                "use these to judge which stories/tests/requirements the change touches)"
+            ]
+            lines += [f"- {node_id}: {line}" for node_id, line in glossary.items()]
             lines.append("")
         lines += ["### Knowledge-graph excerpts (real names, paths and line spans)"]
         if note:
@@ -876,6 +936,14 @@ def _coverage_candidates(
         if len(out) >= limit:
             break
     return out
+
+
+def _first_line_with(text: str, needle: str, *, width: int = 220) -> str:
+    for line in text.splitlines():
+        if needle in line:
+            compact = " ".join(line.split())
+            return compact[:width]
+    return ""
 
 
 def _pack_sections(

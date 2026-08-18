@@ -27,10 +27,13 @@ Rules — read them all:
   including how cancellation and compensation reach terminal states.
 - The NEW companion diagram(s) listed below (e.g.
   `order-state-machine-partial-shipment.mmd`) must be complete on their own:
-  the shipment-group sub-state machine nested under the order (per-group
-  provisioning → dispatch → delivery, per-group failure/compensation and
-  per-group cancellation) — a `stateDiagram-v2` with composite states or a
-  clearly labelled group lifecycle.
+  the shipment-group sub-state machine NESTED under the order's partial states —
+  a `stateDiagram-v2` whose composite states are the parent order's new states
+  (`state PARTIALLY_PROVISIONED { … }`, `state PARTIALLY_DISPATCHED { … }`)
+  containing the per-group lifecycle (group provisioning → dispatch → delivery,
+  per-group failure/compensation, per-group cancellation via the group cancel
+  signal), so every REQUIRED STATE that is new appears here too. Only valid
+  Mermaid lines: no bracketed placeholders such as `[state]`.
 - The SEQUENCE diagram shows the new fan-out per shipment group (parallel
   provisioning/dispatch, per-group tracking numbers, per-group delivery
   signals, consolidated completion) using `par`/`loop`/`opt` blocks where that

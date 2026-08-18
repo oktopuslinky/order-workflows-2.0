@@ -375,6 +375,40 @@ draft_change_questions → interpret_change_answer → change_ops (ComponentUpda
 
 See `docs/HOW_IT_WORKS.md` §8f.
 
+## Post-approval change outputs (phase 4 of the change pipeline)
+
+After approval a grounded project produces the manager's three deliverables from the knowledge
+base's real files; every stage is *LLM drafts, code decides* and persists on completion.
+
+```mermaid
+flowchart TD
+    appr["approve job succeeded
+(project completed, kb_id set)"] -->|after| job["change_outputs job
+POST …/change-outputs/regenerate {stage}"]
+    job --> eng["ChangeOutputsEngine.run
+diagrams → code → tests_doc · persist after each stage / file"]
+    kb["KgService
+list_files · read_file · read_bytes · catalog"] --> eng
+    proj["project: changes.md · Temporal design · spec · TDD text · KgGrounder block"] --> eng
+    eng --> d1["update_diagrams.md → DiagramUpdatePlan
+checks: header · required states · balanced subgraph/end · 1 repair round
++ assemble system-flow-diagram.md (spec diagram as next section, D10)"]
+    eng --> d2["plan_rewrites: change-spec files + import dependents,
+topological order (types → activities → workflow → worker/starter → tests)
+rewrite_source_file.md (fenced complete, ≤2 continuations) → ast.parse + symbols + ruff → 1 repair
+difflib.unified_diff · unchanged copies"]
+    eng --> d3["update_test_cases.md → TestCaseUpdatePlan
+ids from catalog (TC-18…) · merge updates (append notes) · render_addendum
+xlsx_writer / docx_writer (Phase 2)"]
+    d1 & d2 & d3 --> co["CompilationProject.change_outputs
+UpdatedDiagram[] · CodeChangeBundle · TestDocUpdate · stages · provenance"]
+    co --> zip["export.zip: src/ tests/ docs/diagrams/ docs/test-cases/ changes.patch CHANGES.md"]
+    co --> ui["Results tab → Change outputs
+Diagrams (original ⇄ updated) · Code (diff viewer) · Test cases (table + xlsx/docx) · Regenerate"]
+```
+
+See `docs/HOW_IT_WORKS.md` §8g.
+
 ## Request sequence (compile → approve)
 
 ```mermaid

@@ -215,6 +215,23 @@ picture before changing pipeline behavior.
   `compile --kb/--change-request`. `ProjectCompiler` gets a read-only `KgService` from
   `from_settings` (never indexes).
 
+- **Post-approval change outputs are a fourth deterministic-glue engine (`change_outputs/`).**
+  `ProjectCompiler.generate_change_outputs` → `ChangeOutputsEngine` runs `diagrams → code →
+  tests_doc` for a grounded, compiled project, persisting after every stage (and every rewritten
+  file) so a timeout keeps what finished; a failed stage is recorded and the run raises
+  `ChangeOutputsError` at the end; cancel persists nothing of the in-flight stage. Rules: the
+  change spec (`changes.md`) is **consumed, never re-extracted**; the rewrite set and order are
+  decided by code (`change_outputs/code.py::plan_rewrites` — change-spec files + every corpus
+  file that imports a rewritten module, topological, types → … → tests) and only the file text
+  comes from the model (`ChangeOutputsAgent.rewrite_file`: one fenced block via `complete`,
+  continuation on an unclosed fence, `ast.parse` + symbol + ruff checks, one repair round);
+  diagrams are checked deterministically (header / required states / balanced blocks, one repair
+  round) and `system-flow-diagram.md` is assembled by code; test-case ids come from the KB
+  catalog and updates never drop original rows; exports (`export.py`, README layout `src/`,
+  `tests/`, `docs/`) reuse the Phase 2 writers. API: the approve job's `after` hook starts a
+  separate `change_outputs` job; `GET/POST …/change-outputs[/regenerate|/export.zip|/files/…]`;
+  CLI `approve-spec --change-outputs`, `change-outputs <project-id> --stage`.
+
 - **HTTP auth + time-saved metric.** The API uses local accounts (`api/auth.py`: scrypt +
   HMAC-signed session cookie, users under `<state-root>/users/`); project routes require
   `get_current_user`, projects carry `owner_id` (recorded for attribution). By default

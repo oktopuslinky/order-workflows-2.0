@@ -1102,6 +1102,91 @@ workflow GUI** button (approved TDD only), and in the Spec tab `changes.md` as a
 its own grammar highlighting, a change-spec summary in the right rail, findings under its entry
 and the *Grounded by …* header (grammar: `frontend/SPEC_GUIDE.md`, guide page → *changes.md*).
 
+## 8g. Post-approval change outputs (`change_outputs/`) — diagrams, modified code + diff, test docs
+
+The last leg of the change pipeline (plan Phase 4, decisions D3 / D10): once a
+knowledge-base-grounded project is **approved and compiled**, it produces the three deliverables
+the business change asked for, each built from the knowledge base's *actual* files rather than
+from scratch. The record is `change_outputs/models.py::ChangeOutputs{diagrams: [UpdatedDiagram{name,
+kind: state|sequence|architecture|state-partial|workflow, original, updated, notes, source_path,
+checks}], code: CodeChangeBundle{files: [ChangedFile{path, status: modified|added|removed|unchanged,
+original, updated, unified_diff, checks{ast_ok, ruff_ok?, repaired, truncated}, reason}], order,
+import_root, code_root}, tests_doc: TestDocUpdate{test_cases: [TestCaseRow], changed_ids, new_ids,
+test_plan_addendum_md, …}, system_flow_md, provenance, warnings, timings, stages}` stored on
+`CompilationProject.change_outputs`.
+
+**Engine.** `change_outputs/engine.py::ChangeOutputsEngine(agent, kg, load_state=, build_diagrams=,
+grounder=)` runs three stages in order — `diagrams → code → tests_doc` — and **persists after every
+stage** (and after every rewritten file), so a timeout keeps what finished; a failed stage is
+recorded as `failed` and the run continues, then raises `ChangeOutputsError`; cancellation persists
+nothing of the in-flight stage. Every stage is *LLM drafts, code decides*
+(`agents/change_outputs.py::ChangeOutputsAgent`, prompts `update_diagrams.md`,
+`rewrite_source_file.md` (+ `continue_source_file.md`, `repair_source_file.md`),
+`update_test_cases.md`); each prompt sees the rendered `changes.md`, the approved Temporal design
+(`design_summary`), the workflow spec, a KG grounding block and the TDD text — the change spec is
+**consumed, never re-extracted**.
+
+1. **Diagrams** (`change_outputs/diagrams.py`). Every `.mmd` in the corpus is regenerated (D10)
+   plus the companion diagrams the change spec adds (`order-state-machine-partial-shipment.mmd`).
+   The model returns a `DiagramUpdatePlan`; deterministic checks per diagram — Mermaid header
+   present, every **required state** named (`expected_states` = the original diagram's states +
+   the multi-segment `UPPER_SNAKE` tokens the change spec proposes, e.g. `PARTIALLY_PROVISIONED`),
+   balanced `subgraph`/`end`, braces and sequence blocks — with **one repair round** (the failures
+   are quoted back; the better version per diagram wins) and the remaining failures recorded on
+   `UpdatedDiagram.checks` / `warnings`. A diagram the model does not return keeps its original.
+   `assemble_system_flow` rebuilds `system-flow-diagram.md` with the original numbered H2 sections
+   (updated Mermaid inside), the per-workflow spec diagram(s) from `ProjectCompiler.build_diagrams`
+   as the next section (D10) and the new companion diagrams after it.
+2. **Code** (`change_outputs/code.py`). `plan_rewrites(change_spec, corpus .py texts)` decides the
+   **rewrite set deterministically**: files a component's `path` / `name` resolves to (`fn:`/`mod:`
+   node ids, corpus paths or suffixes, case-insensitively; a *new* activity / signal / query with
+   no path lands in the activities / workflow module) **plus every file that imports a rewritten
+   module** (worker, starter, tests follow the modules they register — imports are resolved with
+   the corpus's own package alias, `src.shared.types` ↔ `existing_Codebase/shared/types.py`); the
+   rest is copied `unchanged`. Order = topological over the import graph, ties broken by the plan
+   order types → activities → workflow → worker/starter → tests, so each prompt carries the
+   **signatures of the files already rewritten** (`signature_summary`, an `ast` outline). Each
+   file is asked for as **one fenced code block via `llm.complete(max_tokens=8192)`** (a whole
+   Python file inside JSON is what long-context models truncate); an unclosed fence is continued
+   (≤2×, overlap trimmed), then `ast.parse` + the change spec's symbol presence + ruff's
+   pyflakes-class rules run and **one repair round** fixes a syntax error / undefined names. Diffs
+   are `difflib.unified_diff`; a `module` component with `change_type: remove` marks the file
+   `removed`; a model that returns no code leaves the file `unchanged` with a warning.
+3. **Test documents** (`change_outputs/tests_doc.py`). The corpus's TC matrix (first `.xlsx` that
+   `read_test_case_rows` understands) and test plan (`.docx` text) plus the rewritten test module's
+   outline go into `update_test_cases.md`; the model proposes **new rows without ids** and
+   field-level **updates** to existing rows; the engine numbers new rows from the KB catalog
+   (`TC-18…`), applies updates without dropping anything (notes are *appended*), and renders the
+   addendum markdown deterministically (`render_addendum`: §3.2 out-of-scope removals, §3.1/§4.2/§4.4
+   additions, new / updated TC tables, deliverables, exit criteria, risks). The Phase 2 writers
+   produce the `.xlsx` (`export_matrix_xlsx`, full matrix + Summary) and the addendum `.docx`
+   (`export_addendum_docx`, reference look).
+
+**Export** (`change_outputs/export.py`). `export_zip` uses the corpus README layout so the bundle
+imports as the code expects and the generated tests run as-is: `src/…` (the code package),
+`tests/…`, `docs/diagrams/mermaid/*.mmd` + `docs/diagrams/system-flow-diagram.md`,
+`docs/test-cases/<TC matrix>.xlsx` + `<TP>-addendum-<BCR>.docx/.md`, `changes.patch` (combined
+diff) and a `CHANGES.md` index (stages, per-file checks, new/updated TC ids, sources, warnings);
+byte-stable for identical outputs.
+
+**Pipeline / API / CLI / UI.** `ProjectCompiler.generate_change_outputs(project_id, stages=)`
+(requires `kb_id` and a compiled workflow); `approve_spec(..., change_outputs=True)` chains it
+inline (CLI `approve-spec … --change-outputs`, bundle unpacked under
+`<out-dir>/<project-id>/change-outputs/`); `workflow-compiler change-outputs <project-id>
+[--stage all|diagrams|code|tests_doc]` re-runs stages. In the API the approve **job** starts a
+separate `change_outputs` job (`JobKind`) once approval left the project `completed`, so the
+approve reports done when compilation is done and an output failure never touches the approve
+result; `GET /projects/{id}/change-outputs` (stored outputs + running job + `available`),
+`POST …/change-outputs/regenerate {stage, provider?, model?}` (202, one run per project, cloud
+Nemotron default like every KB route), `GET …/change-outputs/export.zip`,
+`GET …/change-outputs/files/{test-cases.xlsx|test-plan-addendum.docx|test-plan-addendum.md|system-flow-diagram.md|changes.patch}`.
+UI: the Results tab of a grounded project gets a **Workflows | Change outputs** switch; the
+Change-outputs view has Diagrams (per-diagram chips, Original ⇄ Updated toggle, checks, source),
+Code (file list with status badges and ast/ruff pills, unified / side-by-side / updated-file
+viewer built on the `diff` package, `changes.patch`), Test cases (table with new / updated
+highlighting, `.xlsx` and addendum `.docx` downloads, the addendum rendered), a stage selector +
+**Regenerate**, **Download all (.zip)**, warnings and the Sources list.
+
 ## 9. The three entry points (same engine, three faces)
 
 ### 9.1 Library
@@ -1288,6 +1373,12 @@ remains the manual override). Unanswered required questions block a workflow unl
 `<out-dir>/<project-id>/<slug>/` — `--out-dir` defaults to `./generated`, so repeated runs
 never litter the working directory with loose bundle folders.
 
+For a knowledge-base-grounded project `--change-outputs` chains the post-approval change outputs
+(§8g) once every workflow compiled and unpacks the bundle under
+`<out-dir>/<project-id>/change-outputs/`; `workflow-compiler change-outputs <project-id> [--stage
+all|diagrams|code|tests_doc] [--out-dir] [--provider] [--timeout 400]` re-runs one stage or all
+of them later (exit code 1 when a stage failed; the other stages' outputs are still written).
+
 **Every workflow generates as a standalone Temporal workflow** — its own `workflow.py`,
 `activities.py`, `shared.py`, `worker.py`, `starter.py`, and a `test_stepthrough.py` local
 harness. Confirmed triggers additionally generate a `triggers.py` in the *source* workflow's
@@ -1467,6 +1558,10 @@ Knowledge bases (§8c). Uploading a corpus answers `202` with the knowledge base
 | GET    | `/change-requests/{id}/artifacts/{kind}/export` | `?format=docx\|md\|xlsx`                          | Download the artifact as Word (stories: zip of per-story docs) / markdown / TC preview workbook (impact only). Deterministic; `Content-Disposition` names the file; DRAFT-labelled until approved. |
 | GET    | `/change-requests/{id}/export.zip`     | —                                                          | Every artifact as Word/Excel + `markdown/*.md` + `MANIFEST.txt`. |
 | POST   | `/change-requests/{id}/send-to-workflow` | `{provider?, model?, nickname?}`                       | Compile the **approved** TDD into a KB-grounded workflow project (`kb_id` + `change_request_id` set, `changes.md` seeded), append it to `project_ids`, return the `ProjectResponse` (201; 409 while the TDD is unapproved). Synchronous; provider defaults to the wizard's, else cloud Nemotron. |
+| GET    | `/projects/{id}/change-outputs`        | —                                                          | The stored post-approval change outputs (§8g: diagrams / code diff / test docs), the running `change_outputs` job if any, and `available` (grounded + compiled). |
+| POST   | `/projects/{id}/change-outputs/regenerate` | `{stage: all\|diagrams\|code\|tests_doc, provider?, model?}` | (Re)run the stage(s) as a `change_outputs` job (202; 409 while a run is in flight or the project is not grounded/compiled; 422 unknown stage). Cloud Nemotron by default. The approve job starts this automatically for grounded projects. |
+| GET    | `/projects/{id}/change-outputs/export.zip` | —                                                      | `src/` + `tests/` (updated code), `docs/diagrams/`, `docs/test-cases/` (TC matrix `.xlsx`, test-plan addendum `.docx`/`.md`), `changes.patch`, `CHANGES.md` (404 until generated). |
+| GET    | `/projects/{id}/change-outputs/files/{name}` | —                                                    | One rendered document: `test-cases.xlsx`, `test-plan-addendum.docx`, `test-plan-addendum.md`, `system-flow-diagram.md`, `changes.patch`. |
 
 Project responses include `time_saved`: each pipeline step's measured wall-clock seconds
 (persisted per project as `stage_timings`) compared against configurable human-team estimates

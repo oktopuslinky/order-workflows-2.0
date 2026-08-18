@@ -215,6 +215,28 @@ In the UI: pick *Ground with knowledge base* next to the provider on the home pa
 ‹change request›* and `changes.md` sits under *Change spec* in the Spec tab. Grammar:
 `frontend/SPEC_GUIDE.md`.
 
+### Post-approval change outputs (business-change pipeline, phase 4)
+
+Approving a knowledge-base-grounded project also produces the three deliverables the change asked
+for, built from the knowledge base's real files: the **updated Mermaid diagrams** (every original
+`.mmd` regenerated + the companion diagram the change spec adds + `system-flow-diagram.md`), the
+**modified code base with a diff per file** (types → activities → workflow → worker/starter →
+tests, each rewritten in order and checked with `ast.parse` / ruff; untouched files copied), and
+the **updated test-case matrix + test-plan addendum** (`TC-18…` numbered from the knowledge base,
+updated rows keep their original notes; `.xlsx` and `.docx` in the reference style). In the API
+this runs as a `change_outputs` job chained after approve; the Results tab gets a
+**Change outputs** view (diagrams with an original ⇄ updated toggle, a diff viewer, the test-case
+table, Regenerate per stage, Download all). CLI:
+
+```bash
+workflow-compiler approve-spec <project-id> --spec-dir ./specs --change-outputs   # chain it
+workflow-compiler change-outputs <project-id> --stage code                        # re-run one stage
+# → ./generated/<project-id>/change-outputs/{src,tests,docs,changes.patch,CHANGES.md}
+```
+
+`GET /projects/{id}/change-outputs/export.zip` is the same bundle (README layout, so the generated
+tests run as-is with `temporalio` installed).
+
 ### Running a generated bundle
 
 Each generated bundle is standalone — it needs the Temporal SDK and a local Temporal dev server

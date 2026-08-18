@@ -45,7 +45,8 @@ from datetime import UTC, datetime
 from typing import Literal
 
 JobKind = Literal[
-    "validate", "approve", "predraft", "kb_ingest", "cr_questions", "cr_draft", "cr_revise"
+    "validate", "approve", "predraft", "kb_ingest", "cr_questions", "cr_draft", "cr_revise",
+    "change_outputs",
 ]
 JobStatus = Literal["running", "succeeded", "failed", "canceled"]
 ScopeKind = Literal["project", "knowledge_base", "change_request"]

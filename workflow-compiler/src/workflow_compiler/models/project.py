@@ -16,6 +16,7 @@ from enum import StrEnum
 
 from pydantic import Field
 
+from workflow_compiler.change_outputs.models import ChangeOutputs
 from workflow_compiler.models.base import WorkflowBaseModel
 from workflow_compiler.models.change_spec import ChangeSpec
 from workflow_compiler.models.dialogue import DialogueSession, PreparedAgenda
@@ -188,6 +189,13 @@ class CompilationProject(WorkflowBaseModel):
     )
     grounding: ProjectGrounding | None = Field(
         default=None, description="Visible grounding record (KB name, CR title, sources)."
+    )
+    change_outputs: ChangeOutputs | None = Field(
+        default=None,
+        description=(
+            "Post-approval change outputs (updated diagrams, modified code + diff, test "
+            "documents) for a knowledge-base-grounded project; None until generated."
+        ),
     )
     stage_timings: dict[str, float] = Field(
         default_factory=dict,

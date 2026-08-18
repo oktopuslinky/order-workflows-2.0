@@ -27,6 +27,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from workflow_compiler.agents.change_outputs import ChangeOutputsAgent
 from workflow_compiler.agents.change_spec import ChangeSpecAgent
 from workflow_compiler.agents.cvpa import CVPAClassifierAgent
 from workflow_compiler.agents.edit_interpreter import EditInterpreterAgent
@@ -34,6 +35,8 @@ from workflow_compiler.agents.graph_builder import GraphBuilderAgent
 from workflow_compiler.agents.segmentation import WorkflowSegmentationAgent
 from workflow_compiler.change.bcr import seed_terms
 from workflow_compiler.change.spec_seed import seed_components
+from workflow_compiler.change_outputs.engine import ChangeOutputsEngine
+from workflow_compiler.change_outputs.models import ChangeOutputs
 from workflow_compiler.checklist import amend as checklist_amend
 from workflow_compiler.compiler import (
     ProgressCallback,
@@ -1648,6 +1651,7 @@ class ProjectCompiler:
         allow_unconfirmed_references: bool = False,
         persist: bool = True,
         progress: ProgressCallback | None = None,
+        change_outputs: bool = False,
     ) -> CompilationProject:
         """Approve the specs and compile each workflow through the back-end.
 
@@ -1658,6 +1662,10 @@ class ProjectCompiler:
         code. The graph review acts as an automatic gate: health at or above
         the configured threshold continues, below it the workflow is left
         pending and the project is marked ``NEEDS_ATTENTION``.
+
+        ``change_outputs=True`` chains the post-approval change outputs
+        (:meth:`generate_change_outputs`) inline once every workflow compiled —
+        the CLI's ``--change-outputs``; the API runs them as a follow-on job.
         """
         project = await self._projects.load(project_id)
 
@@ -1805,7 +1813,93 @@ class ProjectCompiler:
         project.touch()
         if persist:
             await self._projects.save(project)
+        if change_outputs and project.kb_id is not None and not needs_attention:
+            project = await self.generate_change_outputs(
+                project.project_id, progress=progress, persist=persist, project=project,
+            )
         return project
+
+    # ------------------------------------------------------------------ #
+    # Post-approval change outputs (Phase 4)
+    # ------------------------------------------------------------------ #
+
+    def _provider_label(self) -> tuple[str, str]:
+        """``(provider name, model)`` of the wired LLM, for the stage records."""
+        llm = self._llm
+        if llm is None:
+            return "", ""
+        name = str(getattr(llm, "name", "") or "")
+        config = getattr(llm, "config", None)
+        model = str(getattr(config, "model", "") or "") if config is not None else ""
+        return name, model
+
+    def change_outputs_engine(self, project: CompilationProject) -> ChangeOutputsEngine:
+        """The engine for ``project`` (its knowledge base, grounder, design loader)."""
+        if self._kg is None:
+            raise CompilationError(
+                "Change outputs need a knowledge-graph service (ProjectCompiler(kg_service=…))."
+            )
+        provider, model = self._provider_label()
+        return ChangeOutputsEngine(
+            ChangeOutputsAgent(self._llm, prompt_manager=self._prompts),
+            self._kg,
+            load_state=self._compiler.load_state,
+            build_diagrams=self.build_diagrams,
+            grounder=self.grounder_for(project),
+            provider_name=provider,
+            model_name=model,
+        )
+
+    async def generate_change_outputs(
+        self,
+        project_id: str,
+        *,
+        stages: list[str] | None = None,
+        progress: ProgressCallback | None = None,
+        persist: bool = True,
+        project: CompilationProject | None = None,
+    ) -> CompilationProject:
+        """Produce the post-approval change outputs for a grounded project.
+
+        Runs the ``diagrams`` → ``code`` → ``tests_doc`` stages (or the subset in
+        ``stages``; ``["all"]`` = every stage) through
+        :class:`~workflow_compiler.change_outputs.engine.ChangeOutputsEngine`,
+        persisting after every stage (and every rewritten file) so an
+        interrupted run keeps what finished. Requires a project with ``kb_id``
+        set and at least one compiled workflow (its Temporal design grounds the
+        prompts); the change spec is consumed, never re-extracted.
+        """
+        loaded = project if project is not None else await self._projects.load(project_id)
+        if loaded.kb_id is None:
+            raise ApprovalError(
+                f"Project {project_id!r} is not grounded in a knowledge base — "
+                "change outputs need one."
+            )
+        if not loaded.workflow_ids:
+            raise ApprovalError(
+                f"Project {project_id!r} has no compiled workflow yet — approve the specs first."
+            )
+        wanted = None if not stages or "all" in stages else list(stages)
+        engine = self.change_outputs_engine(loaded)
+
+        async def _persist(current: CompilationProject) -> None:
+            if persist:
+                await self._projects.save(current)
+
+        started = time.perf_counter()
+        try:
+            await engine.run(loaded, stages=wanted, progress=progress, persist=_persist)
+        finally:
+            self._record_timing(loaded, "change_outputs", time.perf_counter() - started)
+            loaded.touch()
+            if persist:
+                await self._projects.save(loaded)
+        return loaded
+
+    @staticmethod
+    def change_outputs_of(project: CompilationProject) -> ChangeOutputs | None:
+        """The stored change outputs (``None`` until generated)."""
+        return project.change_outputs
 
     def _gate_findings(
         self,

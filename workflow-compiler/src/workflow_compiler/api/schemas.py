@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from workflow_compiler.change_outputs.models import ChangeOutputs
 from workflow_compiler.kg.models import (
     KbCatalog,
     KbSource,
@@ -821,6 +822,36 @@ class ChangeRequestResponse(BaseModel):
 class WizardStartRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
+
+
+class ChangeOutputsRegenerateRequest(BaseModel):
+    """Body of ``POST /projects/{id}/change-outputs/regenerate``."""
+
+    stage: str = Field(
+        default="all",
+        description="Stage to (re)run: all | diagrams | code | tests_doc.",
+    )
+    provider: str | None = Field(
+        default=None,
+        description="LLM provider for the run (nemotron | local | …); default cloud Nemotron.",
+    )
+    model: str | None = Field(default=None, description="Model id override.")
+
+
+class ChangeOutputsResponse(BaseModel):
+    """``GET /projects/{id}/change-outputs``: the stored outputs plus any active job."""
+
+    project_id: str
+    outputs: ChangeOutputs | None = Field(
+        default=None, description="Stored change outputs; None until generated."
+    )
+    job: JobResponse | None = Field(
+        default=None, description="The in-flight change_outputs job for this project, if any."
+    )
+    available: bool = Field(
+        default=False,
+        description="Whether outputs can be generated (grounded project with compiled workflows).",
+    )
 
 
 class SendToWorkflowRequest(BaseModel):

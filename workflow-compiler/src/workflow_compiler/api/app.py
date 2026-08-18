@@ -124,6 +124,8 @@ from workflow_compiler.api.schemas import (
     ApproveRequest,
     ArtifactResponse,
     ArtifactUpdateRequest,
+    ChangeOutputsRegenerateRequest,
+    ChangeOutputsResponse,
     ChangeRequestListResponse,
     ChangeRequestResponse,
     ChangeRequestSummary,
@@ -183,8 +185,10 @@ from workflow_compiler.api.schemas import (
     WorkflowStateResponse,
 )
 from workflow_compiler.change.service import ChangeRequestService
+from workflow_compiler.change_outputs.export import export_filename, export_zip
+from workflow_compiler.change_outputs.models import STAGES
 from workflow_compiler.codegen.temporal.project_generator import generate_project_files
-from workflow_compiler.compiler import WorkflowCompiler
+from workflow_compiler.compiler import ProgressEvent, WorkflowCompiler
 from workflow_compiler.config import get_settings
 from workflow_compiler.dialogue import (
     AnswerOutcome,
@@ -229,6 +233,7 @@ from workflow_compiler.models import (
     CompilationProject,
     DialogueSession,
     GeneratedFile,
+    ProjectStage,
     SpecChatSession,
     TemporalWorkflowDesign,
     WorkflowState,
@@ -2120,17 +2125,182 @@ def create_app() -> FastAPI:
                 allow_unconfirmed_references=request.allow_unconfirmed_references,
             )
 
+        async def chain_change_outputs() -> object:
+            """Start the post-approval change outputs once an approve succeeded.
+
+            A grounded project (``kb_id`` set) gets its diagrams / code / test
+            documents as a *separate* ``change_outputs`` job with the same
+            compiler, so the approve reports done when compilation is done and
+            a failure or timeout in the outputs leaves the approve result
+            intact. Ungrounded projects (and approves that left workflows
+            blocked) chain nothing.
+            """
+            loaded = await compiler.load_project(project_id)
+            if loaded.kb_id is None or not loaded.workflow_ids:
+                return None
+            if loaded.stage is not ProjectStage.COMPLETED:
+                return None
+            return await _start_change_outputs(loaded, compiler, user, stage="all")
+
+        after: Callable[[], Awaitable[object]] | None = None
+        if request.kind == "validate":
+            after = warm_questions
+        elif request.kind == "approve":
+            after = chain_change_outputs
         try:
             job = await jobs.start(
                 project_id=project_id,
                 kind=request.kind,
                 owner_id=user.user_id,
                 run=run,
-                after=warm_questions if request.kind == "validate" else None,
+                after=after,
             )
         except JobConflictError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         return _job_response(job)
+
+    # ------------------------------------------------------------------ #
+    # Post-approval change outputs (Phase 4)
+    # ------------------------------------------------------------------ #
+
+    async def _start_change_outputs(
+        project: CompilationProject,
+        compiler: ProjectCompiler,
+        user: User,
+        *,
+        stage: str,
+    ) -> Job:
+        """Run ``generate_change_outputs`` as a ``change_outputs`` job with live progress."""
+        progress = JobProgress(message="queued")
+        stages = None if stage in ("", "all") else [stage]
+        total_stages = len(STAGES) if stages is None else 1
+        done_count = 0
+
+        def relay(event: ProgressEvent) -> None:
+            nonlocal done_count
+            if event.status == "start":
+                progress.update(f"{event.name}…", done_count, total_stages)
+            else:
+                done_count = min(done_count + 1, total_stages)
+                progress.update(f"{event.name} {event.stage or 'done'}", done_count, total_stages)
+
+        def run() -> Awaitable[object]:
+            return compiler.generate_change_outputs(
+                project.project_id, stages=stages, progress=relay
+            )
+
+        return await jobs.start(
+            project_id=project.project_id,
+            kind="change_outputs",
+            owner_id=user.user_id,
+            run=run,
+            progress=progress,
+        )
+
+    def _outputs_available(project: CompilationProject) -> bool:
+        return project.kb_id is not None and bool(project.workflow_ids)
+
+    @app.get(
+        "/projects/{project_id}/change-outputs",
+        response_model=ChangeOutputsResponse,
+        tags=["projects"],
+    )
+    async def get_change_outputs(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> ChangeOutputsResponse:
+        """The stored change outputs (diagrams / code diff / test docs) and any running job."""
+        project = await _guard(compiler.load_project(project_id))
+        _check_owner(project, user)
+        active = jobs.active_for_scope(project_id, scope_kind="project")
+        job = (
+            _job_response(active)
+            if active is not None and active.kind == "change_outputs"
+            else None
+        )
+        return ChangeOutputsResponse(
+            project_id=project_id,
+            outputs=project.change_outputs,
+            job=job,
+            available=_outputs_available(project),
+        )
+
+    @app.post(
+        "/projects/{project_id}/change-outputs/regenerate",
+        response_model=JobResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["projects"],
+    )
+    async def regenerate_change_outputs(
+        project_id: str,
+        request: ChangeOutputsRegenerateRequest,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        selector: CompilerSelector = Depends(get_compiler_selector),
+        user: User = Depends(get_current_user),
+    ) -> JobResponse:
+        """(Re)run one stage (or all) of the change outputs as a background job.
+
+        ``stage`` is ``all`` | ``diagrams`` | ``code`` | ``tests_doc``. The
+        provider defaults to cloud Nemotron like every knowledge-base route;
+        pass ``provider`` to override. Stages that finished earlier are kept
+        unless re-run. 409 when a run is already in flight or the project is
+        not a grounded, compiled project.
+        """
+        project = await _guard(compiler.load_project(project_id))
+        _check_owner(project, user)
+        if not _outputs_available(project):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Change outputs need a knowledge-base-grounded project with at least one "
+                "compiled workflow (approve the specs first).",
+            )
+        if request.stage not in ("all", *STAGES):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Unknown stage {request.stage!r}; choose all, {', '.join(STAGES)}.",
+            )
+        chosen = _select_compiler(
+            request.provider or KB_DEFAULT_PROVIDER, request.model, compiler, selector
+        )
+        try:
+            job = await _start_change_outputs(project, chosen, user, stage=request.stage)
+        except JobConflictError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        return _job_response(job)
+
+    @app.get(
+        "/projects/{project_id}/change-outputs/export.zip",
+        tags=["projects"],
+        response_class=Response,
+        responses={200: {"content": {"application/zip": {}}}},
+    )
+    async def export_change_outputs(
+        project_id: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> Response:
+        """The change outputs as one zip: ``src/`` + ``tests/`` (updated code),
+        ``docs/diagrams/`` (updated ``.mmd`` + ``system-flow-diagram.md``),
+        ``docs/test-cases/`` (updated TC matrix ``.xlsx``, test-plan addendum
+        ``.docx`` + ``.md``), ``changes.patch`` and a ``CHANGES.md`` index."""
+        project = await _guard(compiler.load_project(project_id))
+        _check_owner(project, user)
+        if project.change_outputs is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "No change outputs have been generated for this project."
+            )
+        from workflow_compiler.change_outputs.engine import change_label_of
+
+        label = project.change_outputs.tests_doc.change_request_id or change_label_of(project)
+        data = export_zip(project.change_outputs, project_id=project_id, label=label)
+        return _download(
+            ArtifactExport(
+                filename=export_filename(project_id, label),
+                media_type="application/zip",
+                data=data,
+            )
+        )
 
     @app.get("/jobs", response_model=list[JobResponse], tags=["jobs"])
     async def list_jobs(

@@ -98,20 +98,91 @@ _TDD_CHUNKS: tuple[tuple[str, ...], ...] = (
 )
 _STORY_BATCH = 3
 
+_IMPACT_TYPE_ORDER: dict[str, int] = {
+    t: i
+    for i, t in enumerate(
+        ("Module", "Class", "Function", "Document", "Epic", "UserStory", "TestCase", "Requirement")
+    )
+}
+
+#: Words the retriever reports as "uncovered" that carry no meaning for the note.
+_NOISE_TERMS = frozenset(
+    [
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "by",
+        "each",
+        "for",
+        "from",
+        "has",
+        "have",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "one",
+        "or",
+        "shall",
+        "should",
+        "than",
+        "that",
+        "the",
+        "their",
+        "then",
+        "this",
+        "to",
+        "until",
+        "when",
+        "will",
+        "with",
+        "all",
+        "any",
+        "more",
+        "must",
+        "not",
+        "per",
+        "only",
+        "once",
+        "own",
+        "same",
+        "such",
+        "upon",
+        "via",
+        "multi",
+        "line",
+        "lines",
+    ]
+)
+
 _STEP_QUERIES: dict[ArtifactKind, tuple[str, ...]] = {
     ArtifactKind.IMPACT: (
         "state machine states transitions cancel compensation saga",
-        "test plan scope out of scope test cases matrix",
-        "epic definition of done story map",
+        "test plan scope out of scope partial shipment BCR-001",
+        "test cases TC-05 TC-06 TC-09 TC-10 provisioning dispatch cancellation compensation",
+        "user story provision order dispatch order complete order acceptance criteria",
+        "epic definition of done story map partial shipment",
+        "OrderStatus ProvisioningResult DispatchResult OrderState dataclass types",
+        "activities provision_order dispatch_order complete_order compensate",
     ),
     ArtifactKind.EPIC: (
         "epic statement business value in-scope capabilities definition of done story map "
         "non-functional requirements dependencies risks",
-        "business requirements objectives scope",
+        "business requirements objectives scope stakeholders",
+        "user story provision order dispatch order complete order",
     ),
     ArtifactKind.STORIES: (
         "user story acceptance criteria given when notes implements",
         "provision order dispatch order complete order cancel status query",
+        "test cases TC-05 TC-06 TC-09 TC-10 TC-11 TC-12 provisioning dispatch cancellation",
     ),
     ArtifactKind.TDD: (
         "technical design overview why temporal architecture state machine",
@@ -150,10 +221,10 @@ class ChangeWizardEngine:
         agent: ChangeAnalystAgent,
         kg: KgService,
         *,
-        per_query_budget: int = 1200,
-        total_budget: int = 6000,
+        per_query_budget: int = 1000,
+        total_budget: int = 9000,
         impact_hops: int = 2,
-        max_impact_rows: int = 80,
+        max_impact_rows: int = 120,
         max_questions: int = 5,
     ) -> None:
         self._agent = agent
@@ -606,6 +677,9 @@ class ChangeWizardEngine:
             for r in rows
             if r.type in _IMPACT_ROW_TYPES
         ]
+        # Code and design artifacts first within a hop level, so the cap never
+        # drops the modules the change actually touches in favour of many TC ids.
+        kept.sort(key=lambda r: (r.hops, _IMPACT_TYPE_ORDER.get(r.type, 99), r.node_id))
         return kept[: self._max_impact_rows]
 
     def _queries(self, cr: ChangeRequest, kind: ArtifactKind) -> list[str]:
@@ -642,7 +716,7 @@ class ChangeWizardEngine:
         uncovered: list[str] = []
         for p in packets:
             for term in p.uncovered_terms:
-                if term not in uncovered:
+                if term not in uncovered and term.lower() not in _NOISE_TERMS and len(term) > 2:
                     uncovered.append(term)
         note = ""
         if packets and coverage < 0.8:
@@ -707,11 +781,12 @@ class ChangeWizardEngine:
                 "### Deterministic knowledge-graph impact traversal "
                 f"(seeds from the change request → {self._impact_hops} hops)",
                 "",
-                "| Hops | Type | Node | Path |",
-                "| --- | --- | --- | --- |",
+                "| Hops | Type | Node | Path | KG node id |",
+                "| --- | --- | --- | --- | --- |",
             ]
             lines += [
-                f"| {r.hops} | {r.type} | {r.name} | {r.path or ''} |" for r in cr.impact_table
+                f"| {r.hops} | {r.type} | {r.name} | {r.path or ''} | {r.node_id} |"
+                for r in cr.impact_table
             ]
             lines.append("")
         lines += ["### Knowledge-graph excerpts (real names, paths and line spans)"]

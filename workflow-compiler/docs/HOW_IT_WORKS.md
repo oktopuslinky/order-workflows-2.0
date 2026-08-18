@@ -942,6 +942,69 @@ diagrams, the Temporal `OrderWorkflow` code + tests); `scripts/make_kb_zip.py` z
 `examples/change_requests/BCR-001-partial-shipment-support.docx` is the change request the later
 phases consume.
 
+## 8d. Change requests (`change/`) — a guided wizard from a BCR to Impact / EPIC / Stories / TDD
+
+A **change request** pairs a business-change document (a BCR `.docx`, or markdown/text) with a
+knowledge base. A deterministic wizard walks it through four steps — **Impact → EPIC → Stories →
+TDD** — asking a few clarifying questions before each draft and producing one versioned markdown
+artifact per step, grounded in knowledge-graph retrievals and a deterministic impact traversal.
+Phase 1 of the KG change pipeline (`docs/kg-plan/`).
+
+**Reading the BCR (no LLM).** `change/bcr.py` parses the metadata block (`Document ID`, `Status`,
+`Requested By`, `Date Raised`, `Target Workflow`), the numbered requirements (`BCR-01-03 | text`
+rows or `ID — text` lines) and *seed terms* for the impact traversal (file names such as
+`types.py`, identifiers such as `complete_order`, `TDD §4.3`-style references, `PARTIALLY_*`
+states, `US-/TC-/EPIC-` ids). The document itself goes through the normal `DocumentParserFactory`.
+
+**Ids come from the catalog, never from the model.** `change/ids.py` reads
+`KgService.catalog(kb_id)` — the ids present in the corpus, now including document ids
+(`KbCatalog.documents`, regexed from the ingest extracts) — and mints the next free ones:
+`EPIC-002` after `EPIC-001`, `US-008…` after `US-001..007`, `TDD-ORD-002` after `TDD-ORD-001`,
+`TC-18` for Phase 4. The drafting prompts receive them in the brief and the engine overwrites
+whatever the model returns.
+
+**The wizard (`change/engine.py::ChangeWizardEngine`).** Per step: `start_step` (the
+`ChangeAnalystAgent` drafts 2–5 clarifying questions with grounded suggested options) →
+`answer` (each prose answer becomes one brief line; at most **one** follow-up, like the Resolve
+dialogue; unmappable answers are recorded verbatim) / `skip` → `draft` (assemble the **brief** =
+BCR text + requirements + assigned ids + the requester's decisions + the deterministic
+`impact()` table + de-duplicated KG retrievals for every requirement, seed-term group and a few
+step-specific queries, capped by `change_kg_budget` tokens + every artifact already drafted →
+agent plan → engine post-processing → `change/render.py`) → `revise` (a chat instruction; the
+agent edits the markdown, the result must still parse) → `edit` (human markdown, a
+`human_edit` version) → `approve` (cursor advances; approving the last step completes the CR).
+"Draft now" is allowed at any time after start — pending questions are marked skipped. Later
+steps cannot be drafted before the previous one is approved; earlier steps can be re-drafted
+(new version, needs re-approval). Long TDD answers are drafted in four chunks of sections and
+stories in batches of three, because a single long Nemotron JSON answer is unreliable.
+
+**Artifacts (`models/change.py`, `change/render.py`, `change/parse.py`).** Each artifact keeps a
+full history (`llm_draft` | `llm_revision` | `human_edit`) and renders to markdown whose heading
+structure mirrors the manager's reference documents: the impact analysis is numbered like a BCR
+(Change Summary, Requirements Assessment, Affected Components table, Impact on Existing Design,
+Risks & Assumptions, Open Decisions, a deterministic knowledge-graph appendix); the EPIC has the
+unnumbered `Epic Statement / Business Value / In-Scope Capabilities / Definition of Done / Story
+Map / Non-Functional Requirements / Dependencies / Risks` sections; user stories are one
+`## US-00N: Title` section each with `### Story` (As/I want/so that), `### Acceptance Criteria`
+(checkable Given… lines) and `### Notes`; the TDD keeps TDD-ORD-001's `## N. Title` /
+`### 4.x Title` sections with an **Existing** and a **Proposed** part each. Every artifact ends
+with a `## Sources` footer (KB files + line spans the brief was grounded on) and carries a
+retrieval-coverage note when coverage is low. `parse.py` reads all four back (round-trip tests);
+a human edit or revision that loses the title heading is rejected with 400.
+
+**Façade + storage.** `change/service.py::ChangeRequestService(store, kg_service,
+provider_factory)` mirrors `ProjectCompiler` (load → engine → save on every call, so a cancelled
+job leaves the previous state); `storage/change_store.py` persists
+`<state-root>/change_requests/<cr_id>.json` with the same id validation as the KB store.
+Questions, drafts and revisions run as `cr_questions` / `cr_draft` / `cr_revise` jobs
+(`JobManager` scope kind `change_request`); `answer` is one short synchronous call. Approving a
+step kicks the next step's `cr_questions` job automatically. Provider/model are chosen per
+change request (cloud Nemotron by default) and stored on its wizard.
+
+**Config.** `change_kg_budget` (9000 tokens of KG excerpts per brief). CLI: `cr create|list|show|
+draft [--auto]|approve|export|delete`; UI: **Changes** page (list + new) and the wizard page
+(stepper + chat on the left, artifact editor with versions / approve / Sources on the right).
+
 ## 9. The three entry points (same engine, three faces)
 
 ### 9.1 Library
@@ -1181,6 +1244,10 @@ reasoning models can also be slow; bump `--timeout` (e.g. `300.0`) to avoid
 | Command | Purpose |
 |---|---|
 | `kb init <zip-or-folder> [--name] [--enrich/--no-enrich] [--provider] [--model] [--id]` | Create + index (progress printed per file). |
+| `cr create <kb-id> <bcr.docx|.md|.txt> [--title] [--provider] [--model]` | Register a change request against a knowledge base (metadata, requirements and impact seeds parsed deterministically). |
+| `cr list` / `cr show <cr-id>` | Change requests and their wizard/artifact state. |
+| `cr draft <cr-id> <impact|epic|stories|tdd> [--auto] [--out FILE]` | Draft one wizard step; `--auto` starts the wizard, drafts the questions, answers each with its first suggested option, then drafts. |
+| `cr approve <cr-id> <step>` / `cr export <cr-id> <step> [--version N] [--out FILE]` / `cr delete <cr-id>` | Approve (advances the wizard), print/save an artifact version, delete. |
 | `kb list` / `kb show <kb-id>` | List; stats by type, catalog ids, warnings. |
 | `kb ask <kb-id> "<prompt>" [--budget] [--hops] [--json]` | Print the retrieved packet + sources with line spans. |
 | `kb impact <kb-id> <seed>… [--hops]` | Deterministic impact table. |
@@ -1284,6 +1351,18 @@ Knowledge bases (§8c). Uploading a corpus answers `202` with the knowledge base
 | GET    | `/knowledge-bases/{id}/search`         | `?q=…&k=`                                                  | BM25 anchor candidates. |
 | GET    | `/knowledge-bases/{id}/files`          | `?path=` (optional)                                        | Corpus file list, or one file as text. |
 | GET    | `/knowledge-bases/{id}/graph/summary`  | `?top=`                                                    | Counts by node/edge type + best-connected nodes. |
+| POST   | `/change-requests`                     | multipart `kb_id`, `file` (docx/md/txt) or `text`, `title?`, `provider?`, `model?` | Register a change request (201; no LLM call). |
+| GET    | `/change-requests`                     | —                                                          | List change requests (summary rows). |
+| GET    | `/change-requests/{id}` (`/wizard`)    | —                                                          | The change request: wizard steps/questions/turns, artifacts, ids, running job. |
+| DELETE | `/change-requests/{id}`                | —                                                          | Delete (cancels a running job). |
+| POST   | `/change-requests/{id}/wizard/start`   | `{provider?, model?}`                                      | Reserve ids + impact traversal (sync), then draft the current step's questions as a `cr_questions` job (202; idempotent). |
+| POST   | `/change-requests/{id}/wizard/answer`  | `{answer, option?}`                                        | Answer the current question (one short LLM call; may return one follow-up). |
+| POST   | `/change-requests/{id}/wizard/skip`    | —                                                          | Skip the current question. |
+| POST   | `/change-requests/{id}/wizard/draft`   | `{step?}`                                                  | Draft the step's artifact as a `cr_draft` job (202; pending questions are skipped). |
+| POST   | `/change-requests/{id}/wizard/revise`  | `{step, message}`                                          | Chat revision of a drafted artifact as a `cr_revise` job (202). |
+| GET    | `/change-requests/{id}/artifacts/{kind}` | `?version=`                                              | Artifact markdown (latest or a version) + history + sources + coverage. |
+| PUT    | `/change-requests/{id}/artifacts/{kind}` | `{markdown, note?}`                                      | Human edit → new `human_edit` version (400 if the structure is lost). |
+| POST   | `/change-requests/{id}/artifacts/{kind}/approve` | —                                                | Approve; the cursor advances and the next step's questions job starts. |
 
 Project responses include `time_saved`: each pipeline step's measured wall-clock seconds
 (persisted per project as `stage_timings`) compared against configurable human-team estimates

@@ -136,7 +136,7 @@ workflow-compiler approve-spec <project-id> --spec-dir ./specs   # compile throu
 Generated bundles land under `./generated/<project-id>/<slug>/`. Other commands: `init` (write the
 `.env` configuration — see Install), `edit` (apply an edit-request document to a compiled project),
 `approve` / `reject` (manual override for a below-threshold graph), `show`, `models`, and
-`kb init|list|show|ask|impact|search|delete` (knowledge bases — see below). `workflow-compiler <command> --help` is the
+`kb init|list|show|ask|impact|search|delete` (knowledge bases) and `cr create|list|show|draft|approve|export|delete` (change requests — see below). `workflow-compiler <command> --help` is the
 authoritative flag reference; the full command guide is in
 [`docs/HOW_IT_WORKS.md` §9.2](docs/HOW_IT_WORKS.md).
 
@@ -158,6 +158,25 @@ workflow-compiler kb impact order-lifecycle complete_order
 the selected LLM provider (one call per document/module; cached). Design and routes:
 [`docs/HOW_IT_WORKS.md` §8c / §9.3](docs/HOW_IT_WORKS.md); the multi-phase plan lives in
 `docs/kg-plan/`.
+
+### Change requests (business-change pipeline, phase 1)
+
+Upload a business change request (the sample `examples/change_requests/BCR-001-partial-shipment-support.docx`)
+against a knowledge base on the **Changes** page and walk the guided wizard — **Impact → EPIC →
+Stories → TDD**. Each step asks a few grounded clarifying questions (answer, pick a suggested
+option, skip, or just "Draft now"), drafts a markdown artifact grounded in knowledge-graph
+retrievals and a deterministic impact traversal (a "Sources" footer lists the KB files and line
+spans used), and lets you revise it in chat, edit it by hand (every change is a version) and
+approve it. Ids (`EPIC-002`, `US-008…`, `TDD-ORD-002`) are assigned from the KB's catalog by the
+engine, not the model. From the CLI:
+
+```bash
+workflow-compiler cr create order-lifecycle examples/change_requests/BCR-001-partial-shipment-support.docx --provider nemotron
+workflow-compiler cr draft <cr-id> impact --auto --out impact.md    # questions answered with the first option
+workflow-compiler cr approve <cr-id> impact && workflow-compiler cr draft <cr-id> epic --auto
+```
+
+Design and routes: [`docs/HOW_IT_WORKS.md` §8d / §9.3](docs/HOW_IT_WORKS.md).
 
 ### Running a generated bundle
 

@@ -277,6 +277,36 @@ Retrieval (`retrieve`) is BM25 anchor → bounded traversal → dereferenced fil
 `KgPacket` whose `rendered` text is what later prompts get; `impact` is a deterministic BFS over
 dependency edges. See `docs/HOW_IT_WORKS.md` §8c and `docs/kg-plan/`.
 
+## Change requests (`change/`, phase 1 of the change pipeline)
+
+A BCR plus a knowledge base goes through a deterministic four-step wizard; the model drafts,
+the engine numbers, renders, versions and gates.
+
+```mermaid
+flowchart LR
+    bcr["POST /change-requests (docx/md)
+CLI cr create"] --> parse["change/bcr.py
+meta · requirements · seed terms"]
+    parse --> svc["ChangeRequestService"]
+    svc --> eng["ChangeWizardEngine
+Impact → EPIC → Stories → TDD"]
+    eng -->|"catalog → EPIC-002 / US-008… / TDD-ORD-002"| ids["change/ids.py"]
+    eng -->|"retrieve × N + impact()"| kg["KgService"]
+    eng -->|"brief"| agent["ChangeAnalystAgent
+change_*.md prompts"]
+    agent --> prov["BaseLLMProvider"]
+    eng --> render["change/render.py ⇄ change/parse.py
+(round trip)"]
+    render --> art["Artifact versions
+llm_draft · llm_revision · human_edit"]
+    svc --> store["ChangeRequestStore
+<state>/change_requests/<id>.json"]
+    api["/change-requests/* routes · jobs cr_questions/cr_draft/cr_revise
+frontend /changes"] --> svc
+```
+
+See `docs/HOW_IT_WORKS.md` §8d.
+
 ## Request sequence (compile → approve)
 
 ```mermaid

@@ -29,6 +29,19 @@ Write the analysis strictly from that material:
   type | document | story | test_case | test_plan | epic | diagram | requirement
   | other; `change_type` is modify | add | remove | verify; `kg_ref` is the
   knowledge-graph node id when the brief shows one (else empty).
+  **Be exhaustive, not selective**: the deterministic traversal table in the
+  brief lists the modules, classes, functions, documents, stories and test cases
+  the change request reaches — every one whose behaviour, wording, scope or
+  expected result changes gets its own row (one row per test case id, one per
+  user story id, one per module/function/type — never "and others"). Expect
+  15–30 rows for a structural change: the workflow module and its run/cancel/
+  compensation logic, the shared types module and each affected type, each
+  affected activity, the tests module, the state-machine and sequence diagrams,
+  the existing epic's definition-of-done item and story map, the user stories
+  covering the changed stages, the test plan's scope section, each test case
+  whose steps/expected result change or that must be re-verified, the BRD's
+  scope line, and the new documents to add (new epic, new stories, new TDD, new
+  diagram, new test cases).
 - **design_impacts** — bullets in the change request's §4 style,
   "Component: what must change", including anything the change request missed
   (validation of partially available orders, status query shape, worker

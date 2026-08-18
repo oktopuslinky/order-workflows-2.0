@@ -170,6 +170,18 @@ picture before changing pipeline behavior.
   per request with a **cloud default** (enrichment must never hit the single-GPU gateway unasked).
   Phase plan + handoff: `docs/kg-plan/`.
 
+- **Change requests ride on knowledge bases (`change/`).** `ChangeRequestService` (façade like
+  `ProjectCompiler`) + `ChangeWizardEngine` (deterministic state machine: Impact → EPIC → Stories
+  → TDD; per step questions → answers → draft → revise/edit → approve) + `ChangeAnalystAgent`
+  (`prompts/templates/change_*.md`, permissive plans). Three rules are load-bearing: the
+  **engine assigns ids** (`change/ids.py` from `KgService.catalog`, incl. `catalog.documents`),
+  never the model; every artifact is markdown that **renders and parses back**
+  (`change/render.py` ⇄ `change/parse.py`, round-trip tested — human edits/revisions that lose the
+  title heading are rejected); grounding is visible (each draft's brief = BCR + answers + KG
+  retrievals + `impact()` table + prior artifacts, and the KB files/spans it used become the
+  artifact's `## Sources` footer). Long calls are `cr_questions`/`cr_draft`/`cr_revise` jobs
+  (scope kind `change_request`); `answer` is synchronous. Store: `storage/change_store.py`.
+
 - **HTTP auth + time-saved metric.** The API uses local accounts (`api/auth.py`: scrypt +
   HMAC-signed session cookie, users under `<state-root>/users/`); project routes require
   `get_current_user`, projects carry `owner_id` (recorded for attribution). By default

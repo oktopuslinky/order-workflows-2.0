@@ -45,8 +45,8 @@ class ChangeRequestService:
         kg: KgService,
         provider_factory: ProviderFactory | None = None,
         *,
-        kg_budget: int = 6000,
-        per_query_budget: int = 1200,
+        kg_budget: int = 9000,
+        per_query_budget: int = 1000,
     ) -> None:
         self._store = store
         self._kg = kg

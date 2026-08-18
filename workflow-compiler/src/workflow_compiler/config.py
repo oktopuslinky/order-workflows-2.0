@@ -204,7 +204,7 @@ class Settings(BaseSettings):
         description="Knowledge bases: maximum uncompressed size of an uploaded corpus zip.",
     )
     change_kg_budget: int = Field(
-        default=6000,
+        default=9000,
         gt=0,
         description=(
             "Token budget of knowledge-graph excerpts assembled into one change-wizard "

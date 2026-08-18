@@ -282,6 +282,10 @@ async def test_change_validator_findings(kg: KgService, kb: KnowledgeBase) -> No
                             requirement_ids=["BCR-01-01"]),
             ComponentChange(name="dispatch_order", kind=ComponentKind.ACTIVITY,
                             path="fn:src/orders/activities.py:dispatch_order", proposed="x"),
+            ComponentChange(name="run", kind=ComponentKind.QUERY,
+                            path="fn:src/orders/workflow.py:OrderWorkflow.run", proposed="y"),
+            ComponentChange(name="nope", kind=ComponentKind.QUERY,
+                            path="fn:src/orders/workflow.py:no_such_method", proposed="z"),
             ComponentChange(name="OrderState", kind=ComponentKind.TYPE,
                             path="src/orders/state.py", proposed="new states",
                             requirement_ids=["BCR-01-09"]),
@@ -301,6 +305,9 @@ async def test_change_validator_findings(kg: KgService, kb: KnowledgeBase) -> No
     assert not any("src/orders/workflow.py" in m and "not in the knowledge base" in m
                    for m in by_message)
     assert not any("dispatch_order (activity) points" in m for m in by_message)
+    # a method inside a class resolves through its file; an unknown symbol does not
+    assert not any("run (query) points" in m for m in by_message)
+    assert any("nope (query) points" in m for m in by_message)
     # unresolvable path → WARNING with search suggestions
     bad_path = next(f for m, f in by_message.items() if "src/orders/state.py" in m)
     assert bad_path.severity is Severity.WARNING

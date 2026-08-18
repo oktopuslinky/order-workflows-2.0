@@ -445,7 +445,22 @@ class KgService:
                     by_path = str(node_id)
             if by_symbol is None and node_id.startswith("fn:") and node_id.endswith(":" + needle):
                 by_symbol = str(node_id)
-        return by_path or by_symbol
+        if by_path or by_symbol:
+            return by_path or by_symbol
+        # `fn:<file>:<symbol>` for a method / nested def (only top-level defs are
+        # nodes): accept it when the file exists and defines the symbol.
+        if needle.startswith("fn:") and needle.count(":") >= 2:
+            _prefix, file_part, symbol = needle.split(":", 2)
+            symbol = symbol.rsplit(".", 1)[-1].strip()
+            module_id = await self.resolve_ref(kb_id, file_part)
+            if module_id is not None and symbol:
+                try:
+                    text = (await self.read_file(kb_id, file_part)).text
+                except Exception:
+                    return None
+                if re.search(rf"\b(?:def|class)\s+{re.escape(symbol)}\b", text):
+                    return module_id
+        return None
 
     async def impact(
         self, kb_id: str, seeds: Iterable[str], *, max_hops: int = 2

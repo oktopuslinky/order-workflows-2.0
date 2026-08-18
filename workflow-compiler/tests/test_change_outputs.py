@@ -685,3 +685,16 @@ def test_auto_import_known_names() -> None:
     assert fixed2.startswith('"""Doc."""\nimport uuid\n') and added2 == ["import uuid"]
     # already present: nothing added
     assert auto_import("import uuid\nX = uuid.uuid4()\n", ["uuid"])[1] == []
+
+
+def test_missing_imports_against_rewritten_siblings() -> None:
+    from workflow_compiler.change_outputs.code import exported_names, missing_imports
+
+    siblings = {"existing_Codebase/activities/order_activities.py": NEW_ACTIVITIES}
+    assert {"provision_order", "provision_group", "ProvisioningResult"} <= exported_names(NEW_ACTIVITIES)
+    code = "from src.activities.order_activities import provision_group, dispatch_group\n"
+    assert missing_imports(code, siblings, list(CORPUS_TEXTS)) == {
+        "existing_Codebase/activities/order_activities.py": ["dispatch_group"]
+    }
+    # imports from files that were not rewritten (or third parties) are not checked
+    assert missing_imports("from src.shared.types import Nope\nimport temporalio\n", siblings, list(CORPUS_TEXTS)) == {}

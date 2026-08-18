@@ -527,3 +527,50 @@ def auto_import(code: str, names: Iterable[str]) -> tuple[str, list[str]]:
         added.append(statement)
         code = "\n".join(lines)
     return code, added
+
+
+# --------------------------------------------------------------------------- #
+# Cross-file coherence: names imported from a rewritten sibling must exist there
+# --------------------------------------------------------------------------- #
+
+
+def exported_names(text: str) -> set[str]:
+    """Top-level names a module offers: its definitions plus what it imports."""
+    names = set(defined_names(text))
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return names
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            names.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            names.update(alias.asname or alias.name for alias in node.names)
+    return names
+
+
+def missing_imports(
+    code: str, siblings: Mapping[str, str], py_files: Sequence[str]
+) -> dict[str, list[str]]:
+    """``{sibling path: [names]}`` this file imports from a rewritten sibling that
+    the sibling's new text does not define — the model coding against a
+    signature it invented instead of the one given."""
+    problems: dict[str, list[str]] = {}
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return problems
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or not node.module or node.level:
+            continue
+        target = resolve_import(node.module, py_files)
+        if target is None or target not in siblings:
+            continue
+        available = exported_names(siblings[target])
+        missing = [
+            alias.name for alias in node.names
+            if alias.name != "*" and alias.name not in available
+        ]
+        if missing:
+            problems.setdefault(target, []).extend(missing)
+    return problems

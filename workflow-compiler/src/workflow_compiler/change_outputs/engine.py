@@ -23,6 +23,8 @@ from workflow_compiler.agents.change_outputs import ChangeOutputsAgent
 from workflow_compiler.change_outputs.code import (
     auto_import,
     check_syntax,
+    exported_names,
+    missing_imports,
     missing_symbols,
     plan_rewrites,
     ruff_check,
@@ -587,10 +589,22 @@ class ChangeOutputsEngine:
             if ok:
                 required = self._required_symbols(components)
                 missing = missing_symbols(code, required)
+                bad_imports = missing_imports(code, rewritten, list(texts))
                 if missing:
                     problem = (
                         "The file must define / use these change-spec symbols but does not: "
                         + ", ".join(missing)
+                    )
+                elif bad_imports:
+                    listing = "\n".join(
+                        f"- from {sib}: {', '.join(names)} (it defines: "
+                        f"{', '.join(sorted(exported_names(rewritten[sib]))[:40])})"
+                        for sib, names in bad_imports.items()
+                    )
+                    problem = (
+                        "This file imports names that the rewritten sibling modules do not "
+                        "define:\n" + listing
+                        + "\nUse the sibling's real names — do not invent new ones."
                     )
                 else:
                     ruff_ok, ruff_out = ruff_check(code)

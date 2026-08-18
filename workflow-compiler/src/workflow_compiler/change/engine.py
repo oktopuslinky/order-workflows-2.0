@@ -36,6 +36,7 @@ from workflow_compiler.models.change import (
     STEP_LABELS,
     TDD_SECTIONS,
     WIZARD_ORDER,
+    AffectedItem,
     ArtifactKind,
     ArtifactStatus,
     ChangeRequest,
@@ -411,14 +412,35 @@ class ChangeWizardEngine:
     async def _draft_impact(
         self, cr: ChangeRequest, brief: Brief, report: ProgressFn
     ) -> tuple[str, str]:
-        report("drafting impact analysis", 0, 1)
+        report("drafting impact analysis", 0, 2)
         plan = await self._agent.draft_impact(brief.text)
-        affected = []
-        for item in plan.affected:
-            change = item.change_type.strip().lower()
-            if change not in {c.value for c in ChangeType}:
-                change = ChangeType.MODIFY.value
-            affected.append(item.model_copy(update={"change_type": change}))
+        affected = [_normalise_affected(item) for item in plan.affected if item.ref.strip()]
+        # Second, bounded pass: the traversal reached stories/tests/docs/functions
+        # the model did not mention — ask it to classify each (modify/verify/add
+        # or unaffected) rather than trust one long answer to be exhaustive.
+        candidates = _coverage_candidates(cr.impact_table, affected)
+        if candidates:
+            report("checking coverage of the impact traversal", 1, 2)
+            affected_block = (
+                "\n".join(f"- {a.kind} `{a.ref}` ({a.change_type})" for a in affected) or "- (none)"
+            )
+            candidates_block = "\n".join(
+                f"- kind={kind} ref={ref} kg_ref={node_id}" for kind, ref, node_id in candidates
+            )
+            try:
+                extra = await self._agent.draft_impact_coverage(
+                    brief.text, affected_block=affected_block, candidates_block=candidates_block
+                )
+            except Exception as exc:  # pragma: no cover - the first pass still stands
+                log.warning("impact coverage pass failed: %s", exc)
+                extra = None
+            if extra is not None:
+                known = {a.ref.strip().lower() for a in affected}
+                for item in extra.affected:
+                    key = item.ref.strip().lower()
+                    if key and key not in known:
+                        known.add(key)
+                        affected.append(_normalise_affected(item))
         # Every requirement gets a row even if the model dropped one.
         seen = {r.req_id for r in plan.requirements}
         reqs = list(plan.requirements) + [
@@ -442,7 +464,7 @@ class ChangeWizardEngine:
             coverage_note=brief.coverage_note,
             sources=brief.sources,
         )
-        report("rendering", 1, 1)
+        report("rendering", 2, 2)
         return render_impact(doc), f"{len(affected)} affected components, {len(reqs)} requirements"
 
     async def _draft_epic(
@@ -813,6 +835,47 @@ class ChangeWizardEngine:
                     "",
                 ]
         return "\n".join(lines).strip() + "\n"
+
+
+_CANDIDATE_KINDS: dict[str, str] = {
+    "UserStory": "story",
+    "TestCase": "test_case",
+    "Document": "document",
+    "Function": "function",
+    "Class": "class",
+    "Module": "module",
+    "Epic": "epic",
+    "Requirement": "requirement",
+}
+
+
+def _normalise_affected(item: AffectedItem) -> AffectedItem:
+    change = item.change_type.strip().lower()
+    if change not in {c.value for c in ChangeType}:
+        change = ChangeType.MODIFY.value
+    return item.model_copy(update={"change_type": change, "ref": item.ref.strip()})
+
+
+def _coverage_candidates(
+    rows: Sequence[ImpactTableRow], affected: Sequence[AffectedItem], *, limit: int = 60
+) -> list[tuple[str, str, str]]:
+    """Traversal rows (kind, ref, node id) that no affected row mentions yet."""
+    mentioned = " ".join(f"{a.ref} {a.kg_ref} {a.rationale}" for a in affected).lower()
+    out: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        kind = _CANDIDATE_KINDS.get(row.type)
+        if kind is None:
+            continue
+        ref = row.path if row.type in ("Module", "Document") and row.path else row.name
+        key = ref.lower()
+        if key in seen or key in mentioned or row.name.lower() in mentioned:
+            continue
+        seen.add(key)
+        out.append((kind, ref, row.node_id))
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _pack_sections(

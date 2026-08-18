@@ -445,6 +445,22 @@ class ScriptedAnalyst(MockProvider):
                     else [],
                 }
             )
+        if name == "ImpactCoverageDraft":
+            rows = []
+            for ln in prompt.splitlines():
+                if ln.startswith("- kind=test_case ref="):
+                    ref = ln.split("ref=")[1].split()[0]
+                    rows.append(
+                        {
+                            "kind": "test_case",
+                            "ref": ref,
+                            "change_type": "verify",
+                            "rationale": "re-run after the split",
+                            "kg_ref": ref,
+                        }
+                    )
+                    break
+            return schema.model_validate({"affected": rows})
         if name == "Revision":
             marker = "## Revised at\n"
             current = prompt.split("```markdown\n", 1)[1].rsplit("```", 1)[0]
@@ -553,6 +569,10 @@ async def test_full_wizard_flow_offline(
     doc = parse_impact(art.markdown)
     assert doc.cr_id == "BCR-001" and doc.kb_name == "mini"
     assert doc.affected[0].change_type == "modify"  # normalised
+    assert analyst.calls_by_schema["ImpactCoverageDraft"] == 1
+    coverage_rows = [a for a in doc.affected if a.change_type == "verify"]
+    assert coverage_rows and coverage_rows[0].kind == "test_case"
+    assert coverage_rows[0].ref.startswith("TC-")
     assert [r.req_id for r in doc.requirements] == ["BCR-01-01", "BCR-01-02", "BCR-01-03"]
     assert doc.requirements[1].impact == "(not assessed)"
     assert doc.kg_rows and doc.sources, "sources footer + deterministic appendix present"

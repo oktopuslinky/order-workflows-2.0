@@ -604,6 +604,14 @@ class ImpactDraft(BaseModel):
     open_decisions: list[str] = Field(default_factory=list)
 
 
+class ImpactCoverageDraft(BaseModel):
+    """Second impact pass: traversal candidates the first draft did not mention."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    affected: list[AffectedItem] = Field(default_factory=list)
+
+
 class EpicDraft(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

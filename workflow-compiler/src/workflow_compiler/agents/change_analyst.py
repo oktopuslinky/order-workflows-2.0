@@ -21,6 +21,7 @@ from workflow_compiler.models.change import (
     ArtifactKind,
     DraftedWizardQuestions,
     EpicDraft,
+    ImpactCoverageDraft,
     ImpactDraft,
     Revision,
     StoriesDraft,
@@ -140,6 +141,20 @@ class ChangeAnalystAgent:
     async def draft_impact(self, brief: str) -> ImpactDraft:
         prompt = self._prompts.render("change_impact", brief=brief)
         return await self._require_llm().structured(prompt, ImpactDraft, system=_SYSTEM_ANALYST)
+
+    async def draft_impact_coverage(
+        self, brief: str, *, affected_block: str, candidates_block: str
+    ) -> ImpactCoverageDraft:
+        """Classify traversal candidates the first impact pass left out."""
+        prompt = self._prompts.render(
+            "change_impact_coverage",
+            brief=brief,
+            affected_block=affected_block,
+            candidates_block=candidates_block,
+        )
+        return await self._require_llm().structured(
+            prompt, ImpactCoverageDraft, system=_SYSTEM_ANALYST
+        )
 
     async def draft_epic(self, brief: str, *, epic_id: str, story_id_hint: str) -> EpicDraft:
         prompt = self._prompts.render(

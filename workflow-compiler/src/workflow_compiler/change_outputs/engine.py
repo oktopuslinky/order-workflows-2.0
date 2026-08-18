@@ -165,6 +165,8 @@ def _matrix_text(rows: Sequence[TestCaseRow]) -> str:
 
 def change_label_of(project: CompilationProject) -> str:
     """The business id of the change (``BCR-001``) from the title / document, else the CR id."""
+    if project.grounding is not None and project.grounding.change_request_label:
+        return project.grounding.change_request_label
     title = project.grounding.change_request_title if project.grounding else ""
     for text in (title, project.document_text[:20_000]):
         match = _CHANGE_ID.search(text or "")

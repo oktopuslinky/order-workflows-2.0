@@ -73,6 +73,10 @@ class ProjectGrounding(WorkflowBaseModel):
     change_request_title: str = Field(
         default="", description="Change-request title when the project came from one."
     )
+    change_request_label: str = Field(
+        default="",
+        description="Business id of the change request (`BCR-001`) when the project came from one.",
+    )
     sources: list[str] = Field(
         default_factory=list,
         description="Corpus files (`path — lines a-b`) the grounding packets dereferenced.",

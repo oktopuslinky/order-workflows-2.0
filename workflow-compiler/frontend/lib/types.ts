@@ -308,6 +308,8 @@ export interface ChangeOutputsResponse {
 export interface ProjectGrounding {
   kb_name: string;
   change_request_title: string;
+  /** Business id of the change request (BCR-001), when known. */
+  change_request_label?: string;
   sources: string[];
   coverage: number | null;
   low_confidence: boolean;

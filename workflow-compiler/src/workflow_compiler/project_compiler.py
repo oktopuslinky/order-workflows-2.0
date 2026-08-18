@@ -294,6 +294,7 @@ class ProjectCompiler:
             if change_request is not None:
                 project.change_request_id = change_request.cr_id
                 project.grounding.change_request_title = change_request.title
+                project.grounding.change_request_label = change_request.bcr_meta.doc_id or ""
                 project.grounding.requirement_ids = [
                     r.id for r in change_request.requirements if r.id
                 ]
@@ -1858,8 +1859,13 @@ class ProjectCompiler:
         progress: ProgressCallback | None = None,
         persist: bool = True,
         project: CompilationProject | None = None,
+        change_label: str | None = None,
     ) -> CompilationProject:
         """Produce the post-approval change outputs for a grounded project.
+
+        ``change_label`` (the change request's business id, ``BCR-001``) is
+        recorded on ``project.grounding`` when given — projects compiled before
+        the label was stored get it from the API / CLI caller.
 
         Runs the ``diagrams`` → ``code`` → ``tests_doc`` stages (or the subset in
         ``stages``; ``["all"]`` = every stage) through
@@ -1879,6 +1885,8 @@ class ProjectCompiler:
             raise ApprovalError(
                 f"Project {project_id!r} has no compiled workflow yet — approve the specs first."
             )
+        if change_label and loaded.grounding is not None:
+            loaded.grounding.change_request_label = change_label
         wanted = None if not stages or "all" in stages else list(stages)
         engine = self.change_outputs_engine(loaded)
 

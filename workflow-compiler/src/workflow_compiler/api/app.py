@@ -2163,6 +2163,18 @@ def create_app() -> FastAPI:
     # Post-approval change outputs (Phase 4)
     # ------------------------------------------------------------------ #
 
+    async def _change_label(project: CompilationProject) -> str | None:
+        """The linked change request's business id (``BCR-001``), best-effort."""
+        if project.change_request_id is None:
+            return None
+        if project.grounding is not None and project.grounding.change_request_label:
+            return project.grounding.change_request_label
+        try:
+            cr = await get_change_service(get_kg_service()).get(project.change_request_id)
+        except Exception:
+            return None
+        return cr.bcr_meta.doc_id or None
+
     async def _start_change_outputs(
         project: CompilationProject,
         compiler: ProjectCompiler,
@@ -2172,6 +2184,7 @@ def create_app() -> FastAPI:
     ) -> Job:
         """Run ``generate_change_outputs`` as a ``change_outputs`` job with live progress."""
         progress = JobProgress(message="queued")
+        label = await _change_label(project)
         stages = None if stage in ("", "all") else [stage]
         total_stages = len(STAGES) if stages is None else 1
         done_count = 0
@@ -2186,7 +2199,7 @@ def create_app() -> FastAPI:
 
         def run() -> Awaitable[object]:
             return compiler.generate_change_outputs(
-                project.project_id, stages=stages, progress=relay
+                project.project_id, stages=stages, progress=relay, change_label=label
             )
 
         return await jobs.start(

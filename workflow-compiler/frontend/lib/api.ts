@@ -3,6 +3,8 @@
 
 import type {
   ArtifactResponse,
+  ChangeOutputStage,
+  ChangeOutputsResponse,
   ChangeRequestListResponse,
   ChangeRequestResponse,
   ChangeRequestSummary,
@@ -588,6 +590,29 @@ export const api = {
 
   projectFiles: (id: string) =>
     request<ProjectFilesResponse>(`/projects/${encodeURIComponent(id)}/files`),
+
+  // Post-approval change outputs (grounded projects): stored outputs + any
+  // running change_outputs job; regenerate one stage (or all) as a job;
+  // downloads are deterministic renders of the stored outputs.
+  changeOutputs: (id: string) =>
+    request<ChangeOutputsResponse>(`/projects/${encodeURIComponent(id)}/change-outputs`),
+  regenerateChangeOutputs: (id: string, stage: ChangeOutputStage | "all", provider?: string) =>
+    request<Job>(`/projects/${encodeURIComponent(id)}/change-outputs/regenerate`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ stage, provider: provider ?? null }),
+    }),
+  exportChangeOutputsZip: (id: string) =>
+    download(`/projects/${encodeURIComponent(id)}/change-outputs/export.zip`, "change-outputs.zip"),
+  changeOutputFile: (
+    id: string,
+    name:
+      | "test-cases.xlsx"
+      | "test-plan-addendum.docx"
+      | "test-plan-addendum.md"
+      | "system-flow-diagram.md"
+      | "changes.patch",
+  ) => download(`/projects/${encodeURIComponent(id)}/change-outputs/files/${name}`, name),
 
   getWorkflow: (workflowId: string) =>
     request<WorkflowStateResponse>(

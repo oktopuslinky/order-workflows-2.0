@@ -62,6 +62,7 @@ const KIND_LABEL: Record<JobKind, string> = {
   cr_questions: "Drafting questions",
   cr_draft: "Drafting artifact",
   cr_revise: "Revising artifact",
+  change_outputs: "Change outputs",
 };
 
 const CR_SUCCESS: Partial<Record<JobKind, string>> = {
@@ -136,6 +137,7 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
           queryClient.invalidateQueries({ queryKey: ["project", job.project_id] });
           queryClient.invalidateQueries({ queryKey: ["projects"] });
           queryClient.invalidateQueries({ queryKey: ["metrics-summary"] });
+          queryClient.invalidateQueries({ queryKey: ["change-outputs", job.project_id] });
         }
       };
       // First time we observe this run as finished.
@@ -159,7 +161,9 @@ export function RunsProvider({ children }: { children: React.ReactNode }) {
               ? (CR_SUCCESS[job.kind] ?? `${label} complete.`)
               : job.kind === "approve"
               ? "Approval complete — code generated."
-              : "Validation complete.",
+              : job.kind === "change_outputs"
+                ? "Change outputs ready — diagrams, code diff and test documents."
+                : "Validation complete.",
         });
       } else if (job.status === "failed") {
         pushToast({

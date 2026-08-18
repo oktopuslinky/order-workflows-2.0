@@ -425,3 +425,13 @@ select option {
     transform: none;
   }
 }
+
+/* Change outputs: unified / side-by-side diff lines */
+.diff-add {
+  background: color-mix(in srgb, var(--pass) 16%, transparent);
+  color: color-mix(in srgb, var(--pass) 70%, var(--ink));
+}
+.diff-del {
+  background: color-mix(in srgb, var(--block) 14%, transparent);
+  color: color-mix(in srgb, var(--block) 70%, var(--ink));
+}

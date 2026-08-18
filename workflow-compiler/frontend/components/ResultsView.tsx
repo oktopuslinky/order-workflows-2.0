@@ -5,6 +5,7 @@ import { saveAs } from "file-saver";
 import JSZip from "jszip";
 import { useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { ChangeOutputsView } from "./ChangeOutputsView";
 import { FindingsPanel } from "./FindingsPanel";
 import { MermaidView } from "./MermaidView";
 import { RunPanel } from "./RunPanel";
@@ -30,6 +31,12 @@ export function ResultsView({
   }
   const blockedSlugs = slugs.filter((slug) => !project.workflow_ids[slug]);
   const [active, setActive] = useState(slugs[0] ?? "");
+  // Grounded projects get a second view: the post-approval change outputs
+  // (updated diagrams, modified code + diff, test documents).
+  const grounded = Boolean(project.kb_id);
+  const [view, setView] = useState<"workflows" | "changes">(
+    grounded && project.change_outputs ? "changes" : "workflows",
+  );
 
   const states = useQueries({
     queries: compiled.map((slug) => ({
@@ -68,6 +75,38 @@ export function ResultsView({
 
   return (
     <div className="flex h-full flex-col">
+      {grounded && (
+        <div className="flex items-center gap-2 border-b border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5">
+          <div className="seg">
+            <button
+              onClick={() => setView("workflows")}
+              className={view === "workflows" ? "seg-active" : ""}
+            >
+              Workflows
+            </button>
+            <button
+              onClick={() => setView("changes")}
+              className={view === "changes" ? "seg-active" : ""}
+            >
+              Change outputs
+              {project.change_outputs && (
+                <span className="ml-1.5 pill tone-pass">
+                  {Object.values(project.change_outputs.stages).filter((r) => r.status === "done").length}/3
+                </span>
+              )}
+            </button>
+          </div>
+          <span className="text-xs text-[var(--faint)]">
+            {view === "changes"
+              ? "Diagrams, modified code base and test documents produced from the knowledge base after approval."
+              : "Compiled Temporal code per workflow."}
+          </span>
+        </div>
+      )}
+      {grounded && view === "changes" ? (
+        <ChangeOutputsView project={project} />
+      ) : (
+      <>
       {blockedSlugs.length > 0 && (
         <p className="tone-block border-b px-3 py-1.5 text-xs">
           No code was generated for {blockedSlugs.join(", ")} — blocked by findings
@@ -132,6 +171,8 @@ export function ResultsView({
           </>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }

@@ -2302,6 +2302,71 @@ def create_app() -> FastAPI:
             )
         )
 
+    @app.get(
+        "/projects/{project_id}/change-outputs/files/{name}",
+        tags=["projects"],
+        response_class=Response,
+        responses={200: {"content": {"application/octet-stream": {}}}},
+    )
+    async def download_change_output_file(
+        project_id: str,
+        name: str,
+        compiler: ProjectCompiler = Depends(get_project_compiler),
+        user: User = Depends(get_current_user),
+    ) -> Response:
+        """One rendered document of the change outputs: ``test-cases.xlsx`` (the
+        updated matrix), ``test-plan-addendum.docx`` / ``.md``, ``system-flow-diagram.md``
+        or ``changes.patch`` (the combined diff)."""
+        project = await _guard(compiler.load_project(project_id))
+        _check_owner(project, user)
+        outputs = project.change_outputs
+        if outputs is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "No change outputs have been generated for this project."
+            )
+        from workflow_compiler.change_outputs.export import combined_patch
+        from workflow_compiler.change_outputs.tests_doc import (
+            addendum_filename,
+            export_addendum_docx,
+            export_matrix_xlsx,
+        )
+
+        tests = outputs.tests_doc
+        label = tests.change_request_id
+        xlsx_name = (
+            tests.matrix_source.rsplit("/", 1)[-1]
+            if tests.matrix_source.lower().endswith(".xlsx")
+            else "TC-matrix.xlsx"
+        )
+        docx_media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        xlsx_media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        if name == "test-cases.xlsx" and tests.test_cases:
+            export = ArtifactExport(xlsx_name, xlsx_media, export_matrix_xlsx(tests, label=label))
+        elif name == "test-plan-addendum.docx" and tests.test_plan_addendum_md:
+            export = ArtifactExport(
+                addendum_filename(tests), docx_media, export_addendum_docx(tests, label=label)
+            )
+        elif name == "test-plan-addendum.md" and tests.test_plan_addendum_md:
+            export = ArtifactExport(
+                addendum_filename(tests)[:-5] + ".md",
+                "text/markdown; charset=utf-8",
+                tests.test_plan_addendum_md.encode("utf-8"),
+            )
+        elif name == "system-flow-diagram.md" and outputs.system_flow_md:
+            export = ArtifactExport(
+                "system-flow-diagram.md",
+                "text/markdown; charset=utf-8",
+                outputs.system_flow_md.encode("utf-8"),
+            )
+        elif name == "changes.patch" and combined_patch(outputs):
+            export = ArtifactExport(
+                "changes.patch", "text/x-patch; charset=utf-8",
+                combined_patch(outputs).encode("utf-8"),
+            )
+        else:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"No change-output file {name!r}.")
+        return _download(export)
+
     @app.get("/jobs", response_model=list[JobResponse], tags=["jobs"])
     async def list_jobs(
         project_id: str | None = None,

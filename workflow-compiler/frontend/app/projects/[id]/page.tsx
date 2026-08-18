@@ -462,7 +462,8 @@ function Workspace({
   const canApprove = !dirty && !busy;
   // Cover the brief window between clicking a run and the job appearing in the
   // polled list, so the overlay never flickers off mid-start.
-  const showOverlay = running || starting;
+  // The change-outputs job renders its own progress in the Results tab.
+  const showOverlay = (running && job?.kind !== "change_outputs") || starting;
 
   function updateActive(md: string) {
     setBuffers((b) => ({ ...b, [active]: md }));

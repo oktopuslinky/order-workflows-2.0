@@ -177,6 +177,18 @@ def test_approve_job_chains_change_outputs_and_routes(
         assert "src/shared/types.py" in names and "CHANGES.md" in names
         assert "docs/test-cases/TC-order-workflow.xlsx" in names
 
+    # single rendered documents
+    xlsx = c.get(f"/projects/{pid}/change-outputs/files/test-cases.xlsx")
+    assert xlsx.status_code == 200 and xlsx.headers["content-disposition"].endswith('TC-order-workflow.xlsx"')
+    from workflow_compiler.docs_export.xlsx_writer import read_test_case_rows
+
+    assert read_test_case_rows(xlsx.content)[-1].tc_id == "TC-18"
+    assert c.get(f"/projects/{pid}/change-outputs/files/test-plan-addendum.docx").status_code == 200
+    assert c.get(f"/projects/{pid}/change-outputs/files/test-plan-addendum.md").text.startswith("# TP-ORD-001")
+    assert "## 1. Order State Machine" in c.get(f"/projects/{pid}/change-outputs/files/system-flow-diagram.md").text
+    assert c.get(f"/projects/{pid}/change-outputs/files/changes.patch").text.startswith("--- a/")
+    assert c.get(f"/projects/{pid}/change-outputs/files/nope.txt").status_code == 404
+
     # regenerate one stage (resumable): the mock's diagrams again; other stages kept
     assert c.post(f"/projects/{pid}/change-outputs/regenerate", json={"stage": "bogus"}).status_code == 422
     again = c.post(f"/projects/{pid}/change-outputs/regenerate", json={"stage": "diagrams"})

@@ -203,6 +203,107 @@ export interface ChangeSpec {
   version: number;
 }
 
+// ---------------------------------------------------------------------------
+// Post-approval change outputs (Phase 4)
+// ---------------------------------------------------------------------------
+
+export type ChangeOutputStage = "diagrams" | "code" | "tests_doc";
+export const CHANGE_OUTPUT_STAGES: ChangeOutputStage[] = ["diagrams", "code", "tests_doc"];
+
+export type DiagramKind = "state" | "sequence" | "architecture" | "state-partial" | "workflow";
+
+export interface UpdatedDiagram {
+  name: string;
+  kind: DiagramKind;
+  original: string | null;
+  updated: string;
+  notes: string;
+  source_path: string;
+  checks: string[];
+}
+
+export type ChangedFileStatus = "modified" | "added" | "removed" | "unchanged";
+
+export interface FileChecks {
+  ast_ok: boolean;
+  ast_error: string;
+  ruff_ok: boolean | null;
+  ruff_output: string;
+  repaired: boolean;
+  truncated: boolean;
+}
+
+export interface ChangedFile {
+  path: string;
+  status: ChangedFileStatus;
+  original: string;
+  updated: string;
+  unified_diff: string;
+  checks: FileChecks;
+  reason: string;
+  notes: string;
+}
+
+export interface CodeChangeBundle {
+  files: ChangedFile[];
+  order: string[];
+  import_root: string;
+  code_root: string;
+}
+
+export interface TestCaseRow {
+  tc_id: string;
+  title: string;
+  preconditions: string;
+  steps: string;
+  expected: string;
+  type: string;
+  automated: string;
+  linked: string;
+  notes: string;
+}
+
+export interface TestDocUpdate {
+  test_cases: TestCaseRow[];
+  changed_ids: string[];
+  new_ids: string[];
+  test_plan_addendum_md: string;
+  linked_tdd: string;
+  linked_epic: string;
+  test_plan_id: string;
+  change_request_id: string;
+  matrix_source: string;
+  notes: string[];
+}
+
+export interface StageRecord {
+  status: "pending" | "running" | "done" | "failed";
+  error: string;
+  seconds: number | null;
+  finished_at: string | null;
+  provider: string;
+  model: string;
+}
+
+export interface ChangeOutputs {
+  diagrams: UpdatedDiagram[];
+  code: CodeChangeBundle;
+  tests_doc: TestDocUpdate;
+  system_flow_md: string;
+  provenance: string[];
+  warnings: string[];
+  timings: Record<string, number>;
+  stages: Record<string, StageRecord>;
+  generated_at: string;
+}
+
+export interface ChangeOutputsResponse {
+  project_id: string;
+  outputs: ChangeOutputs | null;
+  job: Job | null;
+  available: boolean;
+}
+
 /** Visible grounding record: what KB / CR a project was compiled with. */
 export interface ProjectGrounding {
   kb_name: string;
@@ -233,6 +334,8 @@ export interface CompilationProject {
   change_request_id?: string | null;
   change_spec?: ChangeSpec | null;
   grounding?: ProjectGrounding | null;
+  /** Post-approval change outputs (diagrams / code diff / test docs); null until generated. */
+  change_outputs?: ChangeOutputs | null;
   stage: ProjectStage;
   created_at: string;
   updated_at: string;
@@ -420,7 +523,8 @@ export type JobKind =
   | "kb_ingest"
   | "cr_questions"
   | "cr_draft"
-  | "cr_revise";
+  | "cr_revise"
+  | "change_outputs";
 export type JobStatus = "running" | "succeeded" | "failed" | "canceled";
 /** What a job belongs to: a project, a knowledge base (kb_ingest), or a change request (cr_*). */
 export type JobScopeKind = "project" | "knowledge_base" | "change_request";

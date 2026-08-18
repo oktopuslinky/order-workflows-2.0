@@ -21,11 +21,13 @@ from datetime import UTC, datetime
 
 from workflow_compiler.agents.change_outputs import ChangeOutputsAgent
 from workflow_compiler.change_outputs.code import (
+    auto_import,
     check_syntax,
     missing_symbols,
     plan_rewrites,
     ruff_check,
     signature_summary,
+    undefined_names,
     unified_diff,
 )
 from workflow_compiler.change_outputs.diagrams import (
@@ -603,6 +605,15 @@ class ChangeOutputsEngine:
                         code = fixed.code
                         ok, err = ok2, err2
                 ruff_ok, ruff_out = ruff_check(code) if ok else (None, "")
+                if ok and ruff_ok is False and "F821" in ruff_out:
+                    # The model kept forgetting an import: add the well-known
+                    # ones deterministically (timedelta, RetryPolicy, …).
+                    code, added = auto_import(code, undefined_names(ruff_out))
+                    if added:
+                        entry.notes = (entry.notes + " " if entry.notes else "") + (
+                            "Auto-imported: " + "; ".join(added)
+                        )
+                        ruff_ok, ruff_out = ruff_check(code)
                 checks.ruff_ok = ruff_ok
                 checks.ruff_output = ruff_out
             checks.ast_ok = ok

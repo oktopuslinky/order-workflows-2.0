@@ -166,6 +166,7 @@ CORPUS_TEXTS = {
     "existing_Codebase/worker.py": WORKER_PY,
     "existing_Codebase/starter.py": STARTER_PY,
     "existing_Codebase/__init__.py": "",
+    "existing_Codebase/activities/__init__.py": "",
     "existing_Codebase/util.py": UTIL_PY,
     "tests/test_order_workflow.py": TESTS_PY,
 }
@@ -277,6 +278,8 @@ def test_plan_rewrites_selects_dependents_and_orders() -> None:
     ]
     assert "existing_Codebase/util.py" in plan.unchanged
     assert "existing_Codebase/__init__.py" in plan.unchanged
+    # a new activity never lands in a package __init__ (the shortest "activit…" path)
+    assert "existing_Codebase/activities/__init__.py" in plan.unchanged
     assert plan.reasons["existing_Codebase/worker.py"][0].startswith("imports ")
     assert [c.name for c in plan.components_by_file["existing_Codebase/shared/types.py"]] == [
         "OrderStatus"
@@ -665,3 +668,20 @@ def test_stage_enum_and_project_stage_import() -> None:
     assert ProjectStage.COMPLETED.value == "completed"
     wb = Workbook()
     assert wb.active is not None
+
+
+def test_auto_import_known_names() -> None:
+    from workflow_compiler.change_outputs.code import auto_import, undefined_names
+
+    ruff_out = "F821 Undefined name `timedelta`\n  --> x.py:3\nF821 Undefined name `timedelta`\nF821 Undefined name `RetryPolicy`\nF821 Undefined name `mystery`"
+    assert undefined_names(ruff_out) == ["timedelta", "RetryPolicy", "mystery"]
+    code = '"""Doc."""\nfrom __future__ import annotations\n\nimport logging\n\nX = timedelta(seconds=1)\n'
+    fixed, added = auto_import(code, undefined_names(ruff_out))
+    assert added == ["from datetime import timedelta", "from temporalio.common import RetryPolicy"]
+    assert fixed.split("\n")[4] == "from datetime import timedelta"  # after the last import
+    assert "mystery" not in " ".join(added)
+    # no imports at all: after the docstring
+    fixed2, added2 = auto_import('"""Doc."""\nX = uuid.uuid4()\n', ["uuid"])
+    assert fixed2.startswith('"""Doc."""\nimport uuid\n') and added2 == ["import uuid"]
+    # already present: nothing added
+    assert auto_import("import uuid\nX = uuid.uuid4()\n", ["uuid"])[1] == []

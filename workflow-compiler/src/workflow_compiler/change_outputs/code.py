@@ -105,7 +105,9 @@ def fallback_file_for_kind(kind: ComponentKind, py_files: Sequence[str]) -> str 
     candidates = [
         p
         for p in py_files
-        if any(n in p.lower() for n in needles) and category_rank(p) != 5
+        if any(n in p.lower() for n in needles)
+        and category_rank(p) != 5
+        and not p.endswith("__init__.py")
     ]
     if not candidates:
         return None
@@ -452,3 +454,76 @@ def missing_symbols(code: str, required: Iterable[str]) -> list[str]:
         name for name in required
         if name and not re.search(rf"\b{re.escape(name)}\b", code)
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Deterministic import repair for well-known names the model forgot to import
+# --------------------------------------------------------------------------- #
+
+#: Names whose import statement is unambiguous in a Temporal Python code base.
+KNOWN_IMPORTS: dict[str, str] = {
+    "timedelta": "from datetime import timedelta",
+    "datetime": "from datetime import datetime",
+    "timezone": "from datetime import timezone",
+    "asyncio": "import asyncio",
+    "uuid": "import uuid",
+    "logging": "import logging",
+    "Optional": "from typing import Optional",
+    "List": "from typing import List",
+    "Dict": "from typing import Dict",
+    "Any": "from typing import Any",
+    "Sequence": "from typing import Sequence",
+    "dataclass": "from dataclasses import dataclass",
+    "field": "from dataclasses import field",
+    "Enum": "from enum import Enum",
+    "RetryPolicy": "from temporalio.common import RetryPolicy",
+    "ActivityError": "from temporalio.exceptions import ActivityError",
+    "ApplicationError": "from temporalio.exceptions import ApplicationError",
+    "activity": "from temporalio import activity",
+    "workflow": "from temporalio import workflow",
+    "pytest": "import pytest",
+}
+_UNDEFINED = re.compile(r"Undefined name `([A-Za-z_][A-Za-z0-9_]*)`")
+
+
+def undefined_names(ruff_output: str) -> list[str]:
+    """The distinct names ruff's F821 findings mention, in order."""
+    seen: list[str] = []
+    for match in _UNDEFINED.finditer(ruff_output):
+        if match.group(1) not in seen:
+            seen.append(match.group(1))
+    return seen
+
+
+def auto_import(code: str, names: Iterable[str]) -> tuple[str, list[str]]:
+    """Insert the well-known import for each of ``names`` (deterministic, no model).
+
+    Only names in :data:`KNOWN_IMPORTS` are handled; the statement goes after
+    the last top-level import (or the module docstring / ``from __future__``
+    line). Returns the new code and the statements added.
+    """
+    added: list[str] = []
+    lines = code.split("\n")
+    for name in names:
+        statement = KNOWN_IMPORTS.get(name)
+        if statement is None or statement in code:
+            continue
+        insert_at = 0
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith(("import ", "from ")) and not line.startswith((" ", "\t")):
+                insert_at = i + 1
+        if insert_at == 0:
+            # after a module docstring, if any
+            try:
+                tree = ast.parse(code)
+            except SyntaxError:
+                tree = None
+            if tree is not None and tree.body and isinstance(tree.body[0], ast.Expr):
+                end = getattr(tree.body[0], "end_lineno", None)
+                if isinstance(end, int):
+                    insert_at = end
+        lines.insert(insert_at, statement)
+        added.append(statement)
+        code = "\n".join(lines)
+    return code, added

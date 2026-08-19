@@ -236,6 +236,10 @@ class ChangeOutputsEngine:
             record = outputs.stage(name)
             record.status = "running"
             record.error = ""
+            # A re-run replaces the stage's earlier warnings (they describe outputs
+            # that are about to be overwritten).
+            prefix = {"diagrams": "diagram ", "code": "code ", "tests_doc": "tests_doc"}[name]
+            outputs.warnings = [w for w in outputs.warnings if not w.startswith(prefix)]
             record.provider = self._provider
             record.model = self._model
             _emit(progress, ProgressEvent(

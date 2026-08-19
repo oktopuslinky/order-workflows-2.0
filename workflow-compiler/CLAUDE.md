@@ -156,81 +156,66 @@ picture before changing pipeline behavior.
   path. A dependency op that cannot be applied is reported and skipped, never raised; if an
   answer's every op is dropped it parks rather than reporting a change it did not make.
 
-- **Knowledge bases ground the change pipeline (`kg/`).** A zipped corpus becomes a Context Hub
-  graph via the vendored subset `kg/contexthub/` (pinned SHA + local edits in its `VENDORED.md`;
-  excluded from `mypy --strict`; never imported outside `workflow_compiler.kg`). Everything goes
-  through `kg/service.py::KgService`: `create_from_zip` (safe extraction, `kg/ingest.py`) →
-  `index` (static ingest, optional LLM enrichment through the app's `BaseLLMProvider` via
-  `kg/llm_bridge.py`, run in a worker thread; stats + business-id `catalog` recorded) →
-  `retrieve` (BM25 → traversal → file spans, a `KgPacket` with `coverage`), `impact`
-  (deterministic BFS), `search`, `read_file`. Node ids are corpus-relative POSIX
-  (`mod:existing_Codebase/workflows/order_workflow.py`); store ids are validated at the boundary.
-  Indexing is a `kb_ingest` job — `JobManager` is keyed by `scope_id`+`scope_kind`
-  (`project` | `knowledge_base`), `project_id` remains an alias. KB routes take `provider`/`model`
-  per request with a **cloud default** (enrichment must never hit the single-GPU gateway unasked).
-  Phase plan + handoff: `docs/kg-plan/`.
+- **The business-change pipeline is one flow of five deterministic-glue engines, each behind a
+  façade, all grounded by the knowledge graph** (`docs/kg-plan/` holds the plan, handoff and
+  demo runbook; HOW_IT_WORKS §8c–§8g and `docs/architecture.md` "end to end" hold the detail).
+  1. **Knowledge bases (`kg/`)** — a zipped corpus → Context Hub graph via the vendored subset
+     `kg/contexthub/` (pinned SHA + local edits in its `VENDORED.md`; excluded from `mypy --strict`;
+     never imported outside `workflow_compiler.kg`). **`KgService` is the only KG surface**:
+     `create_from_zip` (zip-slip-safe `kg/ingest.py`) → `index` (static ingest + optional LLM
+     enrichment through the app's `BaseLLMProvider` via `kg/llm_bridge.py`, in a worker thread;
+     stats + business-id `catalog`) → `retrieve` (BM25 → traversal → file spans, `KgPacket` with
+     `coverage`), `impact` (deterministic BFS), `search`, `read_file`, `resolve_ref`. Node ids are
+     corpus-relative POSIX. Indexing is a `kb_ingest` job (`JobManager` keyed by
+     `scope_id`+`scope_kind`).
+  2. **Change requests (`change/`)** — `ChangeRequestService` + `ChangeWizardEngine`
+     (deterministic state machine Impact → EPIC → Stories → TDD; questions → answers → draft →
+     revise/edit → approve) + `ChangeAnalystAgent` (`prompts/templates/change_*.md`). Load-bearing:
+     the **engine assigns ids** (`change/ids.py` from the catalog), every artifact is markdown that
+     **renders and parses back** (`change/render.py` ⇄ `change/parse.py`), grounding is visible
+     (brief = BCR + answers + KG retrievals + impact table + prior artifacts → `## Sources`).
+     Long calls are `cr_questions`/`cr_draft`/`cr_revise` jobs; `answer` is synchronous.
+  3. **Document export (`docs_export/`)** — Word/Excel rendered from the *parsed* artifacts by
+     `docx_writer` / `xlsx_writer` / `artifacts` / `bundle` in the manager's reference style
+     (golden-structure tests); no model call, identical input → identical bytes (`package.py` pins
+     OOXML timestamps); exports state `Approved vN` / `DRAFT vN — not approved`.
+  4. **Grounded projects + the change spec (`kg/grounding.py`, `spec/change_*.py`,
+     `models/change_spec.py`)** — `ProjectCompiler.compile_document(..., grounder=KgGrounder(...),
+     change_request=)` prepends a *KNOWLEDGE-GRAPH CONTEXT* block through an **optional**
+     `{{ kg_context }}` (with `grounder=None` every prompt renders exactly as before) and extracts a
+     `ChangeSpec` seeded from the linked request. `changes.md` is a deterministic projection
+     (`change_renderer` ⇄ `change_ingest`) under the pseudo-slug `__changes__` in `spec_markdown`,
+     `PUT /spec`, `validate`, `approve`, spec dirs and the dialogue; `change_validator` is LLM-free
+     and **a BLOCKING change finding refuses `approve_spec` unless `accept_incomplete`**; dialogue
+     answers become `ComponentUpdate`s (human authority). Ingress: `kb_id?`/`change_request_id?` on
+     `/projects/compile*`, `POST /change-requests/{id}/send-to-workflow`, CLI `compile --kb`.
+  5. **Post-approval change outputs (`change_outputs/`)** — `ProjectCompiler.generate_change_outputs`
+     → `ChangeOutputsEngine` runs `diagrams → code → tests_doc`, persisting after every stage and
+     every rewritten file; a failed stage is recorded and `ChangeOutputsError` raised at the end.
+     Rules: the change spec is **consumed, never re-extracted**; the rewrite set and order are
+     decided by code (`code.py::plan_rewrites`: change-spec files + import dependents, topological,
+     types → … → tests) and only the file text comes from the model (`ChangeOutputsAgent.rewrite_file`,
+     one fenced block via `complete`, continuation on an unclosed fence, then `ast` / dataclass /
+     symbol / sibling-import / ruff checks with **up to `change_outputs_repair_rounds` targeted
+     repair rounds**, deterministic `auto_import`, a keep-style pass, and a **bundle smoke test** in
+     a child interpreter (`change_outputs/smoke.py`) recorded on `CodeChangeBundle.smoke` — a
+     verdict, never a gate); diagrams are checked deterministically; test-case ids come from the KB
+     catalog and updates never drop original rows; exports reuse the Phase 2 writers. The approve
+     job's `after` hook starts a separate `change_outputs` job on the cloud default provider.
+  Cross-cutting: every long LLM route takes `provider`/`model` with a **cloud default**
+  (`kb_provider_factory` / `get_compiler_selector` — enrichment and file rewrites must never hit
+  the single-GPU gateway unasked); every artifact/spec/output carries visible Sources; live runs
+  are recorded in the RUNBOOK, never asserted.
 
-- **Change requests ride on knowledge bases (`change/`).** `ChangeRequestService` (façade like
-  `ProjectCompiler`) + `ChangeWizardEngine` (deterministic state machine: Impact → EPIC → Stories
-  → TDD; per step questions → answers → draft → revise/edit → approve) + `ChangeAnalystAgent`
-  (`prompts/templates/change_*.md`, permissive plans). Three rules are load-bearing: the
-  **engine assigns ids** (`change/ids.py` from `KgService.catalog`, incl. `catalog.documents`),
-  never the model; every artifact is markdown that **renders and parses back**
-  (`change/render.py` ⇄ `change/parse.py`, round-trip tested — human edits/revisions that lose the
-  title heading are rejected); grounding is visible (each draft's brief = BCR + answers + KG
-  retrievals + `impact()` table + prior artifacts, and the KB files/spans it used become the
-  artifact's `## Sources` footer). Long calls are `cr_questions`/`cr_draft`/`cr_revise` jobs
-  (scope kind `change_request`); `answer` is synchronous. Store: `storage/change_store.py`.
-
-- **Document export is a deterministic projection (`docs_export/`).** Word/Excel files are
-  rendered from the *parsed* artifacts (`change/parse.py` docs — never re-parse markdown ad hoc)
-  by `docx_writer.py` / `xlsx_writer.py` / `artifacts.py` / `bundle.py` in the manager's
-  reference style (research digest §5; golden-structure tests encode it in
-  `tests/fixtures/change_artifacts/reference_headings.json`). No model call, and identical input
-  → identical bytes (`package.py` pins OOXML timestamps). Exports always state what they are
-  (`Approved vN` / `DRAFT vN — not approved`, `-DRAFT` filename suffix); the stories docx export is
-  a zip with one document per story; the TC preview merges the KB's original matrix rows when
-  present (`KgService.read_bytes`) and degrades to impact-only rows otherwise. Routes
-  `GET …/artifacts/{kind}/export?format=docx|md|xlsx`, `GET …/export.zip`; CLI `cr export`.
-
-- **KG-grounded projects carry a change spec through the same gate (`kg/grounding.py`,
-  `spec/change_*.py`, `models/change_spec.py`).** `ProjectCompiler.compile_document(...,
-  grounder=KgGrounder(kg_service, kb_id), change_request=)` prepends a *"KNOWLEDGE-GRAPH CONTEXT —
-  prefer these real names / paths"* block to the segmentation / discovery / fact-extraction (and,
-  at approve, Temporal-design) prompts through an **optional** `{{ kg_context }}` variable — with
-  `grounder=None` every prompt renders exactly as before, which is why the pre-Phase-3 tests are
-  untouched — and extracts a `ChangeSpec` (`ChangeSpecAgent`, prompt `extract_change_spec.md`,
-  seeded from the linked change request's impact rows + TDD Existing/Proposed texts, requirement
-  ids restricted to the request's). Rules: `changes.md` is a deterministic projection
-  (`change_renderer` ⇄ `change_ingest`, identity round trip incl. provenance) that travels under
-  the pseudo-slug `__changes__` (`CHANGES_SLUG`) in `spec_markdown`, `PUT /spec`, `validate`,
-  `approve`, spec dirs and the dialogue; `change_validator` is LLM-free (empty Proposed →
-  BLOCKING; unresolvable `path` → WARNING with `KgService.search` suggestions; unknown requirement
-  id → WARNING) and **a BLOCKING change finding refuses `approve_spec` unless
-  `accept_incomplete`**; dialogue answers about it become `ComponentUpdate`s applied by
-  `dialogue/change_ops.py` (human authority, one version bump, park otherwise); the visible
-  grounding record is `project.grounding` (KB name, CR title, sources, coverage). Ingress:
-  `kb_id?`/`change_request_id?` on `/projects/compile*`, `POST /change-requests/{id}/send-to-workflow`
-  (approved TDD only, provider = wizard's else cloud Nemotron, links `project_ids`), CLI
-  `compile --kb/--change-request`. `ProjectCompiler` gets a read-only `KgService` from
-  `from_settings` (never indexes).
-
-- **Post-approval change outputs are a fourth deterministic-glue engine (`change_outputs/`).**
-  `ProjectCompiler.generate_change_outputs` → `ChangeOutputsEngine` runs `diagrams → code →
-  tests_doc` for a grounded, compiled project, persisting after every stage (and every rewritten
-  file) so a timeout keeps what finished; a failed stage is recorded and the run raises
-  `ChangeOutputsError` at the end; cancel persists nothing of the in-flight stage. Rules: the
-  change spec (`changes.md`) is **consumed, never re-extracted**; the rewrite set and order are
-  decided by code (`change_outputs/code.py::plan_rewrites` — change-spec files + every corpus
-  file that imports a rewritten module, topological, types → … → tests) and only the file text
-  comes from the model (`ChangeOutputsAgent.rewrite_file`: one fenced block via `complete`,
-  continuation on an unclosed fence, `ast.parse` + symbol + ruff checks, one repair round);
-  diagrams are checked deterministically (header / required states / balanced blocks, one repair
-  round) and `system-flow-diagram.md` is assembled by code; test-case ids come from the KB
-  catalog and updates never drop original rows; exports (`export.py`, README layout `src/`,
-  `tests/`, `docs/`) reuse the Phase 2 writers. API: the approve job's `after` hook starts a
-  separate `change_outputs` job; `GET/POST …/change-outputs[/regenerate|/export.zip|/files/…]`;
-  CLI `approve-spec --change-outputs`, `change-outputs <project-id> --stage`.
+- **Store boundaries are guarded and saves are compare-and-swap (`storage/ids.py`).** Every
+  file-backed store (states, projects, users, change requests, knowledge bases) and
+  `execution/bundles.py::bundle_dir` validate ids/slugs (`[A-Za-z0-9_-]{1,128}`) before building a
+  path — path-shaped input is `StateNotFoundError`, never resolved; export filenames go through
+  `safe_filename_part`. `CompilationProject` / `KnowledgeBase` / `ChangeRequest` carry a `version`
+  the store bumps on every save; `save(..., expected_version=n)` raises `StaleWriteError` (HTTP 409)
+  when the stored version moved on. **CAS is opt-in** (decision): no token = last-write-wins for
+  the CLI and background jobs; the API accepts `expected_version` in the body or `If-Match`,
+  answers `ETag` on the GETs, and the frontend always sends it. Keep new stores on this pattern.
 
 - **HTTP auth + time-saved metric.** The API uses local accounts (`api/auth.py`: scrypt +
   HMAC-signed session cookie, users under `<state-root>/users/`); project routes require

@@ -409,6 +409,79 @@ Diagrams (original ⇄ updated) · Code (diff viewer) · Test cases (table + xls
 
 See `docs/HOW_IT_WORKS.md` §8g.
 
+## The business-change pipeline end to end (phases 0–5)
+
+The five change-pipeline sections above are one flow. Component view — every box is a package or
+a store, arrows are calls; the human gates are the diamonds:
+
+```mermaid
+flowchart LR
+    subgraph KB["Knowledge base (kg/)"]
+        Z[zip upload] --> ING[ingest.extract_zip<br/>zip-slip safe] --> CH[contexthub ingest<br/>+ optional LLM enrich] --> G[(graph.json + corpus)]
+        G --> KS[KgService<br/>retrieve · impact · search · read_file · catalog]
+    end
+    subgraph CR["Change request (change/)"]
+        BCR[BCR docx] --> CRS[ChangeRequestService] --> WZ[ChangeWizardEngine<br/>Impact → EPIC → Stories → TDD]
+        WZ <--> CA[ChangeAnalystAgent<br/>prompts change_*.md]
+        WZ --> ART[(artifacts: versioned markdown<br/>render ⇄ parse)]
+        ART --> EXP[docs_export<br/>docx / xlsx / zip]
+    end
+    subgraph PRJ["Workflow project (ProjectCompiler)"]
+        TDD[approved TDD] --> CMP[compile_document<br/>grounder=KgGrounder] --> SPEC[(specs/*.md + changes.md)]
+        SPEC --> GATE{edit ⇄ validate ⇄ resolve}
+        GATE --> APR[approve_spec<br/>graph · CVPA · Temporal design · code]
+    end
+    subgraph OUT["Change outputs (change_outputs/)"]
+        APR --> ENG[ChangeOutputsEngine<br/>diagrams → code → tests_doc]
+        ENG --> D1[updated .mmd + system-flow-diagram.md]
+        ENG --> D2[modified code base + diffs<br/>N repair rounds · keep-style · bundle smoke]
+        ENG --> D3[TC matrix xlsx + TP addendum docx]
+        D1 & D2 & D3 --> ZIP[export.zip README layout]
+    end
+    KS -. grounds every prompt .-> CA
+    KS -. kg_context / change spec .-> CMP
+    KS -. corpus files .-> ENG
+    ART -- "send-to-workflow" --> TDD
+    subgraph STORES["Stores (storage/ids.py guards + CAS)"]
+        S1[(projects/)] ~~~ S2[(change_requests/)] ~~~ S3[(knowledge_bases/)]
+    end
+```
+
+Sequence view of one demo pass (times are the RUNBOOK's live measurements on cloud Nemotron):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User (browser)
+    participant API as FastAPI (jobs)
+    participant KG as KgService
+    participant CR as ChangeRequestService / Wizard
+    participant PC as ProjectCompiler
+    participant CO as ChangeOutputsEngine
+    U->>API: POST /knowledge-bases (zip, enrich, provider)
+    API->>KG: kb_ingest job: extract → index → enrich (5–27 min)
+    U->>API: POST /change-requests (kb_id, BCR docx)
+    API->>CR: parse meta / requirements / seeds; assign ids from KG catalog
+    loop Impact → EPIC → Stories → TDD
+        U->>API: wizard/start | answer | draft | revise | approve
+        API->>CR: cr_questions / cr_draft / cr_revise jobs
+        CR->>KG: retrieve + impact (grounding, Sources footer)
+    end
+    U->>API: GET …/artifacts/tdd/export?format=docx (deterministic)
+    U->>API: POST /change-requests/{id}/send-to-workflow
+    API->>PC: compile_document(TDD md, grounder, change_request) → specs + changes.md (~4 min)
+    U->>API: PUT /projects/{id}/spec (expected_version) · validate job · dialogue · approve job
+    API->>PC: approve_spec (graph gate, CVPA, Temporal design, code) → COMPLETED
+    API->>CO: after-hook: change_outputs job on the cloud default provider
+    CO->>KG: read corpus .mmd / .py / .xlsx / TP docx
+    CO-->>API: diagrams → code (per-file persist, repair rounds, smoke) → tests_doc (~25 min)
+    U->>API: GET …/change-outputs · export.zip · files/…
+```
+
+**Hardening (phase 5).** Every store validates ids at its boundary and bumps a `version` on save;
+`expected_version` / `If-Match` make a save compare-and-swap (409 `StaleWriteError`), the GETs
+carry `ETag`; scrypt runs off the event loop; export filenames are sanitised. See HOW_IT_WORKS §7.3.
+
 ## Request sequence (compile → approve)
 
 ```mermaid

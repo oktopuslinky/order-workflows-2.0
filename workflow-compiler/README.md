@@ -140,6 +140,31 @@ Generated bundles land under `./generated/<project-id>/<slug>/`. Other commands:
 authoritative flag reference; the full command guide is in
 [`docs/HOW_IT_WORKS.md` §9.2](docs/HOW_IT_WORKS.md).
 
+### Business change pipeline — end to end (phases 0–5)
+
+The five subsections below are one flow; this is the short version (the full demo script with
+ids, timings and screenshots is `docs/kg-plan/RUNBOOK.md`):
+
+1. **Knowledge base** — *Knowledge → Upload and index* the zipped `Existing_KG`
+   (`examples/knowledge_bases/order-lifecycle.zip`; enrichment on cloud Nemotron ≈ 6 min cached /
+   27 min cold, static ingest ≈ 5 s). CLI: `workflow-compiler kb init … --enrich`.
+2. **Change request** — *Changes → New change request*: pick the KB, upload
+   `examples/change_requests/BCR-001-partial-shipment-support.docx`, **Start wizard**, then per
+   step (Impact → EPIC → Stories → TDD) answer the questions, **Draft now**, revise/edit, **Approve**
+   (≈ 20 min of model time). CLI: `cr create`, `cr draft <id> <step> --auto`, `cr approve`.
+3. **Export** — `.docx` / `.md` (/ `.xlsx`) per artifact or **Export all (.zip)** — deterministic,
+   byte-stable, in the manager's template look. CLI: `cr export`.
+4. **Send to workflow GUI** — one click on the approved TDD compiles a **grounded** project
+   (`specs/*.md` + `changes.md`, ≈ 4 min); Spec tab: edit ⇄ **Validate** ⇄ **Resolve** ⇄
+   **Approve** (saves are compare-and-swap — a 409 means reload first). CLI: `compile … --kb --change-request`.
+5. **Change outputs** — the approve job chains a `change_outputs` job (≈ 25 min): updated
+   diagrams, the modified code base with diffs (per-file checks, up to 2 repair rounds, keep-style,
+   a bundle **smoke test**), the TC matrix + TP addendum; Results → **Change outputs** →
+   **Download all (.zip)**. CLI: `approve-spec … --change-outputs`, `change-outputs <project-id>`.
+
+Reset for a fresh demo: `python scripts/reset_demo_state.py` (dry run) → `--yes` (backup zip
+first, `--keep <id>` to spare the reference KB/CR).
+
 ### Knowledge bases (business-change pipeline, phase 0)
 
 A knowledge base is a zipped corpus — business docs, diagrams, code, tests — indexed into a graph

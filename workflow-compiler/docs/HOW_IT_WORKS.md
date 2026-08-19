@@ -595,6 +595,31 @@ implementations (`storage/`):
 Missing ids raise `StateNotFoundError`. This store is *why* `compile` (request 1) and `approve`
 (request 2, possibly a different process) can work together: the state is durable between them.
 
+**Store-boundary guards (Phase 5 hardening, `storage/ids.py`).** Every file-backed store —
+workflow states, projects (`storage/project_store.py`), users, change requests
+(`storage/change_store.py`), knowledge bases (`kg/store.py`) — and the generated-bundle directory
+(`execution/bundles.py::bundle_dir`) validates the id/slug **before** building a path
+(`[A-Za-z0-9_-]{1,128}`); anything path-shaped (`..`, separators, drive letters) is refused as
+`StateNotFoundError` — an id that cannot exist is indistinguishable from one that does not, and the
+check must never reveal whether the input would have resolved. Export filenames built from
+document or model text (`BCR-001`, `TP-ORD-001`, labels) go through
+`docs_export/artifacts.py::safe_filename_part`. Zip uploads were already zip-slip-safe
+(`kg/ingest.py`).
+
+**Compare-and-swap on save (opt-in).** `CompilationProject`, `KnowledgeBase` and `ChangeRequest`
+carry an integer `version` that the store bumps on **every** save (legacy records read as 0). A
+writer may pass `expected_version=` to `save(...)`; when the stored version differs the save is
+refused with `StaleWriteError` (HTTP **409** — *"changed since it was loaded … reload and retry"*)
+instead of silently overwriting a job's or another tab's write. Writers that pass nothing keep
+last-write-wins (the CLI, background jobs, older clients). Over HTTP the token travels as
+`expected_version` in the body **or** an `If-Match: "N"` header (`W/"N"` and bare `N` accepted;
+`*` = no check; a non-integer is 400) on `PUT /projects/{id}/spec`, `PATCH /projects/{id}` and
+`PUT /change-requests/{id}/artifacts/{kind}`; `GET /projects/{id}`, `GET /knowledge-bases/{id}` and
+`GET /change-requests/{id}` answer with `ETag: "N"` and the version is in the body (also on the
+project summaries). The frontend always sends it and shows a *Reload the latest version* action on
+409. Passwords are still scrypt-hashed, but hashing/verification now runs in a worker thread
+(`asyncio.to_thread`) so a login cannot stall the event loop.
+
 ### 7.4 Editing the graph — `GraphEditor`
 
 If a reviewer wants to fix the graph before approving, `review/editor.py` → `GraphEditor` offers six
@@ -901,6 +926,8 @@ waits on an `advance` signal (`wait_condition` + signal, so determinism is prese
 
 ## 8c. Knowledge bases (`kg/`) — a corpus indexed into a graph
 
+> **Change pipeline map:** [§8c knowledge bases](#8c-knowledge-bases-kg--a-corpus-indexed-into-a-graph) → [§8d change requests](#8d-change-requests-change--a-guided-wizard-from-a-bcr-to-impact--epic--stories--tdd) → [§8e document export](#8e-document-export-docs_export--word--excel-in-the-reference-template-style) → [§8f grounded projects + `changes.md`](#8f-knowledge-graph-grounded-projects--the-change-spec-kggroundingpy-specchange_py) → [§8g change outputs](#8g-post-approval-change-outputs-change_outputs--diagrams-modified-code--diff-test-docs); hardening (store guards, compare-and-swap) in [§7.3](#73-state-storage--how-the-gate-persists-across-calls); routes in [§9.3](#93-http-api-apiapppy-fastapi), CLI in [§9.2](#92-cli-climainpy-typer--rich); end-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
+
 A **knowledge base** is a zipped corpus (business docs, mermaid diagrams, source code, tests)
 turned into a Context Hub graph that later phases use to *ground* change requests and specs in
 the real modules, activities, stories and test cases of an existing system. Phase 0 of the
@@ -943,6 +970,8 @@ diagrams, the Temporal `OrderWorkflow` code + tests); `scripts/make_kb_zip.py` z
 phases consume.
 
 ## 8d. Change requests (`change/`) — a guided wizard from a BCR to Impact / EPIC / Stories / TDD
+
+> **Change pipeline map:** [§8c knowledge bases](#8c-knowledge-bases-kg--a-corpus-indexed-into-a-graph) → [§8d change requests](#8d-change-requests-change--a-guided-wizard-from-a-bcr-to-impact--epic--stories--tdd) → [§8e document export](#8e-document-export-docs_export--word--excel-in-the-reference-template-style) → [§8f grounded projects + `changes.md`](#8f-knowledge-graph-grounded-projects--the-change-spec-kggroundingpy-specchange_py) → [§8g change outputs](#8g-post-approval-change-outputs-change_outputs--diagrams-modified-code--diff-test-docs); hardening (store guards, compare-and-swap) in [§7.3](#73-state-storage--how-the-gate-persists-across-calls); routes in [§9.3](#93-http-api-apiapppy-fastapi), CLI in [§9.2](#92-cli-climainpy-typer--rich); end-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
 
 A **change request** pairs a business-change document (a BCR `.docx`, or markdown/text) with a
 knowledge base. A deterministic wizard walks it through four steps — **Impact → EPIC → Stories →
@@ -1008,6 +1037,8 @@ right). Word/Excel export: §8e.
 
 ## 8e. Document export (`docs_export/`) — Word / Excel in the reference template style
 
+> **Change pipeline map:** [§8c knowledge bases](#8c-knowledge-bases-kg--a-corpus-indexed-into-a-graph) → [§8d change requests](#8d-change-requests-change--a-guided-wizard-from-a-bcr-to-impact--epic--stories--tdd) → [§8e document export](#8e-document-export-docs_export--word--excel-in-the-reference-template-style) → [§8f grounded projects + `changes.md`](#8f-knowledge-graph-grounded-projects--the-change-spec-kggroundingpy-specchange_py) → [§8g change outputs](#8g-post-approval-change-outputs-change_outputs--diagrams-modified-code--diff-test-docs); hardening (store guards, compare-and-swap) in [§7.3](#73-state-storage--how-the-gate-persists-across-calls); routes in [§9.3](#93-http-api-apiapppy-fastapi), CLI in [§9.2](#92-cli-climainpy-typer--rich); end-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
+
 Markdown stays the source of truth; `docs_export/` projects the **parsed** artifacts
 (`change/parse.py` → `ImpactDoc` / `EpicDoc` / `StoriesDoc` / `TddDoc`) into files that look like
 the manager's reference documents. It is 100 % deterministic — no model call, and identical
@@ -1032,6 +1063,8 @@ the bundle skips undrafted artifacts and lists them in the manifest. The stories
 panel and **Export all (.zip)** in the wizard header.
 
 ## 8f. Knowledge-graph-grounded projects + the change spec (`kg/grounding.py`, `spec/change_*.py`)
+
+> **Change pipeline map:** [§8c knowledge bases](#8c-knowledge-bases-kg--a-corpus-indexed-into-a-graph) → [§8d change requests](#8d-change-requests-change--a-guided-wizard-from-a-bcr-to-impact--epic--stories--tdd) → [§8e document export](#8e-document-export-docs_export--word--excel-in-the-reference-template-style) → [§8f grounded projects + `changes.md`](#8f-knowledge-graph-grounded-projects--the-change-spec-kggroundingpy-specchange_py) → [§8g change outputs](#8g-post-approval-change-outputs-change_outputs--diagrams-modified-code--diff-test-docs); hardening (store guards, compare-and-swap) in [§7.3](#73-state-storage--how-the-gate-persists-across-calls); routes in [§9.3](#93-http-api-apiapppy-fastapi), CLI in [§9.2](#92-cli-climainpy-typer--rich); end-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
 
 The "upload the TDD to the workflow GUI" half of the change pipeline. A workflow project compiled
 **with a knowledge base** (`kb_id`, optionally the `change_request_id` whose approved TDD the
@@ -1104,6 +1137,8 @@ and the *Grounded by …* header (grammar: `frontend/SPEC_GUIDE.md`, guide page 
 
 ## 8g. Post-approval change outputs (`change_outputs/`) — diagrams, modified code + diff, test docs
 
+> **Change pipeline map:** [§8c knowledge bases](#8c-knowledge-bases-kg--a-corpus-indexed-into-a-graph) → [§8d change requests](#8d-change-requests-change--a-guided-wizard-from-a-bcr-to-impact--epic--stories--tdd) → [§8e document export](#8e-document-export-docs_export--word--excel-in-the-reference-template-style) → [§8f grounded projects + `changes.md`](#8f-knowledge-graph-grounded-projects--the-change-spec-kggroundingpy-specchange_py) → [§8g change outputs](#8g-post-approval-change-outputs-change_outputs--diagrams-modified-code--diff-test-docs); hardening (store guards, compare-and-swap) in [§7.3](#73-state-storage--how-the-gate-persists-across-calls); routes in [§9.3](#93-http-api-apiapppy-fastapi), CLI in [§9.2](#92-cli-climainpy-typer--rich); end-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
+
 The last leg of the change pipeline (plan Phase 4, decisions D3 / D10): once a
 knowledge-base-grounded project is **approved and compiled**, it produces the three deliverables
 the business change asked for, each built from the knowledge base's *actual* files rather than
@@ -1148,10 +1183,28 @@ nothing of the in-flight stage. Every stage is *LLM drafts, code decides*
    **signatures of the files already rewritten** (`signature_summary`, an `ast` outline). Each
    file is asked for as **one fenced code block via `llm.complete(max_tokens=8192)`** (a whole
    Python file inside JSON is what long-context models truncate); an unclosed fence is continued
-   (≤2×, overlap trimmed), then `ast.parse` + the change spec's symbol presence + ruff's
-   pyflakes-class rules run and **one repair round** fixes a syntax error / undefined names. Diffs
+   (≤2×, overlap trimmed), then every deterministic check runs — `ast.parse`, dataclass sanity
+   (`dataclass_problems`), the change spec's symbol presence, imports against the rewritten
+   siblings (`missing_imports`), ruff's pyflakes-class rules — and **up to N targeted repair
+   rounds** (`change_outputs_repair_rounds`, default 2; the CLI/API pass the setting through
+   `ProjectCompiler`) hand the model *all* the verdicts that still fail, re-checking after each
+   round (`FileChecks.repair_rounds` / `.problems` record what each round was asked to fix);
+   well-known undefined names are then auto-imported deterministically (`auto_import`, incl. the
+   corpus's own exports). A **keep-style** pass (`code.py::normalise_style`) restores the original
+   file's conventions when the model drifted — PEP 585/604 generics (`List[...]` → `list[...]`,
+   `Optional[X]` → `X | None`, `from typing import` trimmed) and two blank lines between top-level
+   blocks — only when the original followed those rules (`style_normalised` pill). After the last
+   file, a **bundle smoke test** (`change_outputs/smoke.py`, `change_outputs_smoke`, default on)
+   writes the export layout to a temp dir and runs one child interpreter
+   (`change_outputs_smoke_python`, default the server's) that `py_compile`s every file and imports
+   every module in bundle order; the verdict (`CodeChangeBundle.smoke`: passed / failed / skipped,
+   per-module errors) is persisted and shown — a verdict about the draft, never a gate. Diffs
    are `difflib.unified_diff`; a `module` component with `change_type: remove` marks the file
-   `removed`; a model that returns no code leaves the file `unchanged` with a warning.
+   `removed`; a model that returns no code leaves the file `unchanged` with a warning. The rewrite
+   prompt pins the Temporal Python SDK surface it may use (`@activity.defn` takes no
+   `retry_policy`; `RetryPolicy` goes on `execute_activity`; no new `str`-Enum result fields — the
+   default converter decodes them as lists of characters, which is also why the reference corpus's
+   own tests fail in a fresh env, see the RUNBOOK).
 3. **Test documents** (`change_outputs/tests_doc.py`). The corpus's TC matrix (first `.xlsx` that
    `read_test_case_rows` understands) and test plan (`.docx` text) plus the rewritten test module's
    outline go into `update_test_cases.md`; the model proposes **new rows without ids** and
@@ -1180,10 +1233,16 @@ result; `GET /projects/{id}/change-outputs` (stored outputs + running job + `ava
 `POST …/change-outputs/regenerate {stage, provider?, model?}` (202, one run per project, cloud
 Nemotron default like every KB route), `GET …/change-outputs/export.zip`,
 `GET …/change-outputs/files/{test-cases.xlsx|test-plan-addendum.docx|test-plan-addendum.md|system-flow-diagram.md|changes.patch}`.
+**Config.** `change_outputs_repair_rounds` (2), `change_outputs_smoke` (True),
+`change_outputs_smoke_python` ("" = the server's interpreter); the run is timed under
+`stage_timings["change_outputs"]` and the time-saved metric buckets it against
+`baseline_hours["change_outputs"]` (16 h estimate). Reset recipe for demos:
+`python scripts/reset_demo_state.py` (dry run; `--yes` deletes after a backup zip, `--keep <id>`).
 UI: the Results tab of a grounded project gets a **Workflows | Change outputs** switch; the
 Change-outputs view has Diagrams (per-diagram chips, Original ⇄ Updated toggle, checks, source),
-Code (file list with status badges and ast/ruff pills, unified / side-by-side / updated-file
-viewer built on the `diff` package, `changes.patch`), Test cases (table with new / updated
+Code (file list with status badges and ast/ruff/`repaired ×N`/`style kept` pills, the repair
+verdicts per file, the bundle smoke card, unified / side-by-side / updated-file viewer built on
+the `diff` package, `changes.patch`), Test cases (table with new / updated
 highlighting, `.xlsx` and addendum `.docx` downloads, the addendum rendered), a stage selector +
 **Regenerate**, **Download all (.zip)**, warnings and the Sources list.
 
@@ -1478,9 +1537,9 @@ Project endpoints (the compile → validate → approve pipeline; spec files tra
 | POST   | `/projects/compile`         | `{document_text, persist?, provider?, model?, nickname?, kb_id?, change_request_id?}` | Segment into per-workflow specs (spec gate). `model` picks a local gateway model; `nickname` sets an optional label; `kb_id` grounds every prompt in a knowledge base and adds `changes.md`; `change_request_id` seeds it from the request (implies its KB). |
 | POST   | `/projects/compile-upload`  | multipart `file` + the same form fields          | Parse a `.docx/.pdf/.md/.html/.txt` upload to text, then as `/projects/compile`. |
 | GET    | `/projects`                 | —                                           | List visible projects as summaries (`{projects: [{project_id, nickname, stage, workflow_count, updated_at}]}`, newest first). |
-| GET    | `/projects/{id}`            | —                                           | Load a project + rendered spec files.           |
-| PATCH  | `/projects/{id}`            | `{nickname}`                                | Set or clear the project nickname (metadata only — no recompile). Returns the summary. |
-| PUT    | `/projects/{id}/spec`       | `{spec_markdown}`                           | Fold edited spec Markdown back in (no LLM); `spec_markdown["__changes__"]` is `changes.md`. |
+| GET    | `/projects/{id}`            | —                                           | Load a project + rendered spec files. `ETag: "<version>"`; `project.version` is the CAS token. |
+| PATCH  | `/projects/{id}`            | `{nickname, expected_version?}` (+ `If-Match`) | Set or clear the project nickname (metadata only — no recompile). Returns the summary. 409 when the token is stale. |
+| PUT    | `/projects/{id}/spec`       | `{spec_markdown, expected_version?}` (+ `If-Match`) | Fold edited spec Markdown back in (no LLM); `spec_markdown["__changes__"]` is `changes.md`. Optional compare-and-swap: a stale token → 409 (§7.3). |
 | POST   | `/projects/{id}/edit`       | `{edit_document, workflows?, author?, resolved?}` | Apply an edit-request document; re-arms the gate. Pass `resolved` from a preview to replay it with no LLM call (stale preview → 409). |
 | POST   | `/projects/{id}/edit/preview` | `{edit_document, workflows?}`             | Dry-run the edit: would-be summary, post-edit spec Markdown, and the `resolved` handoff blob. Persists nothing. |
 | POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes (synchronous). |
@@ -1535,7 +1594,7 @@ Knowledge bases (§8c). Uploading a corpus answers `202` with the knowledge base
 |--------|----------------------------------------|------------------------------------------------------------|---------|
 | POST   | `/knowledge-bases`                     | multipart `file` (zip), `name?`, `enrich?`, `provider?`, `model?` | Extract the corpus (400 on a bad/unsafe zip) and start indexing. |
 | GET    | `/knowledge-bases`                     | —                                                          | List knowledge bases (stats, catalog, status). |
-| GET    | `/knowledge-bases/{id}`                | —                                                          | One knowledge base (+ the running job, if any). |
+| GET    | `/knowledge-bases/{id}`                | —                                                          | One knowledge base (+ the running job, if any); `ETag`/`version` (CAS token). |
 | DELETE | `/knowledge-bases/{id}`                | —                                                          | Remove record, corpus and graph (cancels a running ingest). |
 | POST   | `/knowledge-bases/{id}/reindex`        | `{enrich?, provider?, model?}`                             | Rebuild the graph as a job (enrichment cache reused). |
 | POST   | `/knowledge-bases/{id}/retrieve`       | `{prompt, budget?, max_hops?}`                             | Grounded context packet (`rendered`, `sections`, `files`, `coverage`). |
@@ -1545,7 +1604,7 @@ Knowledge bases (§8c). Uploading a corpus answers `202` with the knowledge base
 | GET    | `/knowledge-bases/{id}/graph/summary`  | `?top=`                                                    | Counts by node/edge type + best-connected nodes. |
 | POST   | `/change-requests`                     | multipart `kb_id`, `file` (docx/md/txt) or `text`, `title?`, `provider?`, `model?` | Register a change request (201; no LLM call). |
 | GET    | `/change-requests`                     | —                                                          | List change requests (summary rows). |
-| GET    | `/change-requests/{id}` (`/wizard`)    | —                                                          | The change request: wizard steps/questions/turns, artifacts, ids, running job. |
+| GET    | `/change-requests/{id}` (`/wizard`)    | —                                                          | The change request: wizard steps/questions/turns, artifacts, ids, running job; `ETag`/`version` (CAS token). |
 | DELETE | `/change-requests/{id}`                | —                                                          | Delete (cancels a running job). |
 | POST   | `/change-requests/{id}/wizard/start`   | `{provider?, model?}`                                      | Reserve ids + impact traversal (sync), then draft the current step's questions as a `cr_questions` job (202; idempotent). |
 | POST   | `/change-requests/{id}/wizard/answer`  | `{answer, option?}`                                        | Answer the current question (one short LLM call; may return one follow-up). |
@@ -1553,7 +1612,7 @@ Knowledge bases (§8c). Uploading a corpus answers `202` with the knowledge base
 | POST   | `/change-requests/{id}/wizard/draft`   | `{step?}`                                                  | Draft the step's artifact as a `cr_draft` job (202; pending questions are skipped). |
 | POST   | `/change-requests/{id}/wizard/revise`  | `{step, message}`                                          | Chat revision of a drafted artifact as a `cr_revise` job (202). |
 | GET    | `/change-requests/{id}/artifacts/{kind}` | `?version=`                                              | Artifact markdown (latest or a version) + history + sources + coverage. |
-| PUT    | `/change-requests/{id}/artifacts/{kind}` | `{markdown, note?}`                                      | Human edit → new `human_edit` version (400 if the structure is lost). |
+| PUT    | `/change-requests/{id}/artifacts/{kind}` | `{markdown, note?, expected_version?}` (+ `If-Match`)    | Human edit → new `human_edit` version (400 if the structure is lost; 409 when the CAS token is stale). |
 | POST   | `/change-requests/{id}/artifacts/{kind}/approve` | —                                                | Approve; the cursor advances and the next step's questions job starts. |
 | GET    | `/change-requests/{id}/artifacts/{kind}/export` | `?format=docx\|md\|xlsx`                          | Download the artifact as Word (stories: zip of per-story docs) / markdown / TC preview workbook (impact only). Deterministic; `Content-Disposition` names the file; DRAFT-labelled until approved. |
 | GET    | `/change-requests/{id}/export.zip`     | —                                                          | Every artifact as Word/Excel + `markdown/*.md` + `MANIFEST.txt`. |

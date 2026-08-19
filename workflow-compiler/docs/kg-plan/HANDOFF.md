@@ -257,6 +257,10 @@ from a **fresh KB + CR**; the reset recipe is **document-only** (nothing deleted
   built: a third, *test-only* repair round that also runs the smoke import per file; a "restore
   original" button per file/diagram; running the smoke in `tvenv` by default
   (`change_outputs_smoke_python`).
+- (Phase 5) **A code-stage re-run replaces the bundle as it goes** (per-file persistence): when the
+  demo project's third re-run died on a Nemotron `HTTP 504` after `types.py`, the previously good
+  bundle was already overwritten by a one-file one until the next re-run finished. Candidate: keep
+  the last complete bundle until the new run completes (write to a shadow bundle, swap at the end).
 - (Phase 5) The `change_spec` step buckets under *discovery* in the time-saved card (its
   `stage_timings` key is `change_spec`; only `change_outputs` got its own key by request).
 - (Phase 5) A change spec can name a *new* diagram file (`updated-system-architecture.mmd`); the

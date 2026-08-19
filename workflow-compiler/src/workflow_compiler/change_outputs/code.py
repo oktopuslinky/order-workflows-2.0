@@ -691,7 +691,10 @@ def missing_imports(
         tree = ast.parse(code)
     except SyntaxError:
         return problems
-    for node in tree.body:
+    # ``ast.walk``, not ``tree.body``: Temporal workflow modules import their activities
+    # inside ``with workflow.unsafe.imports_passed_through():`` (and code bases guard imports
+    # with ``try:``), which the live smoke test caught after a top-level-only walk missed it.
+    for node in ast.walk(tree):
         if not isinstance(node, ast.ImportFrom) or not node.module or node.level:
             continue
         target = resolve_import(node.module, py_files)

@@ -699,6 +699,15 @@ def test_missing_imports_against_rewritten_siblings() -> None:
     }
     # imports from files that were not rewritten (or third parties) are not checked
     assert missing_imports("from src.shared.types import Nope\nimport temporalio\n", siblings, list(CORPUS_TEXTS)) == {}
+    # Temporal's ``with workflow.unsafe.imports_passed_through():`` block (and try-guarded
+    # imports) are checked too — the live smoke test caught a miss here.
+    nested = (
+        "from temporalio import workflow\n\nwith workflow.unsafe.imports_passed_through():\n"
+        "    from src.activities.order_activities import provision_group, compensate_provisioning\n"
+    )
+    assert missing_imports(nested, siblings, list(CORPUS_TEXTS)) == {
+        "existing_Codebase/activities/order_activities.py": ["compensate_provisioning"]
+    }
 
 
 def test_dataclass_problems() -> None:

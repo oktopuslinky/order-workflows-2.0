@@ -2383,7 +2383,14 @@ def create_app() -> FastAPI:
             )
         from workflow_compiler.change_outputs.engine import change_label_of
 
-        label = project.change_outputs.tests_doc.change_request_id or change_label_of(project)
+        # Prefer the business id (BCR-001) — the CR's doc id via the grounding record — over
+        # whatever an older tests_doc run stored (projects compiled before the label existed
+        # carried the CR id there).
+        label = (
+            await _change_label(project)
+            or project.change_outputs.tests_doc.change_request_id
+            or change_label_of(project)
+        )
         data = export_zip(project.change_outputs, project_id=project_id, label=label)
         return _download(
             ArtifactExport(

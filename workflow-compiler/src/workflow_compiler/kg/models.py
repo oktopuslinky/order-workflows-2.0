@@ -75,6 +75,10 @@ class KnowledgeBase(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
+    version: int = Field(
+        default=0,
+        description="Store-managed save counter (bumped on every save; CAS via expected_version).",
+    )
 
     def touch(self) -> None:
         self.updated_at = _now()

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import re
 import tempfile
 from pathlib import Path
 from typing import Protocol
@@ -17,19 +16,18 @@ from typing import Protocol
 from workflow_compiler.exceptions import StateNotFoundError
 from workflow_compiler.models.change import ChangeRequest
 from workflow_compiler.storage.file import DEFAULT_ROOT
-
-_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+from workflow_compiler.storage.ids import is_safe_id, next_version, stored_version
 
 
 def validate_cr_id(cr_id: str) -> str:
     """Reject anything that is not a plain token (path traversal guard)."""
-    if not cr_id or not _ID_RE.match(cr_id) or len(cr_id) > 128:
+    if not is_safe_id(cr_id):
         raise StateNotFoundError(f"No change request with id {cr_id!r}.")
     return cr_id
 
 
 class ChangeRequestStore(Protocol):
-    async def save(self, cr: ChangeRequest) -> None: ...
+    async def save(self, cr: ChangeRequest, *, expected_version: int | None = None) -> None: ...
 
     async def load(self, cr_id: str) -> ChangeRequest: ...
 
@@ -53,9 +51,12 @@ class FileChangeRequestStore:
     def _path(self, cr_id: str) -> Path:
         return self._root / f"{validate_cr_id(cr_id)}.json"
 
-    def _write(self, cr: ChangeRequest) -> None:
+    def _write(self, cr: ChangeRequest, expected_version: int | None) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
         target = self._path(cr.cr_id)
+        cr.version = next_version(
+            stored_version(target), expected_version, label="change request", key=cr.cr_id
+        )
         payload = cr.model_dump_json(indent=2)
         fd, tmp_name = tempfile.mkstemp(dir=self._root, suffix=".tmp")
         tmp = Path(tmp_name)
@@ -73,8 +74,8 @@ class FileChangeRequestStore:
             raise StateNotFoundError(f"No change request with id {cr_id!r}.")
         return ChangeRequest.model_validate_json(path.read_text(encoding="utf-8"))
 
-    async def save(self, cr: ChangeRequest) -> None:
-        await asyncio.to_thread(self._write, cr)
+    async def save(self, cr: ChangeRequest, *, expected_version: int | None = None) -> None:
+        await asyncio.to_thread(self._write, cr, expected_version)
 
     async def load(self, cr_id: str) -> ChangeRequest:
         return await asyncio.to_thread(self._read, cr_id)
@@ -106,8 +107,15 @@ class InMemoryChangeRequestStore:
     def __init__(self) -> None:
         self._items: dict[str, ChangeRequest] = {}
 
-    async def save(self, cr: ChangeRequest) -> None:
-        self._items[validate_cr_id(cr.cr_id)] = copy.deepcopy(cr)
+    async def save(self, cr: ChangeRequest, *, expected_version: int | None = None) -> None:
+        current = self._items.get(validate_cr_id(cr.cr_id))
+        cr.version = next_version(
+            current.version if current is not None else None,
+            expected_version,
+            label="change request",
+            key=cr.cr_id,
+        )
+        self._items[cr.cr_id] = copy.deepcopy(cr)
 
     async def load(self, cr_id: str) -> ChangeRequest:
         validate_cr_id(cr_id)

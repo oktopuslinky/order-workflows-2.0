@@ -81,9 +81,11 @@ class ChangeRequestService:
         """Engine for the LLM-free transitions (skip/edit/approve)."""
         return ChangeWizardEngine(ChangeAnalystAgent(None), self._kg)
 
-    async def _save(self, cr: ChangeRequest) -> ChangeRequest:
+    async def _save(
+        self, cr: ChangeRequest, *, expected_version: int | None = None
+    ) -> ChangeRequest:
         cr.updated_at = datetime.now(UTC)
-        await self._store.save(cr)
+        await self._store.save(cr, expected_version=expected_version)
         return cr
 
     # -------------------------------------------------------------- create
@@ -218,11 +220,18 @@ class ChangeRequestService:
         return cr
 
     async def edit(
-        self, cr_id: str, kind: ArtifactKind | str, markdown: str, *, note: str = ""
+        self,
+        cr_id: str,
+        kind: ArtifactKind | str,
+        markdown: str,
+        *,
+        note: str = "",
+        expected_version: int | None = None,
     ) -> ChangeRequest:
+        """A human edit (new ``human_edit`` version); CAS when ``expected_version`` is set."""
         cr = await self.get(cr_id)
         self._offline_engine().edit(cr, kind, markdown, note=note)
-        return await self._save(cr)
+        return await self._save(cr, expected_version=expected_version)
 
     async def approve(self, cr_id: str, kind: ArtifactKind | str | None = None) -> ChangeRequest:
         cr = await self.get(cr_id)

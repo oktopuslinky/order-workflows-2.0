@@ -36,6 +36,7 @@ from workflow_compiler.interfaces.executor import (
     WorkflowInputField,
 )
 from workflow_compiler.models import TemporalWorkflowDesign, WorkflowState
+from workflow_compiler.storage.ids import validate_slug, validate_store_id
 
 #: Files that must be present for a directory to count as a runnable bundle.
 _REQUIRED = ("worker.py", "workflow.py", "activities.py", "shared.py")
@@ -64,8 +65,12 @@ class MaterializeResult:
 
 
 def bundle_dir(root: str | Path, project_id: str, slug: str) -> Path:
-    """Where the bundle for one workflow lives: ``<root>/<project-id>/<slug>``."""
-    return Path(root) / project_id / slug
+    """Where the bundle for one workflow lives: ``<root>/<project-id>/<slug>``.
+
+    Both segments are validated first (``[A-Za-z0-9_-]``) so a crafted id or slug
+    can never escape ``root``.
+    """
+    return Path(root) / validate_store_id(project_id, label="project") / validate_slug(slug)
 
 
 def is_materialized(directory: Path) -> bool:

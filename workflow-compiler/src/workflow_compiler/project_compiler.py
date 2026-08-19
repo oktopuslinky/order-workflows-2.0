@@ -761,12 +761,15 @@ class ProjectCompiler:
         markdown_by_slug: dict[str, str],
         *,
         persist: bool = True,
+        expected_version: int | None = None,
     ) -> CompilationProject:
         """Deterministically fold edited spec files in — no validator, no LLM.
 
         The quick-save path (e.g. the API's ``PUT /projects/{id}/spec``): edits
         are parsed, merged, provenance-recorded, and referential integrity is
-        re-enforced, but the three review passes do not run.
+        re-enforced, but the three review passes do not run. ``expected_version``
+        (optional) makes the save compare-and-swap: a project that moved on since
+        the client loaded it raises ``StaleWriteError`` instead of being overwritten.
         """
         project = await self._projects.load(project_id)
         for spec in list(project.specs):
@@ -783,7 +786,7 @@ class ProjectCompiler:
         self._fold_changes(project, markdown_by_slug.get(CHANGES_SLUG))
         project.touch()
         if persist:
-            await self._projects.save(project)
+            await self._projects.save(project, expected_version=expected_version)
         return project
 
     # ------------------------------------------------------------------ #
@@ -2048,9 +2051,11 @@ class ProjectCompiler:
         """Load a stored project by id."""
         return await self._projects.load(project_id)
 
-    async def save_project(self, project: CompilationProject) -> None:
+    async def save_project(
+        self, project: CompilationProject, *, expected_version: int | None = None
+    ) -> None:
         """Persist a project."""
-        await self._projects.save(project)
+        await self._projects.save(project, expected_version=expected_version)
 
     async def list_projects(self) -> list[str]:
         """Return the ids of all stored projects."""

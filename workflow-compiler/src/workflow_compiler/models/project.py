@@ -218,6 +218,10 @@ class CompilationProject(WorkflowBaseModel):
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC), description="Last mutation timestamp."
     )
+    version: int = Field(
+        default=0,
+        description="Store-managed save counter (bumped on every save; CAS via expected_version).",
+    )
 
     def touch(self) -> None:
         """Update the ``updated_at`` timestamp to now."""

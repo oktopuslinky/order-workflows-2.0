@@ -196,6 +196,13 @@ class SpecUpdateRequest(BaseModel):
     spec_markdown: dict[str, str] = Field(
         default_factory=dict, description="slug → edited spec Markdown."
     )
+    expected_version: int | None = Field(
+        default=None,
+        description=(
+            "Compare-and-swap: the project ``version`` the client loaded. When set and the "
+            "stored version differs the save is refused with 409 (``If-Match`` works too)."
+        ),
+    )
 
 
 class ProjectEditRequest(BaseModel):
@@ -367,6 +374,7 @@ class ProjectSummary(BaseModel):
         default=0, description="Number of discovered workflows (specs) in the project."
     )
     updated_at: datetime = Field(..., description="Last mutation timestamp.")
+    version: int = Field(default=0, description="Store save counter (CAS token).")
 
 
 class RenameProjectRequest(BaseModel):
@@ -374,6 +382,9 @@ class RenameProjectRequest(BaseModel):
 
     nickname: str | None = Field(
         default=None, description="New nickname; null or empty clears it."
+    )
+    expected_version: int | None = Field(
+        default=None, description="Compare-and-swap: the project version the client loaded."
     )
 
 
@@ -712,6 +723,7 @@ class KnowledgeBaseResponse(BaseModel):
     indexed_at: datetime | None = None
     llm_enriched: bool = False
     provider_used: str | None = None
+    version: int = Field(default=0, description="Store save counter (CAS token).")
     model_used: str | None = None
     catalog: KbCatalog
     warnings: list[str] = Field(default_factory=list)
@@ -887,6 +899,13 @@ class WizardReviseRequest(BaseModel):
 class ArtifactUpdateRequest(BaseModel):
     markdown: str = Field(..., min_length=1)
     note: str | None = Field(default=None, description="Optional note for the new version.")
+    expected_version: int | None = Field(
+        default=None,
+        description=(
+            "Compare-and-swap: the change request's ``version`` the client loaded; a stale "
+            "value is refused with 409 (``If-Match`` works too)."
+        ),
+    )
 
 
 class ArtifactResponse(BaseModel):

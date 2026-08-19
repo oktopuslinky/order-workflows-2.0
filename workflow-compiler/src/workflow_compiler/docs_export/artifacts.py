@@ -78,6 +78,20 @@ class ArtifactExport:
 # --------------------------------------------------------------------------- #
 
 
+def safe_filename_part(text: str, *, fallback: str = "file", max_len: int = 80) -> str:
+    """Reduce free text (a document id, a label) to ``[A-Za-z0-9._-]`` for use in a filename.
+
+    Ids such as ``BCR-001`` / ``TP-ORD-001`` pass through unchanged; anything else
+    (spaces, quotes, separators, ``..``) collapses to ``-`` so model- or
+    document-derived text can never shape a path or break a ``Content-Disposition``.
+    """
+    ascii_text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    part = re.sub(r"[^A-Za-z0-9._-]+", "-", ascii_text).strip("-.")
+    part = re.sub(r"\.{2,}", ".", part)
+    part = re.sub(r"-{2,}", "-", part)
+    return part[:max_len].rstrip("-.") or fallback
+
+
 def slugify(text: str, *, max_len: int = 40) -> str:
     """Kebab-case ASCII slug (``Partial Shipment Support`` → ``partial-shipment-support``)."""
     ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")

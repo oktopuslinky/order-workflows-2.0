@@ -31,6 +31,10 @@ class StateNotFoundError(WorkflowCompilerError):
     """Raised when a requested workflow state does not exist in the store."""
 
 
+class StaleWriteError(WorkflowCompilerError):
+    """Raised when a save's ``expected_version`` no longer matches the stored record (CAS)."""
+
+
 class LLMProviderError(WorkflowCompilerError):
     """Raised when an LLM provider call fails."""
 

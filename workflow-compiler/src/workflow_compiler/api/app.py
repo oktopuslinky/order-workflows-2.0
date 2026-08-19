@@ -77,6 +77,7 @@ projects (``owner_id`` is None, e.g. CLI-created) stay visible to everyone.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -88,6 +89,7 @@ from fastapi import (
     FastAPI,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     Response,
@@ -205,6 +207,7 @@ from workflow_compiler.exceptions import (
     ParseError,
     ProviderConnectionError,
     ProviderTimeoutError,
+    StaleWriteError,
     StateNotFoundError,
     UnsupportedFormatError,
     WorkflowCompilerError,
@@ -300,7 +303,33 @@ def _project_summary(project: CompilationProject) -> ProjectSummary:
         stage=project.stage,
         workflow_count=len(project.specs),
         updated_at=project.updated_at,
+        version=project.version,
     )
+
+
+def _expected_version(body_value: int | None, if_match: str | None) -> int | None:
+    """The CAS token a write carries: the body's ``expected_version`` or an ``If-Match`` header.
+
+    ``If-Match`` accepts ``"3"``, ``3`` or ``W/"3"``; ``*`` (any) means no check. A header that
+    is not an integer is a 400 — silently ignoring it would defeat the point of sending it.
+    """
+    if body_value is not None:
+        return body_value
+    if if_match is None:
+        return None
+    raw = if_match.strip()
+    if raw == "*":
+        return None
+    if raw.startswith("W/"):
+        raw = raw[2:]
+    raw = raw.strip().strip('"')
+    if not raw.isdigit():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "If-Match must carry an integer version.")
+    return int(raw)
+
+
+def _etag(version: int) -> str:
+    return f'"{version}"'
 
 
 async def _guard[T](coro: Awaitable[T]) -> T:
@@ -309,7 +338,7 @@ async def _guard[T](coro: Awaitable[T]) -> T:
         return await coro
     except StateNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
-    except (ApprovalError, EditPreviewStaleError) as exc:
+    except (ApprovalError, EditPreviewStaleError, StaleWriteError) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except CompilationError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
@@ -486,7 +515,8 @@ def create_app() -> FastAPI:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "An account with this email already exists."
             )
-        password_hash, password_salt = hash_password(request.password)
+        # scrypt is deliberately slow (~50 ms) — never on the event loop.
+        password_hash, password_salt = await asyncio.to_thread(hash_password, request.password)
         user = User(
             email=email,
             display_name=request.display_name.strip() or email.split("@", 1)[0],
@@ -506,8 +536,8 @@ def create_app() -> FastAPI:
         """Sign in with email + password; sets the session cookie."""
         user = await store.get_by_email(request.email.strip().lower())
         # One generic message for both failure modes — don't reveal which.
-        if user is None or not verify_password(
-            request.password, user.password_hash, user.password_salt
+        if user is None or not await asyncio.to_thread(
+            verify_password, request.password, user.password_hash, user.password_salt
         ):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password.")
         set_session_cookie(response, user)
@@ -869,12 +899,14 @@ def create_app() -> FastAPI:
     @app.get("/projects/{project_id}", response_model=ProjectResponse, tags=["projects"])
     async def get_project(
         project_id: str,
+        response: Response,
         compiler: ProjectCompiler = Depends(get_project_compiler),
         user: User = Depends(get_current_user),
     ) -> ProjectResponse:
-        """Load a stored project plus its rendered spec files."""
+        """Load a stored project plus its rendered spec files (``ETag`` = its version)."""
         project = await _guard(compiler.load_project(project_id))
         _check_owner(project, user)
+        response.headers["ETag"] = _etag(project.version)
         return await _project_response(project, compiler, user)
 
     @app.patch("/projects/{project_id}", response_model=ProjectSummary, tags=["projects"])
@@ -883,14 +915,22 @@ def create_app() -> FastAPI:
         request: RenameProjectRequest,
         compiler: ProjectCompiler = Depends(get_project_compiler),
         user: User = Depends(get_current_user),
+        if_match: str | None = Header(default=None, alias="If-Match"),
     ) -> ProjectSummary:
-        """Set or clear a project's nickname (a cheap metadata update — no recompile)."""
+        """Set or clear a project's nickname (a cheap metadata update — no recompile).
+
+        Optional CAS: ``expected_version`` / ``If-Match`` → 409 when the project moved on.
+        """
         project = await _guard(compiler.load_project(project_id))
         _check_owner(project, user)
         nickname = (request.nickname or "").strip()
         project.nickname = nickname or None
         project.touch()
-        await compiler.save_project(project)
+        await _guard(
+            compiler.save_project(
+                project, expected_version=_expected_version(request.expected_version, if_match)
+            )
+        )
         return _project_summary(project)
 
     @app.get("/projects/{project_id}/files", response_model=ProjectFilesResponse, tags=["projects"])
@@ -926,12 +966,26 @@ def create_app() -> FastAPI:
     async def update_project_spec(
         project_id: str,
         request: SpecUpdateRequest,
+        response: Response,
         compiler: ProjectCompiler = Depends(get_project_compiler),
         user: User = Depends(get_current_user),
+        if_match: str | None = Header(default=None, alias="If-Match"),
     ) -> ProjectResponse:
-        """Fold edited spec Markdown back onto the structured specs (no LLM)."""
+        """Fold edited spec Markdown back onto the structured specs (no LLM).
+
+        Optional CAS: ``expected_version`` in the body (or ``If-Match``) is compared with the
+        stored project version and a stale write is refused with 409 — the client reloads
+        and re-applies its edit instead of silently overwriting a job's or another tab's save.
+        """
         _check_owner(await _guard(compiler.load_project(project_id)), user)
-        project = await _guard(compiler.update_specs(project_id, request.spec_markdown))
+        project = await _guard(
+            compiler.update_specs(
+                project_id,
+                request.spec_markdown,
+                expected_version=_expected_version(request.expected_version, if_match),
+            )
+        )
+        response.headers["ETag"] = _etag(project.version)
         return await _project_response(project, compiler, user)
 
     @app.post("/projects/{project_id}/edit", response_model=ProjectResponse, tags=["projects"])
@@ -1326,6 +1380,7 @@ def create_app() -> FastAPI:
             owner_id=kb.owner_id,
             source=kb.source,
             status=kb.status,
+            version=kb.version,
             error=kb.error,
             stats=kb.stats,
             indexed_at=kb.indexed_at,
@@ -1439,12 +1494,14 @@ def create_app() -> FastAPI:
     )
     async def get_knowledge_base(
         kb_id: str,
+        response: Response,
         kg: KgService = Depends(get_kg_service),
         user: User = Depends(get_current_user),
     ) -> KnowledgeBaseResponse:
         kb = await _guard(kg.get(kb_id))
         _check_kb_owner(kb, user)
         active = jobs.active_for_scope(kb_id, scope_kind="knowledge_base")
+        response.headers["ETag"] = _etag(kb.version)
         return _kb_response(kb, active)
 
     @app.delete("/knowledge-bases/{kb_id}", tags=["knowledge-bases"])
@@ -1767,11 +1824,13 @@ def create_app() -> FastAPI:
     )
     async def get_change_request(
         cr_id: str,
+        response: Response,
         changes: ChangeRequestService = Depends(get_change_service),
         user: User = Depends(get_current_user),
     ) -> ChangeRequestResponse:
         cr = await _guard(changes.get(cr_id))
         _check_cr_owner(cr, user)
+        response.headers["ETag"] = _etag(cr.version)
         return _cr_response(cr)
 
     @app.get(
@@ -1964,13 +2023,27 @@ def create_app() -> FastAPI:
         cr_id: str,
         kind: str,
         request: ArtifactUpdateRequest,
+        response: Response,
         changes: ChangeRequestService = Depends(get_change_service),
         user: User = Depends(get_current_user),
+        if_match: str | None = Header(default=None, alias="If-Match"),
     ) -> ArtifactResponse:
-        """A human edit: stored as a new ``human_edit`` version (must still parse)."""
+        """A human edit: stored as a new ``human_edit`` version (must still parse).
+
+        Optional CAS on the change request (``expected_version`` / ``If-Match`` → 409).
+        """
         akind = _artifact_kind(kind)
         _check_cr_owner(await _guard(changes.get(cr_id)), user)
-        cr = await _guard(changes.edit(cr_id, akind, request.markdown, note=request.note or ""))
+        cr = await _guard(
+            changes.edit(
+                cr_id,
+                akind,
+                request.markdown,
+                note=request.note or "",
+                expected_version=_expected_version(request.expected_version, if_match),
+            )
+        )
+        response.headers["ETag"] = _etag(cr.version)
         return _artifact_response(cr, akind, None)
 
     def _download(export: ArtifactExport) -> Response:

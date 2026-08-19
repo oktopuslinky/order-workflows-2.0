@@ -16,6 +16,7 @@ from typing import Protocol
 from workflow_compiler.exceptions import StateNotFoundError
 from workflow_compiler.models.user import User
 from workflow_compiler.storage.file import DEFAULT_ROOT
+from workflow_compiler.storage.ids import validate_store_id
 
 
 class UserStore(Protocol):
@@ -42,7 +43,7 @@ class FileUserStore:
         self._root = Path(root) / "users"
 
     def _path(self, user_id: str) -> Path:
-        return self._root / f"{user_id}.json"
+        return self._root / f"{validate_store_id(user_id, label='user')}.json"
 
     def _write(self, user: User) -> None:
         self._root.mkdir(parents=True, exist_ok=True)

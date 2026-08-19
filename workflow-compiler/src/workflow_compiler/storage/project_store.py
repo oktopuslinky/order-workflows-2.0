@@ -16,13 +16,16 @@ from typing import Protocol
 from workflow_compiler.exceptions import StateNotFoundError
 from workflow_compiler.models import CompilationProject
 from workflow_compiler.storage.file import DEFAULT_ROOT
+from workflow_compiler.storage.ids import next_version, stored_version, validate_store_id
 
 
 class ProjectStore(Protocol):
     """Persistence contract for :class:`CompilationProject` aggregates."""
 
-    async def save(self, project: CompilationProject) -> None:
-        """Persist ``project``."""
+    async def save(
+        self, project: CompilationProject, *, expected_version: int | None = None
+    ) -> None:
+        """Persist ``project``; ``expected_version`` enables compare-and-swap (409 on stale)."""
         ...
 
     async def load(self, project_id: str) -> CompilationProject:
@@ -46,11 +49,14 @@ class FileProjectStore:
         self._root = Path(root) / "projects"
 
     def _path(self, project_id: str) -> Path:
-        return self._root / f"{project_id}.json"
+        return self._root / f"{validate_store_id(project_id, label='project')}.json"
 
-    def _write(self, project: CompilationProject) -> None:
+    def _write(self, project: CompilationProject, expected_version: int | None) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
         target = self._path(project.project_id)
+        project.version = next_version(
+            stored_version(target), expected_version, label="project", key=project.project_id
+        )
         payload = project.model_dump_json(indent=2)
         fd, tmp_name = tempfile.mkstemp(dir=self._root, suffix=".tmp")
         tmp = Path(tmp_name)
@@ -68,9 +74,11 @@ class FileProjectStore:
             raise StateNotFoundError(f"No project with id {project_id!r}.")
         return CompilationProject.model_validate_json(path.read_text(encoding="utf-8"))
 
-    async def save(self, project: CompilationProject) -> None:
-        """Persist ``project`` to disk atomically."""
-        await asyncio.to_thread(self._write, project)
+    async def save(
+        self, project: CompilationProject, *, expected_version: int | None = None
+    ) -> None:
+        """Persist ``project`` to disk atomically (CAS when ``expected_version`` is given)."""
+        await asyncio.to_thread(self._write, project, expected_version)
 
     async def load(self, project_id: str) -> CompilationProject:
         """Load a project by id, raising ``StateNotFoundError`` if absent."""
@@ -97,8 +105,18 @@ class InMemoryProjectStore:
     def __init__(self) -> None:
         self._projects: dict[str, CompilationProject] = {}
 
-    async def save(self, project: CompilationProject) -> None:
-        """Store a deep copy of ``project``."""
+    async def save(
+        self, project: CompilationProject, *, expected_version: int | None = None
+    ) -> None:
+        """Store a deep copy of ``project`` (CAS when ``expected_version`` is given)."""
+        validate_store_id(project.project_id, label="project")
+        current = self._projects.get(project.project_id)
+        project.version = next_version(
+            current.version if current is not None else None,
+            expected_version,
+            label="project",
+            key=project.project_id,
+        )
         self._projects[project.project_id] = copy.deepcopy(project)
 
     async def load(self, project_id: str) -> CompilationProject:

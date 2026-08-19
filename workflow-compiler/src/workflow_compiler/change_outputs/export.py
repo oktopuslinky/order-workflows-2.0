@@ -20,6 +20,7 @@ from workflow_compiler.change_outputs.tests_doc import (
     export_addendum_docx,
     export_matrix_xlsx,
 )
+from workflow_compiler.docs_export.artifacts import safe_filename_part
 
 _ZIP_TIME = (2026, 1, 1, 0, 0, 0)
 
@@ -191,5 +192,5 @@ def zip_entries(entries: Sequence[ExportEntry]) -> bytes:
 
 
 def export_filename(project_id: str, label: str = "") -> str:
-    tag = (label or "change").replace(" ", "-")
-    return f"{tag}-{project_id[:8]}-change-outputs.zip"
+    tag = safe_filename_part(label or "change", fallback="change")
+    return f"{tag}-{safe_filename_part(project_id[:8], fallback='project')}-change-outputs.zip"

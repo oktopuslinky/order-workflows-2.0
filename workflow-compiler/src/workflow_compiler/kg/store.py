@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -26,8 +25,7 @@ from typing import Protocol
 from workflow_compiler.exceptions import StateNotFoundError
 from workflow_compiler.kg.models import KnowledgeBase
 from workflow_compiler.storage.file import DEFAULT_ROOT
-
-_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+from workflow_compiler.storage.ids import is_safe_id, next_version, stored_version
 
 
 def validate_kb_id(kb_id: str) -> str:
@@ -37,7 +35,7 @@ def validate_kb_id(kb_id: str) -> str:
     exist is indistinguishable from one that does not, and the check must never
     leak whether path-shaped input would have resolved to something.
     """
-    if not kb_id or not _ID_RE.match(kb_id):
+    if not is_safe_id(kb_id):
         raise StateNotFoundError(f"No knowledge base with id {kb_id!r}.")
     return kb_id
 
@@ -49,7 +47,7 @@ class KnowledgeBaseStore(Protocol):
         """Absolute directory that holds ``corpus/`` and ``.contexthub/`` for ``kb_id``."""
         ...
 
-    async def save(self, kb: KnowledgeBase) -> None: ...
+    async def save(self, kb: KnowledgeBase, *, expected_version: int | None = None) -> None: ...
 
     async def load(self, kb_id: str) -> KnowledgeBase: ...
 
@@ -78,9 +76,12 @@ class FileKnowledgeBaseStore:
     def _path(self, kb_id: str) -> Path:
         return self._root / f"{validate_kb_id(kb_id)}.json"
 
-    def _write(self, kb: KnowledgeBase) -> None:
+    def _write(self, kb: KnowledgeBase, expected_version: int | None) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
         target = self._path(kb.kb_id)
+        kb.version = next_version(
+            stored_version(target), expected_version, label="knowledge base", key=kb.kb_id
+        )
         fd, tmp_name = tempfile.mkstemp(dir=self._root, suffix=".tmp")
         tmp = Path(tmp_name)
         try:
@@ -97,10 +98,10 @@ class FileKnowledgeBaseStore:
             raise StateNotFoundError(f"No knowledge base with id {kb_id!r}.")
         return KnowledgeBase.model_validate_json(path.read_text(encoding="utf-8"))
 
-    async def save(self, kb: KnowledgeBase) -> None:
+    async def save(self, kb: KnowledgeBase, *, expected_version: int | None = None) -> None:
         if not kb.root_dir:
             kb.root_dir = str(self.kb_dir(kb.kb_id))
-        await asyncio.to_thread(self._write, kb)
+        await asyncio.to_thread(self._write, kb, expected_version)
 
     async def load(self, kb_id: str) -> KnowledgeBase:
         return await asyncio.to_thread(self._read, kb_id)
@@ -136,8 +137,14 @@ class InMemoryKnowledgeBaseStore:
     def kb_dir(self, kb_id: str) -> Path:
         return self._root / validate_kb_id(kb_id)
 
-    async def save(self, kb: KnowledgeBase) -> None:
-        validate_kb_id(kb.kb_id)
+    async def save(self, kb: KnowledgeBase, *, expected_version: int | None = None) -> None:
+        current = self._items.get(validate_kb_id(kb.kb_id))
+        kb.version = next_version(
+            current.version if current is not None else None,
+            expected_version,
+            label="knowledge base",
+            key=kb.kb_id,
+        )
         if not kb.root_dir:
             kb.root_dir = str(self.kb_dir(kb.kb_id))
         self._items[kb.kb_id] = copy.deepcopy(kb)

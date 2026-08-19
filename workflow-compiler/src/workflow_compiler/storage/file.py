@@ -9,6 +9,7 @@ from pathlib import Path
 from workflow_compiler.exceptions import StateNotFoundError
 from workflow_compiler.interfaces.state_store import StateStore
 from workflow_compiler.models import WorkflowState
+from workflow_compiler.storage.ids import validate_store_id
 
 #: Default directory (relative to CWD) used when no root is supplied.
 DEFAULT_ROOT = ".workflow_state"
@@ -29,7 +30,7 @@ class FileStateStore(StateStore):
 
     def _path(self, workflow_id: str) -> Path:
         """Return the on-disk path for ``workflow_id``."""
-        return self._root / f"{workflow_id}.json"
+        return self._root / f"{validate_store_id(workflow_id, label='workflow state')}.json"
 
     def _write(self, state: WorkflowState) -> None:
         """Atomically write ``state`` to its JSON file (blocking)."""

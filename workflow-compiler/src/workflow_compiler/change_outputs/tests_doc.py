@@ -19,6 +19,7 @@ from workflow_compiler.change_outputs.models import (
     TestDocUpdate,
     TestPlanAddendumDraft,
 )
+from workflow_compiler.docs_export.artifacts import safe_filename_part
 from workflow_compiler.docs_export.docx_writer import DocxWriter
 from workflow_compiler.docs_export.markdown_to_docx import render_markdown
 from workflow_compiler.docs_export.xlsx_writer import (
@@ -319,8 +320,8 @@ def export_matrix_xlsx(update: TestDocUpdate, *, label: str = "") -> bytes:
 
 
 def addendum_filename(update: TestDocUpdate) -> str:
-    plan = update.test_plan_id or "TP"
-    cr = update.change_request_id or "change"
+    plan = safe_filename_part(update.test_plan_id or "TP", fallback="TP")
+    cr = safe_filename_part(update.change_request_id or "change", fallback="change")
     return f"{plan}-addendum-{cr}.docx"
 
 

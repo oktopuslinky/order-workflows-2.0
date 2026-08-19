@@ -295,3 +295,35 @@ def test_export_filename_header_is_exposed_cross_origin(client: tuple[TestClient
     assert (
         "content-disposition" in response.headers.get("access-control-expose-headers", "").lower()
     )
+
+
+def test_artifact_put_honours_expected_version(client: tuple[TestClient, str]) -> None:
+    """Phase 5 CAS: ``expected_version`` / ``If-Match`` on the change request → 409 when stale."""
+    fixtures = Path(__file__).parent / "fixtures" / "change_artifacts"
+    c, kb_id = client
+    cr_id = _create(c, kb_id)["change_request"]["cr_id"]
+    got = c.get(f"/change-requests/{cr_id}")
+    version = got.json()["change_request"]["version"]
+    assert version >= 1 and got.headers["ETag"] == f'"{version}"'
+    markdown = (fixtures / "BCR-001-impact-analysis.md").read_text(encoding="utf-8")
+    ok = c.put(
+        f"/change-requests/{cr_id}/artifacts/impact",
+        json={"markdown": markdown, "expected_version": version},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.headers["ETag"] == f'"{version + 1}"'
+    stale = c.put(
+        f"/change-requests/{cr_id}/artifacts/impact",
+        json={"markdown": markdown, "expected_version": version},
+    )
+    assert stale.status_code == 409
+    header = c.put(
+        f"/change-requests/{cr_id}/artifacts/impact",
+        json={"markdown": markdown},
+        headers={"If-Match": f'"{version}"'},
+    )
+    assert header.status_code == 409
+    # Without a token the edit still lands (opt-in CAS) and the version keeps counting.
+    plain = c.put(f"/change-requests/{cr_id}/artifacts/impact", json={"markdown": markdown})
+    assert plain.status_code == 200
+    assert c.get(f"/change-requests/{cr_id}").json()["change_request"]["version"] == version + 2

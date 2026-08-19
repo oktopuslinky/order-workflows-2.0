@@ -35,6 +35,7 @@ from .artifacts import (
     ArtifactExport,
     export_artifact,
     export_label,
+    safe_filename_part,
     zip_bytes,
 )
 from .xlsx_writer import TestCaseRow
@@ -108,4 +109,5 @@ def export_change_request(
 
 
 def bundle_filename(cr: ChangeRequest) -> str:
-    return f"{cr.bcr_meta.doc_id or 'change-request'}-{cr.cr_id[:8]}-export.zip"
+    tag = safe_filename_part(cr.bcr_meta.doc_id or "change-request", fallback="change-request")
+    return f"{tag}-{safe_filename_part(cr.cr_id[:8], fallback='cr')}-export.zip"

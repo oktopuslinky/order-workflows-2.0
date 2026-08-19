@@ -92,7 +92,7 @@ function ProjectIdentity({
 
   const rename = useMutation({
     mutationFn: (nickname: string | null) =>
-      api.renameProject(project.project_id, nickname),
+      api.renameProject(project.project_id, nickname, project.version),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setEditing(false);
@@ -352,7 +352,9 @@ function Workspace({
   }
 
   const save = useMutation({
-    mutationFn: () => api.saveSpec(proj.project_id, buffers),
+    // CAS: send the version this page loaded; a 409 (stale) is shown below and
+    // the user reloads instead of overwriting a job's or another tab's save.
+    mutationFn: () => api.saveSpec(proj.project_id, buffers, proj.version),
     onSuccess: (resp) => {
       applyServer(resp);
       onServerUpdate();
@@ -596,7 +598,7 @@ function Workspace({
         </p>
       )}
       {(startApprove.error || startValidate.error || save.error || cancelRun.error) && (
-        <p className="tone-block border-b px-4 py-1 text-xs">
+        <p className="tone-block border-b px-4 py-1 text-xs" data-testid="workspace-error">
           {
             (
               (startApprove.error ||
@@ -605,6 +607,21 @@ function Workspace({
                 cancelRun.error) as ApiError
             ).message
           }
+          {(save.error as ApiError | null)?.status === 409 && (
+            <>
+              {" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => {
+                  save.reset();
+                  onServerUpdate();
+                }}
+              >
+                Reload the latest version
+              </button>
+            </>
+          )}
         </p>
       )}
       {proj.spec_approval_status === "approved" && blockedSlugs.length > 0 && (

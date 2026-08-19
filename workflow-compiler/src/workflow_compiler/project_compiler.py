@@ -176,15 +176,23 @@ class ProjectCompiler:
         segmentation_review: bool = True,
         graph_health_threshold: float = 0.9,
         kg_service: KgService | None = None,
+        change_outputs_repair_rounds: int = 2,
+        change_outputs_smoke: bool = True,
+        change_outputs_smoke_python: str = "",
     ) -> None:
         """Wire the front-end collaborators around an inner workflow compiler.
 
         ``kg_service`` is only needed by knowledge-graph-grounded projects: the
         change-spec validator resolves component paths through it and approval
         re-grounds the Temporal-design prompt. Ungrounded projects never touch it.
+        The ``change_outputs_*`` knobs configure the code stage of the change
+        outputs (repair rounds per file, the bundle smoke test and its interpreter).
         """
         self._llm = llm_provider
         self._kg = kg_service
+        self._co_repair_rounds = change_outputs_repair_rounds
+        self._co_smoke = change_outputs_smoke
+        self._co_smoke_python = change_outputs_smoke_python
         self._prompts = prompt_manager or PromptManager()
         self._compiler = workflow_compiler or WorkflowCompiler(
             llm_provider=llm_provider, prompt_manager=self._prompts
@@ -227,6 +235,9 @@ class ProjectCompiler:
                 FileKnowledgeBaseStore(resolved.state_store_path),
                 default_budget=resolved.kg_retrieve_budget,
             ),
+            change_outputs_repair_rounds=resolved.change_outputs_repair_rounds,
+            change_outputs_smoke=resolved.change_outputs_smoke,
+            change_outputs_smoke_python=resolved.change_outputs_smoke_python,
         )
 
     @property
@@ -1852,6 +1863,9 @@ class ProjectCompiler:
             grounder=self.grounder_for(project),
             provider_name=provider,
             model_name=model,
+            repair_rounds=self._co_repair_rounds,
+            smoke=self._co_smoke,
+            smoke_python=self._co_smoke_python,
         )
 
     async def generate_change_outputs(

@@ -31,6 +31,7 @@ const SOURCE_LABEL: Record<string, string> = {
  */
 export function ArtifactPanel({
   crId,
+  crVersion,
   kbId,
   kind,
   artifact,
@@ -38,6 +39,8 @@ export function ArtifactPanel({
   onResponse,
 }: {
   crId: string;
+  /** The change request version this panel loaded (compare-and-swap token for edits). */
+  crVersion?: number;
   kbId: string;
   kind: ChangeStepKind;
   /** The artifact as embedded in the change request (latest version). */
@@ -83,7 +86,9 @@ export function ArtifactPanel({
   }, [viewingLatest, older.data, artifact]);
 
   const save = useMutation({
-    mutationFn: () => api.updateChangeArtifact(crId, kind, buffer, note.trim() || undefined),
+    // CAS: the change request version this panel loaded; 409 = edited elsewhere meanwhile.
+    mutationFn: () =>
+      api.updateChangeArtifact(crId, kind, buffer, note.trim() || undefined, crVersion),
     onSuccess: () => {
       setError(null);
       setMode("preview");
@@ -93,7 +98,14 @@ export function ArtifactPanel({
       queryClient.invalidateQueries({ queryKey: ["change-artifact", crId] });
       queryClient.invalidateQueries({ queryKey: ["change-requests"] });
     },
-    onError: (err) => setError(describe(err)),
+    onError: (err) => {
+      const status = err instanceof ApiError ? err.status : 0;
+      setError(
+        status === 409
+          ? `${describe(err)} Reload the page to pick up the latest version, then re-apply your edit.`
+          : describe(err),
+      );
+    },
   });
   const approve = useMutation({
     mutationFn: () => api.approveChangeArtifact(crId, kind),

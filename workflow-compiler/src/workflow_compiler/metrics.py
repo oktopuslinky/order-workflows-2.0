@@ -19,6 +19,7 @@ _CATEGORY_PREFIXES: list[tuple[str, str]] = [
     ("validate:", "validate"),
     ("compile:", "compile"),
     ("edit", "edit"),  # matches both "edit:<slug>" and "edit:add:<slug>"
+    ("change_outputs", "change_outputs"),  # post-approval diagrams / code diff / test docs
 ]
 
 _CATEGORY_LABELS: dict[str, str] = {
@@ -27,6 +28,7 @@ _CATEGORY_LABELS: dict[str, str] = {
     "validate": "Spec validation & review",
     "compile": "Design & Temporal implementation",
     "edit": "Edit-request turnaround",
+    "change_outputs": "Change outputs (diagrams, code diff, test docs)",
 }
 
 

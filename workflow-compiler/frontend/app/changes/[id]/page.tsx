@@ -368,6 +368,7 @@ export default function ChangeRequestPage() {
         <ArtifactPanel
           key={stepKind}
           crId={id}
+          crVersion={cr.version}
           kbId={cr.kb_id}
           kind={stepKind}
           artifact={artifact}

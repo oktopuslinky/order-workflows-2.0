@@ -356,6 +356,78 @@ def ruff_check(code: str, *, timeout: float = 30.0) -> tuple[bool | None, str]:
     return None, (proc.stderr or proc.stdout).strip()
 
 
+_TYPING_GENERICS = {"List": "list", "Dict": "dict", "Set": "set", "Tuple": "tuple",
+                    "FrozenSet": "frozenset", "Type": "type"}
+_TYPING_IMPORT = re.compile(r"^from typing import (?P<names>[^\n#(]+)$", re.MULTILINE)
+_OPTIONAL = re.compile(r"\bOptional\[(?P<inner>[^\[\]]+)\]")
+_TOP_LEVEL = re.compile(r"^(?:@|def |async def |class )", re.MULTILINE)
+
+
+def _uses_typing_generics(code: str) -> bool:
+    return any(re.search(rf"\b{name}\[", code) for name in _TYPING_GENERICS) or bool(
+        _OPTIONAL.search(code)
+    )
+
+
+def normalise_style(original: str, updated: str) -> tuple[str, bool]:
+    """Deterministic "keep style" pass: make ``updated`` look like ``original`` again.
+
+    The rewrite prompt asks the model to keep the file's style, and long-context
+    models do not: they collapse blank lines between top-level definitions and
+    reach for ``List[...]`` / ``Optional[...]`` in a code base that writes
+    ``list[...]`` / ``X | None``. Both are cosmetic but they swamp the diff. This
+    pass is code, not a model call, and only applies a rule when the *original*
+    followed it:
+
+    * PEP 604 / 585 generics — when the original never imported ``List``/``Dict``/…
+      /``Optional`` from ``typing`` but the update does, rewrite ``List[`` → ``list[``,
+      ``Optional[X]`` → ``X | None`` (one level deep) and drop those names from the
+      ``from typing import …`` line;
+    * two blank lines before every top-level ``def`` / ``class`` / decorator when the
+      original used them; runs of three or more blank lines collapse to two;
+    * trailing whitespace stripped, exactly one newline at EOF.
+
+    Returns ``(text, changed)``; if the result no longer parses (it should always
+    parse, this is a guard) the update is returned untouched.
+    """
+    if not updated.strip():
+        return updated, False
+    text = updated
+    if not _uses_typing_generics(original) and _uses_typing_generics(text):
+        for name, builtin in _TYPING_GENERICS.items():
+            text = re.sub(rf"\b{name}\[", f"{builtin}[", text)
+        for _ in range(3):  # nested Optional[Optional[...]] is rare; three passes are plenty
+            text = _OPTIONAL.sub(lambda m: f"{m.group('inner').strip()} | None", text)
+
+        def _fix_import(match: re.Match[str]) -> str:
+            names = [n.strip() for n in match.group("names").split(",") if n.strip()]
+            kept = [n for n in names if n not in _TYPING_GENERICS and n != "Optional"]
+            return f"from typing import {', '.join(kept)}" if kept else ""
+
+        text = _TYPING_IMPORT.sub(_fix_import, text)
+    # Blank lines between top-level blocks: only when the original used the 2-blank-line style.
+    if re.search(r"\n\n\n(?:@|def |async def |class )", original):
+        lines = text.split("\n")
+        out: list[str] = []
+        for i, line in enumerate(lines):
+            if _TOP_LEVEL.match(line) and out:
+                # A decorator that follows another decorator stays glued to it.
+                prev_code = next((entry for entry in reversed(out) if entry.strip()), "")
+                if not prev_code.startswith("@"):
+                    while out and not out[-1].strip():
+                        out.pop()
+                    if out and i > 0:
+                        out.extend(["", ""])
+            out.append(line)
+        text = "\n".join(out)
+    text = re.sub(r"\n{4,}", "\n\n\n", text)
+    text = "\n".join(line.rstrip() for line in text.split("\n")).rstrip("\n") + "\n"
+    if text == updated:
+        return updated, False
+    ok, _ = check_syntax(text)
+    return (text, True) if ok else (updated, False)
+
+
 def unified_diff(path: str, original: str, updated: str) -> str:
     """Unified diff between the two texts, in ``a/<path>`` / ``b/<path>`` form."""
     if original == updated:

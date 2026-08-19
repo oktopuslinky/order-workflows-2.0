@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -28,6 +28,7 @@ from workflow_compiler.change_outputs.code import (
     exported_names,
     missing_imports,
     missing_symbols,
+    normalise_style,
     plan_rewrites,
     ruff_check,
     signature_summary,
@@ -57,6 +58,7 @@ from workflow_compiler.change_outputs.models import (
     TestDocUpdate,
     UpdatedDiagram,
 )
+from workflow_compiler.change_outputs.smoke import run_smoke
 from workflow_compiler.change_outputs.tests_doc import (
     linked_ids_from_text,
     merge_test_cases,
@@ -192,6 +194,9 @@ class ChangeOutputsEngine:
         grounder: KgGrounder | None = None,
         provider_name: str = "",
         model_name: str = "",
+        repair_rounds: int = 2,
+        smoke: bool = True,
+        smoke_python: str = "",
     ) -> None:
         self._agent = agent
         self._kg = kg
@@ -200,6 +205,9 @@ class ChangeOutputsEngine:
         self._grounder = grounder
         self._provider = provider_name
         self._model = model_name
+        self._repair_rounds = max(0, repair_rounds)
+        self._smoke = smoke
+        self._smoke_python = smoke_python
 
     # ------------------------------------------------------------------ run
     async def run(
@@ -588,48 +596,30 @@ class ChangeOutputsEngine:
                     await persist(project)
                 continue
             code = result.code
-            ok, err = check_syntax(code)
-            if ok and not result.closed:
-                ok, err = False, "the answer was cut off before the closing fence"
-            problem = "" if ok else f"SyntaxError: {err}"
-            if ok:
-                required = self._required_symbols(components)
-                missing = missing_symbols(code, required)
-                bad_imports = missing_imports(code, rewritten, list(texts))
-                dc_problems = dataclass_problems(code)
-                if dc_problems:
-                    problem = "Dataclass errors:\n" + "\n".join(f"- {d}" for d in dc_problems)
-                elif missing:
-                    problem = (
-                        "The file must define / use these change-spec symbols but does not: "
-                        + ", ".join(missing)
-                    )
-                elif bad_imports:
-                    listing = "\n".join(
-                        f"- from {sib}: {', '.join(names)} (it defines: "
-                        f"{', '.join(sorted(exported_names(rewritten[sib]))[:40])})"
-                        for sib, names in bad_imports.items()
-                    )
-                    problem = (
-                        "This file imports names that the rewritten sibling modules do not "
-                        "define:\n" + listing
-                        + "\nUse the sibling's real names — do not invent new ones."
-                    )
-                else:
-                    ruff_ok, ruff_out = ruff_check(code)
-                    checks.ruff_ok = ruff_ok
-                    checks.ruff_output = ruff_out
-                    if ruff_ok is False and "F821" in ruff_out:
-                        problem = "ruff found undefined names:\n" + ruff_out
-            if problem:
+            required = self._required_symbols(components)
+            closed = result.closed
+            ok, err, problem, ruff_ok, ruff_out = self._diagnose(
+                code, required=required, rewritten=rewritten, texts=texts, closed=closed
+            )
+            notes: list[str] = []
+            # Targeted repair rounds: each round re-runs every deterministic check and
+            # hands the model *all* the verdicts that still fail (not just the first),
+            # up to ``repair_rounds`` times. Long test modules needed two rounds live.
+            for _round in range(self._repair_rounds):
+                if not problem:
+                    break
+                checks.problems.append(problem)
                 fixed = await self._agent.repair_file(path=path, code=code, error=problem)
                 checks.repaired = True
+                checks.repair_rounds += 1
+                closed = True
                 if fixed.found and fixed.code.strip():
-                    ok2, err2 = check_syntax(fixed.code)
+                    ok2, _err2 = check_syntax(fixed.code)
                     if ok2 or not ok:
                         code = fixed.code
-                        ok, err = ok2, err2
-                ruff_ok, ruff_out = ruff_check(code) if ok else (None, "")
+                ok, err, problem, ruff_ok, ruff_out = self._diagnose(
+                    code, required=required, rewritten=rewritten, texts=texts, closed=closed
+                )
                 if ok and ruff_ok is False and "F821" in ruff_out:
                     # The model kept forgetting an import: add the well-known
                     # ones deterministically (timedelta, RetryPolicy, …).
@@ -639,27 +629,107 @@ class ChangeOutputsEngine:
                     )
                     code, added = auto_import(code, undefined_names(ruff_out), exports)
                     if added:
-                        entry.notes = (entry.notes + " " if entry.notes else "") + (
-                            "Auto-imported: " + "; ".join(added)
+                        notes.append("Auto-imported: " + "; ".join(added))
+                        ok, err, problem, ruff_ok, ruff_out = self._diagnose(
+                            code, required=required, rewritten=rewritten, texts=texts,
+                            closed=closed,
                         )
-                        ruff_ok, ruff_out = ruff_check(code)
-                checks.ruff_ok = ruff_ok
-                checks.ruff_output = ruff_out
+            if problem:
+                checks.problems.append(problem)
+            if ok:
+                code, normalised = normalise_style(texts[path], code)
+                checks.style_normalised = normalised
+                if normalised:
+                    ruff_ok, ruff_out = ruff_check(code)
+            checks.ruff_ok = ruff_ok
+            checks.ruff_output = ruff_out
             checks.ast_ok = ok
             checks.ast_error = "" if ok else err
             if not ok:
-                outputs.warnings.append(f"code {path}: does not parse after repair ({err})")
+                outputs.warnings.append(
+                    f"code {path}: does not parse after {checks.repair_rounds} "
+                    f"repair round(s) ({err})"
+                )
+            elif problem:
+                outputs.warnings.append(
+                    f"code {path}: a deterministic check still fails after "
+                    f"{checks.repair_rounds} repair round(s) — see the file's checks"
+                )
             entry.checks = checks
             entry.updated = code
             entry.status = FileStatus.MODIFIED if code != texts[path] else FileStatus.UNCHANGED
             entry.unified_diff = unified_diff(path, texts[path], code)
-            entry.notes = result.notes
+            entry.notes = " ".join([result.notes, *notes]).strip() if notes else result.notes
             rewritten[path] = code
             if persist is not None:
                 await persist(project)
         for path in texts:
             if path not in outputs.provenance:
                 outputs.provenance.append(path)
+        if self._smoke:
+            smoke = await run_smoke(bundle, python=self._smoke_python)
+            bundle.smoke = smoke
+            if smoke.status == "failed":
+                failing = list(smoke.import_errors) or [
+                    e.split(":", 1)[0] for e in smoke.compile_errors
+                ]
+                outputs.warnings.append(
+                    "bundle smoke test failed: " + ", ".join(failing[:6])
+                    + (" …" if len(failing) > 6 else "")
+                    + (f" ({smoke.note})" if smoke.note else "")
+                )
+            elif smoke.status == "skipped" and smoke.note:
+                outputs.warnings.append(f"bundle smoke test skipped: {smoke.note}")
+            if persist is not None:
+                await persist(project)
+
+    def _diagnose(
+        self,
+        code: str,
+        *,
+        required: Sequence[str],
+        rewritten: Mapping[str, str],
+        texts: Mapping[str, str],
+        closed: bool,
+    ) -> tuple[bool, str, str, bool | None, str]:
+        """Run every deterministic check on ``code``.
+
+        Returns ``(ast_ok, ast_error, problem, ruff_ok, ruff_output)`` where ``problem``
+        is the full list of failing verdicts rendered for the repair prompt (empty when
+        the file passes everything).
+        """
+        ok, err = check_syntax(code)
+        if ok and not closed:
+            ok, err = False, "the answer was cut off before the closing fence"
+        if not ok:
+            return False, err, f"SyntaxError: {err}", None, ""
+        verdicts: list[str] = []
+        dc_problems = dataclass_problems(code)
+        if dc_problems:
+            verdicts.append("Dataclass errors:\n" + "\n".join(f"- {d}" for d in dc_problems))
+        missing = missing_symbols(code, required)
+        if missing:
+            verdicts.append(
+                "The file must define / use these change-spec symbols but does not: "
+                + ", ".join(missing)
+            )
+        bad_imports = missing_imports(code, rewritten, list(texts))
+        if bad_imports:
+            listing = "\n".join(
+                f"- from {sib}: {', '.join(names)} (it defines: "
+                f"{', '.join(sorted(exported_names(rewritten[sib]))[:40])})"
+                for sib, names in bad_imports.items()
+            )
+            verdicts.append(
+                "This file imports names that the rewritten sibling modules do not define:\n"
+                + listing
+                + "\nUse the sibling's real names — do not invent new ones."
+            )
+        ruff_ok, ruff_out = ruff_check(code)
+        if ruff_ok is False and "F821" in ruff_out:
+            verdicts.append("ruff found undefined names:\n" + ruff_out)
+        problem = "\n\n".join(f"{i}. {v}" for i, v in enumerate(verdicts, 1)) if verdicts else ""
+        return True, "", problem, ruff_ok, ruff_out
 
     @staticmethod
     def _removed_files(spec: ChangeSpec | None, order: Sequence[str]) -> set[str]:

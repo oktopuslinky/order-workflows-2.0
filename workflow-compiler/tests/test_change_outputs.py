@@ -81,6 +81,7 @@ from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.models import (
     ChangeSpec,
     ChangeType,
+    CompilationProject,
     ComponentChange,
     ComponentKind,
     ProjectStage,
@@ -647,7 +648,7 @@ def test_design_summary_and_change_label() -> None:
     assert "Workflow OrderWorkflow (task queue orders)" in text
     assert "activity provision_group() -> ProvisioningResult" in text
     assert "signal cancel_shipment_group(group_id)" in text and "query get_status() -> OrderState" in text
-    from workflow_compiler.models import CompilationProject, ProjectGrounding
+    from workflow_compiler.models import ProjectGrounding
 
     project = CompilationProject(document_text="Design for BCR-001 partial shipments.",
                                  grounding=ProjectGrounding(change_request_title="Partial"))
@@ -734,3 +735,153 @@ def test_corpus_exports_feed_auto_import() -> None:
     assert "test_status" not in exports  # tests are not package modules
     fixed, added = auto_import("x = ProvisioningResult('r')\n", ["ProvisioningResult"], exports)
     assert added == ["from src.shared.types import ProvisioningResult"] and fixed.startswith("from src.shared")
+
+
+# --------------------------------------------------------------------------- Phase 5 additions
+
+
+def test_normalise_style_generics_and_blank_lines() -> None:
+    from workflow_compiler.change_outputs.code import normalise_style
+
+    original = (
+        '"""Types."""\nfrom dataclasses import dataclass\n\n\n@dataclass\nclass A:\n'
+        "    items: list[str]\n    note: str | None = None\n\n\ndef f() -> list[int]:\n    return []\n"
+    )
+    updated = (
+        '"""Types."""\nfrom dataclasses import dataclass\nfrom typing import List, Optional\n'
+        "@dataclass\nclass A:\n    items: List[str]\n    note: Optional[str] = None\n"
+        "def f() -> List[int]:\n    return []   \n\n\n\n\n"
+    )
+    text, changed = normalise_style(original, updated)
+    assert changed
+    assert "from typing import" not in text
+    assert "items: list[str]" in text and "note: str | None = None" in text
+    assert "def f() -> list[int]:" in text
+    assert "\n\n\n@dataclass\nclass A:" in text and "\n\n\ndef f()" in text
+    assert text.endswith("return []\n") and "\n\n\n\n" not in text
+    # An original that itself uses typing generics is left alone (rule not in force).
+    legacy = "from typing import List\n\n\ndef f() -> List[int]:\n    return []\n"
+    same, changed2 = normalise_style(legacy, legacy)
+    assert not changed2 and same == legacy
+    # Decorators stay glued to their definitions.
+    stacked = "import x\n@a\n@b\ndef g():\n    pass\n"
+    fixed, _ = normalise_style("import x\n\n\n@a\ndef g():\n    pass\n", stacked)
+    assert "\n\n\n@a\n@b\ndef g():" in fixed
+
+
+async def test_smoke_reports_import_errors(tmp_path: Path) -> None:
+    from workflow_compiler.change_outputs.smoke import bundle_layout, module_names, run_smoke
+
+    bundle = CodeChangeBundle(
+        order=["existing_Codebase/shared/types.py", "existing_Codebase/workflows/order_workflow.py"],
+        import_root="src",
+        code_root="existing_Codebase",
+        files=[
+            ChangedFile(path="existing_Codebase/__init__.py", updated=""),
+            ChangedFile(path="existing_Codebase/shared/__init__.py", updated=""),
+            ChangedFile(path="existing_Codebase/shared/types.py", updated="X = 1\n"),
+            ChangedFile(path="existing_Codebase/workflows/__init__.py", updated=""),
+            ChangedFile(
+                path="existing_Codebase/workflows/order_workflow.py",
+                updated="from src.shared.types import MISSING\n",
+            ),
+            ChangedFile(path="tests/test_x.py", updated="from src.shared.types import X\n"),
+            ChangedFile(path="existing_Codebase/gone.py", status=FileStatus.REMOVED, updated=""),
+        ],
+    )
+    layout = bundle_layout(bundle)
+    assert "src/shared/types.py" in layout and "existing_Codebase/gone.py" not in layout
+    assert module_names(layout, bundle)[:2] == ["src.shared.types", "src.workflows.order_workflow"]
+    result = await run_smoke(bundle)
+    assert result.status == "failed"
+    assert result.compiled == len(layout) and not result.compile_errors
+    assert "src.shared.types" in result.imported and "tests.test_x" in result.imported
+    assert "src.workflows.order_workflow" in result.import_errors
+    assert "MISSING" in result.import_errors["src.workflows.order_workflow"]
+    # A passing bundle.
+    for f in bundle.files:
+        if f.path.endswith("order_workflow.py"):
+            f.updated = "from src.shared.types import X\n"
+    assert (await run_smoke(bundle)).status == "passed"
+    # A syntax error is a compile error (and an import error).
+    bundle.files[2].updated = "X = (\n"
+    broken = await run_smoke(bundle)
+    assert broken.status == "failed" and broken.compile_errors
+    # An interpreter that cannot start → skipped with a note, never an exception.
+    skipped = await run_smoke(bundle, python=str(tmp_path / "no-such-python"))
+    assert skipped.status == "skipped" and "smoke interpreter" in skipped.note
+
+
+async def test_engine_second_repair_round_and_smoke(kg: KgService, kb: KnowledgeBase) -> None:
+    """A file that is still broken after the first repair gets a second, targeted round."""
+    completions = [
+        _fence(NEW_TYPES),
+        _fence(NEW_ACTIVITIES),
+        _fence(BROKEN_WORKFLOW),  # syntax error → repair round 1
+        _fence(BROKEN_WORKFLOW),  # still broken → repair round 2
+        _fence(NEW_WORKFLOW),  # fixed
+        _fence(WORKER_PY),
+        _fence(STARTER_PY),
+        _fence(TESTS_PY),
+    ]
+    provider = MockProvider(script_defaults=True, completions=completions)
+    compiler, pid = await _approved_project(kg, kb, provider)
+    project = await compiler.generate_change_outputs(pid, stages=["code"])
+    outputs = project.change_outputs
+    assert outputs is not None
+    files = {f.path: f for f in outputs.code.files}
+    wf = files["existing_Codebase/workflows/order_workflow.py"]
+    assert wf.checks.repaired and wf.checks.repair_rounds == 2 and wf.checks.ast_ok
+    assert len(wf.checks.problems) == 2
+    assert all(p.startswith("SyntaxError") for p in wf.checks.problems)
+    assert wf.updated == NEW_WORKFLOW
+    # The repair prompt carried the verdict.
+    repairs = [
+        p for kind, p in provider.calls
+        if kind == "complete" and "failed a deterministic check" in p
+    ]
+    assert len(repairs) == 2 and "SyntaxError" in repairs[0]
+    # The bundle smoke ran in a subprocess and was recorded.
+    smoke = outputs.code.smoke
+    assert smoke is not None and smoke.status in {"passed", "failed"}
+    assert smoke.compiled == len([f for f in outputs.code.files if f.path.endswith(".py")])
+    assert "src.shared.types" in smoke.modules
+
+
+async def test_engine_repair_rounds_zero_disables_repair(kg: KgService, kb: KnowledgeBase) -> None:
+    completions = [
+        _fence(NEW_TYPES), _fence(NEW_ACTIVITIES), _fence(BROKEN_WORKFLOW),
+        _fence(WORKER_PY), _fence(STARTER_PY), _fence(TESTS_PY),
+    ]
+    provider = MockProvider(script_defaults=True, completions=completions)
+    inner = WorkflowCompiler(
+        llm_provider=provider, state_store=InMemoryStateStore(), review=_NO_REVIEW
+    )
+    compiler = ProjectCompiler(
+        llm_provider=provider, workflow_compiler=inner, project_store=InMemoryProjectStore(),
+        segmentation_review=False, kg_service=kg, change_outputs_repair_rounds=0,
+        change_outputs_smoke=False,
+    )
+    grounder = KgGrounder(kg, kb.kb_id, kb_name="Orders KB")
+    project = await compiler.compile_document(TDD_TEXT, grounder=grounder)
+    project.change_spec = _spec()
+    await compiler.save_project(project)
+    await compiler.approve_spec(project.project_id, accept_incomplete=True)
+    project = await compiler.generate_change_outputs(project.project_id, stages=["code"])
+    outputs = project.change_outputs
+    assert outputs is not None
+    wf = {f.path: f for f in outputs.code.files}["existing_Codebase/workflows/order_workflow.py"]
+    assert not wf.checks.repaired and wf.checks.repair_rounds == 0 and not wf.checks.ast_ok
+    assert outputs.code.smoke is None
+    assert any("does not parse after 0 repair round(s)" in w for w in outputs.warnings)
+
+
+def test_time_saved_buckets_change_outputs() -> None:
+    from workflow_compiler.config import Settings
+    from workflow_compiler.metrics import compute_time_saved
+
+    project = CompilationProject(document_text="x", stage_timings={"change_outputs": 1800.0})
+    report = compute_time_saved(project, Settings().baseline_hours)
+    assert report is not None
+    row = next(r for r in report.rows if r.category == "change_outputs")
+    assert row.human_baseline_hours == 16.0 and "Change outputs" in row.label

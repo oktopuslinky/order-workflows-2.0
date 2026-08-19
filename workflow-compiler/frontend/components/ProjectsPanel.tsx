@@ -169,7 +169,7 @@ function ProjectRow({ project }: { project: ProjectSummary }) {
 
   const rename = useMutation({
     mutationFn: (nickname: string | null) =>
-      api.renameProject(project.project_id, nickname),
+      api.renameProject(project.project_id, nickname, project.version),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       setEditing(false);

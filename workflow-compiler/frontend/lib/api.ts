@@ -180,11 +180,13 @@ export const api = {
 
   listProjects: () => request<ProjectListResponse>("/projects"),
 
-  renameProject: (id: string, nickname: string | null) =>
+  // expectedVersion (optional) makes the write compare-and-swap: a 409 means the
+  // project changed since it was loaded (another tab, a job) — reload and retry.
+  renameProject: (id: string, nickname: string | null, expectedVersion?: number) =>
     request<ProjectSummary>(`/projects/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: jsonHeaders,
-      body: JSON.stringify({ nickname }),
+      body: JSON.stringify({ nickname, expected_version: expectedVersion ?? null }),
     }),
 
   metricsSummary: () => request<MetricsSummary>("/metrics/summary"),
@@ -255,11 +257,14 @@ export const api = {
       { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) },
     ),
 
-  saveSpec: (id: string, specMarkdown: Record<string, string>) =>
+  saveSpec: (id: string, specMarkdown: Record<string, string>, expectedVersion?: number) =>
     request<ProjectResponse>(`/projects/${encodeURIComponent(id)}/spec`, {
       method: "PUT",
       headers: jsonHeaders,
-      body: JSON.stringify({ spec_markdown: specMarkdown }),
+      body: JSON.stringify({
+        spec_markdown: specMarkdown,
+        expected_version: expectedVersion ?? null,
+      }),
     }),
 
   editProject: (
@@ -551,13 +556,23 @@ export const api = {
         version !== undefined ? `?version=${version}` : ""
       }`,
     ),
-  updateChangeArtifact: (id: string, kind: ChangeStepKind, markdown: string, note?: string) =>
+  updateChangeArtifact: (
+    id: string,
+    kind: ChangeStepKind,
+    markdown: string,
+    note?: string,
+    expectedVersion?: number,
+  ) =>
     request<ArtifactResponse>(
       `/change-requests/${encodeURIComponent(id)}/artifacts/${kind}`,
       {
         method: "PUT",
         headers: jsonHeaders,
-        body: JSON.stringify({ markdown, note: note ?? "" }),
+        body: JSON.stringify({
+          markdown,
+          note: note ?? "",
+          expected_version: expectedVersion ?? null,
+        }),
       },
     ),
   approveChangeArtifact: (id: string, kind: ChangeStepKind) =>

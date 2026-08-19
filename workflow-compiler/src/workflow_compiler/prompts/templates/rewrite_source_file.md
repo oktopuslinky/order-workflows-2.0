@@ -53,6 +53,27 @@ Rules — read them all:
    independent per-group failure/compensation, mixed cancel).
 7. The file must parse (`ast.parse`) and import cleanly against the given
    signatures.
+8. Temporal Python SDK surface — use ONLY these forms (they exist; invented
+   variants have broken generated bundles before):
+   - `@activity.defn` / `@activity.defn(name="…")` — it takes NO `retry_policy`,
+     `timeout` or `heartbeat` arguments; retries and timeouts belong on the caller:
+     `await workflow.execute_activity(fn, arg, start_to_close_timeout=timedelta(...),
+     retry_policy=RetryPolicy(maximum_attempts=3))` (`from temporalio.common import
+     RetryPolicy`; import `timedelta` from `datetime`).
+   - `@workflow.defn` on the class, `@workflow.run` on ONE `async def run(self, …)`;
+     `@workflow.signal` / `@workflow.query` on methods (queries are sync and never
+     await); `workflow.wait_condition(lambda: …)` for waits.
+   - Activity results cross the data converter as JSON: keep result dataclasses
+     to plain fields (`str`, `int`, `float`, `bool`, `list[...]`, nested
+     dataclasses). Do NOT add new `(str, Enum)` fields to activity or workflow
+     RESULT types — the default converter decodes them badly (a `str`-Enum field
+     comes back as a list of characters); store the state as a plain `str`
+     (`OrderStatus.RECEIVED.value`) or keep the existing field exactly as it is.
+   - Tests: `async with await WorkflowEnvironment.start_time_skipping() as env:`,
+     `Worker(env.client, task_queue=…, workflows=[…], activities=[…])`, one
+     activity double per name (registering the same name twice raises), and
+     `await env.client.execute_workflow(Wf.run, arg, id=…, task_queue=…)`; every
+     helper the tests call must exist in the file with the signature they use.
 {{ extra_rules }}
 SIGNATURES OF FILES ALREADY REWRITTEN (the contract to code against):
 {{ sibling_signatures }}

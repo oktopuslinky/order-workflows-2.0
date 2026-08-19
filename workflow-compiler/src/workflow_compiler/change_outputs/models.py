@@ -86,8 +86,37 @@ class FileChecks(WorkflowBaseModel):
     )
     ruff_output: str = Field(default="", description="ruff findings when ``ruff_ok`` is False.")
     repaired: bool = Field(default=False, description="A repair round was needed.")
+    repair_rounds: int = Field(default=0, description="How many repair rounds ran for this file.")
+    problems: list[str] = Field(
+        default_factory=list,
+        description="The deterministic-check verdicts that triggered each repair round.",
+    )
+    style_normalised: bool = Field(
+        default=False,
+        description=(
+            "The keep-style pass rewrote typing generics / blank lines to match the original."
+        ),
+    )
     truncated: bool = Field(
         default=False, description="The model's answer was cut short and continued/repaired."
+    )
+
+
+class SmokeResult(WorkflowBaseModel):
+    """Verdict of the bundle smoke test (compile + import in a child interpreter)."""
+
+    status: Literal["passed", "failed", "skipped"] = Field(default="skipped")
+    python: str = Field(default="", description="Interpreter that ran the smoke.")
+    compiled: int = Field(default=0, description="Files that ``py_compile``d.")
+    compile_errors: list[str] = Field(default_factory=list)
+    modules: list[str] = Field(
+        default_factory=list, description="Modules the smoke tried to import."
+    )
+    imported: list[str] = Field(default_factory=list, description="Modules that imported cleanly.")
+    import_errors: dict[str, str] = Field(default_factory=dict, description="module → error.")
+    seconds: float = Field(default=0.0)
+    note: str = Field(
+        default="", description="Why it was skipped / what went wrong outside the code."
     )
 
 
@@ -120,6 +149,10 @@ class CodeChangeBundle(WorkflowBaseModel):
     )
     code_root: str = Field(
         default="", description="Corpus directory holding the package (`existing_Codebase`)."
+    )
+    smoke: SmokeResult | None = Field(
+        default=None,
+        description="Bundle smoke test (py_compile + import of the export layout); None = not run.",
     )
 
     def changed(self) -> list[ChangedFile]:

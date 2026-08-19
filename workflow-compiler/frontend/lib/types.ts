@@ -341,6 +341,8 @@ export interface CompilationProject {
   stage: ProjectStage;
   created_at: string;
   updated_at: string;
+  /** Store save counter — the compare-and-swap token sent back as expected_version. */
+  version?: number;
 }
 
 export interface TimeSavedRow {
@@ -382,6 +384,7 @@ export interface ProjectSummary {
   stage: ProjectStage;
   workflow_count: number;
   updated_at: string;
+  version?: number;
 }
 
 export interface ProjectListResponse {
@@ -734,6 +737,7 @@ export interface KnowledgeBase {
   owner_id: string | null;
   source: { kind: "zip" | "path"; filename: string | null };
   status: KnowledgeBaseStatus;
+  version?: number;
   error: string | null;
   stats: KbStats;
   indexed_at: string | null;
@@ -995,6 +999,8 @@ export interface ChangeRequest {
   title: string;
   document_text: string;
   source_filename: string | null;
+  /** Store save counter — the compare-and-swap token sent back as expected_version. */
+  version?: number;
   bcr_meta: BcrMeta;
   requirements: CrRequirement[];
   impact_seed_terms: string[];

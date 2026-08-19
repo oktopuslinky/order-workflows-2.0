@@ -148,6 +148,8 @@ class Settings(BaseSettings):
             "validate": 1.0,  # per workflow validate pass: review + consistency check
             "compile": 38.0,  # per workflow: graph 4h + CVPA 2h + design 8h + code 24h
             "edit": 4.0,  # per edit section: analysis + re-spec + re-review
+            # per grounded project: diagram updates 2h + code changes 10h + TC matrix/TP 4h
+            "change_outputs": 16.0,
         },
         description=(
             "Estimated human-team hours per pipeline step category, powering the "
@@ -202,6 +204,30 @@ class Settings(BaseSettings):
         default=50,
         gt=0,
         description="Knowledge bases: maximum uncompressed size of an uploaded corpus zip.",
+    )
+    change_outputs_repair_rounds: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description=(
+            "Repair rounds per rewritten file in the change-outputs code stage: each round "
+            "re-runs the deterministic checks (syntax / dataclass / symbols / sibling imports / "
+            "ruff) and asks the model to fix exactly what still fails."
+        ),
+    )
+    change_outputs_smoke: bool = Field(
+        default=True,
+        description=(
+            "After the code stage, py_compile + import the whole exported bundle in a child "
+            "interpreter and record the verdict on the outputs (never a gate)."
+        ),
+    )
+    change_outputs_smoke_python: str = Field(
+        default="",
+        description=(
+            "Interpreter for the bundle smoke test (empty = the server's). Point it at a venv "
+            "that has temporalio installed when the server's does not."
+        ),
     )
     change_kg_budget: int = Field(
         default=9000,

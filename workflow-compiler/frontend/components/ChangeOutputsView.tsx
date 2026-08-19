@@ -12,6 +12,7 @@ import type {
   ChangeOutputs,
   ChangeOutputStage,
   CompilationProject,
+  SmokeResult,
   StageRecord,
   UpdatedDiagram,
 } from "@/lib/types";
@@ -116,10 +117,14 @@ export function ChangeOutputsView({ project }: { project: CompilationProject }) 
         </div>
       </div>
       {(regenerate.error || downloadAll.error) && (
-        <p className="tone-block border-b px-3 py-1.5 text-xs">
+        <p className="tone-block border-b px-3 py-1.5 text-xs" data-testid="change-outputs-error">
+          {(regenerate.error as ApiError | null)?.status === 409
+            ? "Another job is running for this project — wait for it to finish, then regenerate. "
+            : ""}
           {((regenerate.error || downloadAll.error) as ApiError).message}
         </p>
       )}
+
       {outputs?.warnings?.length ? (
         <details className="tone-gate border-b px-3 py-1.5 text-xs">
           <summary className="cursor-pointer">
@@ -322,6 +327,7 @@ function CodePanel({ outputs, projectId }: { outputs: ChangeOutputs; projectId: 
         <p className="mt-2 text-[var(--faint)]">
           Rewrite order: {outputs.code.order.map((p) => p.split("/").pop()).join(" → ") || "—"}
         </p>
+        <SmokeCard smoke={outputs.code.smoke ?? null} />
         <button onClick={() => patch.mutate()} className="btn btn-ghost mt-1" disabled={patch.isPending}>
           changes.patch
         </button>
@@ -344,6 +350,21 @@ function CodePanel({ outputs, projectId }: { outputs: ChangeOutputs; projectId: 
           </div>
         </div>
         {active.reason && <p className="mb-2 text-xs text-[var(--muted)]">Why: {active.reason}</p>}
+        {active.checks.problems && active.checks.problems.length > 0 && (
+          <details className="mb-2 text-xs">
+            <summary className="cursor-pointer text-[var(--muted)]">
+              Repair rounds: {active.checks.repair_rounds ?? active.checks.problems.length} — what each
+              round was asked to fix
+            </summary>
+            <ol className="mt-1 list-decimal space-y-1 pl-5">
+              {active.checks.problems.map((p, i) => (
+                <li key={i}>
+                  <pre className="whitespace-pre-wrap font-mono text-[11px] text-[var(--muted)]">{p}</pre>
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
         {mode === "unified" ? (
           <UnifiedDiff file={active} />
         ) : mode === "split" ? (
@@ -370,9 +391,61 @@ function ChecksBadges({ file }: { file: ChangedFile }) {
           ruff {c.ruff_ok ? "ok" : "findings"}
         </span>
       )}
-      {c.repaired && <span className="pill tone-info">repaired</span>}
+      {c.repaired && (
+        <span className="pill tone-info" title={(c.problems ?? []).join(String.fromCharCode(10, 10)) || undefined}>
+          repaired{c.repair_rounds && c.repair_rounds > 1 ? ` ×${c.repair_rounds}` : ""}
+        </span>
+      )}
+      {c.style_normalised && (
+        <span className="pill tone-info" title="Typing generics / blank lines normalised to the original file's style">
+          style kept
+        </span>
+      )}
       {c.truncated && <span className="pill tone-info">continued</span>}
     </>
+  );
+}
+
+function SmokeCard({ smoke }: { smoke: SmokeResult | null }) {
+  if (!smoke) {
+    return (
+      <p className="mt-2 text-[var(--faint)]" data-testid="smoke-card">
+        Bundle smoke test: not run.
+      </p>
+    );
+  }
+  const tone =
+    smoke.status === "passed" ? "tone-pass" : smoke.status === "failed" ? "tone-block" : "tone-gate";
+  const failing = Object.entries(smoke.import_errors);
+  return (
+    <details className="mt-2 rounded-md border border-[var(--border)] px-2 py-1" data-testid="smoke-card">
+      <summary className="cursor-pointer">
+        Bundle smoke test <span className={`pill ${tone}`}>{smoke.status}</span>{" "}
+        <span className="text-[var(--faint)]">
+          {smoke.compiled} compiled · {smoke.imported.length}/{smoke.modules.length} imported
+          {smoke.seconds ? ` · ${smoke.seconds.toFixed(1)}s` : ""}
+        </span>
+      </summary>
+      <div className="mt-1 space-y-1 text-[11px]">
+        <p className="text-[var(--faint)]">
+          py_compile + import of the export layout in a child interpreter — a verdict on the draft,
+          not a gate.
+        </p>
+        {smoke.note && <p className="text-[var(--muted)]">{smoke.note}</p>}
+        {smoke.compile_errors.map((e) => (
+          <pre key={e} className="whitespace-pre-wrap font-mono text-[var(--block)]">{e}</pre>
+        ))}
+        {failing.map(([mod, err]) => (
+          <div key={mod}>
+            <span className="font-mono">{mod}</span>
+            <pre className="whitespace-pre-wrap font-mono text-[var(--block)]">{err}</pre>
+          </div>
+        ))}
+        {smoke.status === "passed" && (
+          <p className="text-[var(--muted)]">Every module imported: {smoke.imported.join(", ")}</p>
+        )}
+      </div>
+    </details>
   );
 }
 

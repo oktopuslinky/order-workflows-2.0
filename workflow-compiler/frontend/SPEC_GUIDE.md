@@ -268,4 +268,33 @@ tab, where the guided dialogue asks about them):
 - **BLOCK** — a component with no proposed change.
 - **WARN** — a `path` that is not in the knowledge base (with *did you mean …* suggestions from the
   graph); a requirement id the change request does not declare; ingest notes.
+
+---
+
+## Change outputs — what a grounded project produces after Approve
+
+Approving the specs of a knowledge-graph-grounded project starts a follow-on **change_outputs**
+job (cloud Nemotron by default). The Results tab gains a **Workflows | Change outputs** switch;
+the second view has three stages, each persisted the moment it finishes:
+
+| Stage | What you get | Deterministic checks |
+|---|---|---|
+| **Diagrams** | every `.mmd` of the knowledge base regenerated + the companion diagram(s) the change spec adds + the per-workflow spec diagram, assembled into `system-flow-diagram.md`; Updated / Original toggle | Mermaid header, every required state present, balanced `subgraph`/`state` blocks (one repair round) |
+| **Code** | the modified code base — the change-spec files **plus every corpus file that imports a rewritten module**, in order types → activities → workflow → worker/starter → tests; unified / side-by-side diff, the updated file, `changes.patch` | per file: `ast.parse`, dataclass sanity, required change-spec symbols, imports against the rewritten siblings, ruff (F/E9); **up to N targeted repair rounds** (default 2 — the pill reads `repaired ×2`); a **keep-style** pass (`style kept`); then a **bundle smoke test** (`py_compile` + `import` of the whole export layout in a child interpreter — passed / failed / skipped, per-module errors) |
+| **Test cases** | the TC matrix with new rows (`TC-18…`, ids from the KB catalog) and updated rows (originals never dropped, notes appended); a Test-Plan **addendum** (`.docx` / `.md`) | id allocation, merge rules |
+
+**Download all (.zip)** exports the README layout (`src/`, `tests/`, `docs/diagrams/`,
+`docs/test-cases/`, `changes.patch`, `CHANGES.md`). **Regenerate** re-runs one stage or all of
+them; while another job (validate / approve / outputs) runs the button answers 409 — wait for it.
+
+What the verdicts mean: **ast fail** — the file does not parse even after the repair rounds (kept
+as-is with the error; fix by hand); **ruff findings** — pyflakes-class problems the repair rounds
+did not clear (undefined names are auto-imported when they are well known); **smoke failed** — the
+bundle imports up to the module named in the card; nothing here is a gate — the code stage delivers
+a checked, reviewable draft, and a human still reads the diff (see the RUNBOOK's honest test
+results).
+
+**Saving is compare-and-swap.** Every project / change request carries a `version`; the editors
+send it back with a save and a `409 … changed since it was loaded` means another tab or a job saved
+first — click *Reload the latest version* and re-apply the edit.
 - **INFO** — a folded-in edit.

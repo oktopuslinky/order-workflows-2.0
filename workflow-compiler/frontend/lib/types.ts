@@ -230,7 +230,26 @@ export interface FileChecks {
   ruff_ok: boolean | null;
   ruff_output: string;
   repaired: boolean;
+  /** How many targeted repair rounds ran for this file (0 = clean on the first answer). */
+  repair_rounds?: number;
+  /** The deterministic-check verdicts that triggered each repair round. */
+  problems?: string[];
+  /** The keep-style pass rewrote typing generics / blank lines to match the original. */
+  style_normalised?: boolean;
   truncated: boolean;
+}
+
+/** Verdict of the bundle smoke test (py_compile + import of the export layout in a child interpreter). */
+export interface SmokeResult {
+  status: "passed" | "failed" | "skipped";
+  python: string;
+  compiled: number;
+  compile_errors: string[];
+  modules: string[];
+  imported: string[];
+  import_errors: Record<string, string>;
+  seconds: number;
+  note: string;
 }
 
 export interface ChangedFile {
@@ -249,6 +268,8 @@ export interface CodeChangeBundle {
   order: string[];
   import_root: string;
   code_root: string;
+  /** Bundle smoke test; null when it did not run (disabled or older outputs). */
+  smoke?: SmokeResult | null;
 }
 
 export interface TestCaseRow {

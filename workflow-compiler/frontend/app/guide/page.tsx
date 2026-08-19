@@ -11,6 +11,7 @@ const TOC = [
   ["reference", "Section reference"],
   ["findings", "Findings"],
   ["changes", "changes.md"],
+  ["outputs", "Change outputs"],
 ] as const;
 
 export default function GuidePage() {
@@ -277,6 +278,53 @@ Takes a shipment group and returns one result per group; …`}</code>
               Questions work exactly like a workflow spec&apos;s.
             </li>
           </ul>
+        </Section>
+
+        {/* change outputs */}
+        <Section id="outputs" title="Change outputs — after Approve">
+          <p>
+            Approving a knowledge-graph-grounded project starts a follow-on{" "}
+            <code>change_outputs</code> job; the Results tab gains a{" "}
+            <strong>Workflows | Change outputs</strong> switch with three stages, each persisted
+            the moment it finishes:
+          </p>
+          <ul className="mt-4 list-disc space-y-1.5 pl-5">
+            <li>
+              <strong>Diagrams</strong> — every <code>.mmd</code> of the knowledge base
+              regenerated, the companion diagram the change spec adds and the per-workflow spec
+              diagram, assembled into <code>system-flow-diagram.md</code>; Updated / Original
+              toggle; header / required-state / balance checks with one repair round.
+            </li>
+            <li>
+              <strong>Code</strong> — the change-spec files <em>plus every corpus file that
+              imports a rewritten module</em>, rewritten in order (types → activities → workflow
+              → worker/starter → tests) with unified / side-by-side diffs and{" "}
+              <code>changes.patch</code>. Per file: <code>ast.parse</code>, dataclass sanity,
+              required symbols, imports against the rewritten siblings and ruff — with up to
+              two targeted repair rounds (<code>repaired ×2</code>), a keep-style pass (
+              <code>style kept</code>) and finally a <strong>bundle smoke test</strong>{" "}
+              (<code>py_compile</code> + <code>import</code> of the whole export layout in a
+              child interpreter: passed / failed / skipped with per-module errors).
+            </li>
+            <li>
+              <strong>Test cases</strong> — the TC matrix with new rows (ids from the KB
+              catalog) and updated rows (originals never dropped), plus a Test-Plan addendum
+              (<code>.docx</code> / <code>.md</code>).
+            </li>
+          </ul>
+          <p className="mt-4">
+            <strong>Download all (.zip)</strong> exports the README layout (<code>src/</code>,{" "}
+            <code>tests/</code>, <code>docs/</code>, <code>changes.patch</code>,{" "}
+            <code>CHANGES.md</code>). <strong>Regenerate</strong> re-runs one stage or all; while
+            another job runs it answers 409 — wait for it. None of the verdicts is a gate: the
+            code stage delivers a checked, reviewable draft and a human still reads the diff.
+          </p>
+          <p className="mt-4">
+            <strong>Saving is compare-and-swap.</strong> Projects and change requests carry a{" "}
+            <code>version</code> that the editors send back with every save; a{" "}
+            <em>409 … changed since it was loaded</em> means another tab or a job saved first —
+            click <em>Reload the latest version</em> and re-apply your edit.
+          </p>
         </Section>
       </div>
     </div>

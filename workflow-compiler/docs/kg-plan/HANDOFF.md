@@ -1,10 +1,10 @@
 # KG change pipeline — handoff
 
-**Current phase:** Phase 3 **complete** (2026-08-18). Next: Phase 4 (post-approval change outputs —
-updated diagrams, modified codebase + diff, test docs) — read `KG_CHANGE_PIPELINE_PLAN.md` §0 + Phase 4,
-then this file (especially "What exists after Phase 3" and "Ids / facts Phase 4 will need"), then
-`RUNBOOK.md` (Phase 3 section: timings, the two hand edits the live run needed, gotchas), then
-`research/workflow-compiler-digest.md` §6 (codegen / bundles / diagrams) for the output layer.
+**Current phase:** Phase 4 **complete** (2026-08-19). Next: Phase 5 (hardening, docs, demo runbook)
+— read `KG_CHANGE_PIPELINE_PLAN.md` §0 + Phase 5, then this file (especially "What exists after
+Phase 4" and "Open issues"), then `RUNBOOK.md` (Phase 4 section: the three live runs, what the
+generated tests did, gotchas). The 2026-08-14 audit's remaining P0 (CAS-on-save) and the
+model-quality follow-ups listed under "Open issues (Phase 4)" are the Phase 5 backlog.
 
 **Worktree:** `C:\Users\devag\Documents\Code (local)\order-workflows-kg`, branch
 `feat/kg-change-pipeline` (from `demo/dialogue-plus-run` @ `0a6e84d`). Own `.venv` (Python 3.12,
@@ -96,7 +96,45 @@ Locked in Phase 3 (user decisions, memory `kg-phase3-decisions`): send-to-workfl
 the Resolve dialogue gives **full Q&A** on `changes.md`; a BLOCKING `changes.md` finding **refuses
 approve unless `accept_incomplete`**; the change spec is extracted **whenever a KB is set**.
 
-## Ids / facts Phase 4 will need
+## What exists after Phase 4 (post-approval change outputs)
+
+| Path | Role |
+|---|---|
+| `change_outputs/models.py` | `ChangeOutputs{diagrams[UpdatedDiagram{name, kind state\|sequence\|architecture\|state-partial\|workflow, original, updated, notes, source_path, checks}], code: CodeChangeBundle{files[ChangedFile{path, status modified\|added\|removed\|unchanged, original, updated, unified_diff, checks{ast_ok, ast_error, ruff_ok?, ruff_output, repaired, truncated}, reason, notes}], order, import_root, code_root}, tests_doc: TestDocUpdate{test_cases[TestCaseRow], changed_ids, new_ids, test_plan_addendum_md, linked_tdd, linked_epic, test_plan_id, change_request_id, matrix_source, notes}, system_flow_md, provenance, warnings, timings, stages{name: StageRecord{status, error, seconds, finished_at, provider, model}}, generated_at}` (content models keep whitespace verbatim); `STAGES = (diagrams, code, tests_doc)`; LLM plans `DiagramUpdatePlan/DiagramDraft`, `TestCaseUpdatePlan/TestCaseDraft/TestCaseUpdate/TestPlanAddendumDraft` (tolerant: stray non-object list items dropped). Stored on `CompilationProject.change_outputs`. |
+| `change_outputs/code.py` | Deterministic code stage: `plan_rewrites(spec, texts) -> RewritePlan{order, unchanged, reasons, components_by_file, imports, import_root, code_root}` (component `path`/`name` → corpus `.py` via node ids / suffixes, case-insensitive; empty-path activity/signal/query/type → activities/workflow/types module, never `__init__`; + every file importing a rewritten module; topological order, ties by category types 0 → activities 1 → workflow 2 → worker 3 → starter 4 → tests 5), `resolve_component_file`, `resolve_import` (`src.shared.types` ↔ `existing_Codebase/shared/types.py`), `import_root_of`, `extract_code`/`continue_code` (fence protocol), `check_syntax`, `ruff_check` (F,E9), `unified_diff`, `signature_summary`, `defined_names`/`exported_names`, `missing_symbols`, `missing_imports` (sibling coherence), `dataclass_problems`, `KNOWN_IMPORTS` + `corpus_exports` + `auto_import`, `undefined_names`. |
+| `change_outputs/diagrams.py` | `plan_diagrams(spec, corpus_files) -> [DiagramRequest]` (every `.mmd` + spec-added companions), `mermaid_header`, `states_in`, `balanced`, `expected_states(spec, original_states)` (multi-segment UPPER_SNAKE tokens from type/diagram/workflow/module components), `check_diagram`, `diagram_kind_of`, `assemble_system_flow(original_md, diagrams, workflow_diagrams, change_title)` (original numbered H2s → spec diagram section (D10) → new companions). |
+| `change_outputs/tests_doc.py` | `next_tc_ids`, `normalise_type/automated`, `merge_test_cases(existing, new, updates, start_hint, change_note) -> (rows, changed_ids, new_ids)` (updates never drop; notes appended; duplicate titles skipped), `render_addendum` (numbered H2 markdown, `**Label:** value` meta), `parse_addendum_meta`, `export_addendum_docx` (title *Test Plan — Addendum*, reference look), `export_matrix_xlsx` (Phase 2 writer + Summary), `addendum_filename`, `linked_ids_from_text`. |
+| `change_outputs/engine.py` | `ChangeOutputsEngine(agent, kg, load_state=, build_diagrams=, grounder=, provider_name=, model_name=)`: `run(project, stages, progress, persist)` — `_prepare` (corpus files, `changes.md` render, `design_summary(designs)`, spec excerpt, TDD excerpt 24 k chars, KG grounding block + sources), `_run_diagrams` (plan → agent → `check_diagram` → one repair round → workflow diagrams → flow doc), `_run_code` (texts → `plan_rewrites` → per file: prompt with sibling signatures → `rewrite_file` → syntax / dataclass / symbols / sibling-import / ruff checks → one `repair_file` → `auto_import` → diff; persists after every file), `_run_tests_doc` (matrix via `read_test_case_rows`, TP docx text, rewritten tests outline, catalog ids → agent → merge → addendum); `ChangeOutputsError` after all stages when any failed; `change_label_of(project)`. |
+| `change_outputs/export.py` | `export_zip(outputs, project_id, label)` (README layout `src/`, `tests/`, `docs/diagrams/mermaid/*.mmd`, `docs/diagrams/system-flow-diagram.md`, `docs/test-cases/<matrix>.xlsx` + `<TP>-addendum-<BCR>.docx/.md`, `changes.patch`, `CHANGES.md`; byte-stable), `export_entries`, `changes_index`, `combined_patch`, `zip_code_path`, `export_filename`. |
+| `agents/change_outputs.py` | `ChangeOutputsAgent(llm, file_max_tokens=8192)`: `update_diagrams(...) -> DiagramUpdatePlan` (structured), `rewrite_file(...) -> RewriteResult{code, found, truncated, closed}` (`complete` + fence + ≤2 continuations), `repair_file(path, code, error) -> FencedCode`, `update_test_cases(...) -> TestCaseUpdatePlan`. Prompts `update_diagrams.md` (companion = composite `state PARTIALLY_* { … }`), `rewrite_source_file.md`, `continue_source_file.md`, `repair_source_file.md`, `update_test_cases.md`. |
+| `project_compiler.py` | `generate_change_outputs(project_id, stages=None\|["all"\|…], progress, persist, project=, change_label=)` (needs `kb_id` + compiled workflow; saves after each stage/file; records `stage_timings["change_outputs"]`), `change_outputs_engine(project)`, `approve_spec(..., change_outputs=False)` (inline chain for the CLI), `_provider_label`; `compile_document` records `grounding.change_request_label = cr.bcr_meta.doc_id`. `models/project.py`: `CompilationProject.change_outputs`, `ProjectGrounding.change_request_label`. |
+| `api/` | `JobKind += change_outputs`; `POST /projects/{id}/jobs` (approve) chains `_start_change_outputs` via `after` **on the cloud default provider** (`KB_DEFAULT_PROVIDER` through `get_compiler_selector`) once the project is `completed`; `GET /projects/{id}/change-outputs` → `ChangeOutputsResponse{project_id, outputs, job, available}`; `POST …/change-outputs/regenerate` `ChangeOutputsRegenerateRequest{stage: all\|diagrams\|code\|tests_doc, provider?, model?}` (202 / 409 / 422); `GET …/change-outputs/export.zip`; `GET …/change-outputs/files/{test-cases.xlsx\|test-plan-addendum.docx\|test-plan-addendum.md\|system-flow-diagram.md\|changes.patch}`; `_change_label` reads the CR's `bcr_meta.doc_id` for projects compiled before the label was stored; job progress `message/done/total` per stage. |
+| `cli/main.py` | `approve-spec … --change-outputs` (bundle unpacked under `<out-dir>/<project-id>/change-outputs/`), `change-outputs <project-id> [--stage all\|diagrams\|code\|tests_doc] [--out-dir] [--provider] [--model] [--timeout 400]` (exit 1 when a stage failed, outputs still written), `_write_change_outputs`, `_print_change_outputs`. |
+| `llm/providers/mock.py` | demo defaults for `DiagramUpdatePlan` and `TestCaseUpdatePlan`; `complete` returns `mock-response` (→ files `unchanged` with a warning) unless completions are queued. |
+| Frontend | `components/ChangeOutputsView.tsx` (stage pills, Regenerate `<select>` + button, Download all, warnings, Sources; `DiagramsPanel` (chips, Updated/Original, checks, source), `CodePanel` (file list + status/ast/ruff pills, `UnifiedDiff` from `unified_diff`, `SplitDiff` via `diff.diffLines`, updated file, `changes.patch`), `TestCasesPanel` (table with new/updated tones, only-changed filter, `.xlsx` / addendum `.docx`, addendum markdown)); `ResultsView.tsx` **Workflows \| Change outputs** switch for grounded projects; `lib/types.ts` (`ChangeOutputs…`, `JobKind += change_outputs`), `lib/api.ts` (`changeOutputs`, `regenerateChangeOutputs`, `exportChangeOutputsZip`, `changeOutputFile`), `lib/runs.tsx` (label/toast/invalidation), `app/projects/[id]/page.tsx` (no overlay for the change_outputs job), `globals.css` `.diff-add/.diff-del`; dependency `diff@^8` (+ `@types/diff`). |
+| Tests | `tests/test_change_outputs.py` (16), `tests/test_api_change_outputs.py` (2, incl. CLI). |
+| Docs | `docs/HOW_IT_WORKS.md` §8g + CLI/route rows, `docs/architecture.md` (phase-4 diagram), `README.md`, `CLAUDE.md`, `RUNBOOK.md` Phase 4, screenshots `docs/kg-plan/screenshots/phase4-*.png`. |
+
+Locked in Phase 4 (user decisions, memory `kg-phase4-decisions`): rewrite set = change-spec files **+
+import dependents**; export zip in the **README layout** (`src/`, `tests/`, `docs/`); TP deliverable =
+**addendum docx** (original untouched); live verification = regenerate on `d64a03d8…` **and** one
+fresh Send-to-workflow → gate → approve → chained outputs; file rewrites via **fenced `complete()`**
+with continuation + one repair round; chaining = **separate follow-on job**; Results UI =
+**Workflows | Change outputs** sub-view switch.
+
+## Ids / facts Phase 5 will need
+
+- **Live projects with change outputs** (`.workflow_state/projects/`): `d64a03d8-939d-425a-b649-8816dce80ff3`
+  (three code re-runs, see RUNBOOK Phase 4) and **`76bdad1c-558d-4454-b4e6-27fe38e5006b`** (fresh
+  send → gate → approve → chained outputs; diagrams re-run after the plan fix; label `BCR-001`).
+  Both hold `change_outputs` with all three stages `done`; `cr.project_ids` of `dfad0d25…` now lists
+  `f64d88c4…, d64a03d8…, 76bdad1c…`.
+- Bundles / logs of every live run: `%LOCALAPPDATA%\Temp\claude\…\13185e58-…\scratchpad\{run1,run2,run3,fresh}` and
+  `live_regen*.log`; scratch venvs `tvenv` (py 3.12, temporalio 1.20) / `tvenv311` for running generated tests.
+- The corpus's own tests fail 4/4 in a fresh venv (str-Enum decode through temporalio's default
+  converter) — any "generated tests pass" claim must be measured against that baseline.
+
+## Ids / facts Phase 4 needed (kept for reference)
 
 - **Live projects** (`.workflow_state/projects/`, this machine): `d64a03d8-939d-425a-b649-8816dce80ff3`
   — sent from CR `dfad0d257db847919029f11dbef3c47d`, **COMPLETED** (approved with `accept_incomplete`,
@@ -164,6 +202,20 @@ approve unless `accept_incomplete`**; the change spec is extracted **whenever a 
 
 ## Open issues / notes
 
+- (Phase 4) **No generated bundle ran green**: every live bundle failed at import/collection for a
+  different model slip (duplicate dataclass field → caught by `dataclass_problems` now; invented
+  sibling name → `missing_imports`; missing import → `auto_import`; a `SyntaxError` in the long test
+  module that one repair round did not fix). Phase 5 candidates: a second repair round for the tests
+  file, a subprocess `py_compile` / import smoke test of the whole bundle after the code stage,
+  and pinning the temporalio API surface in the rewrite prompt (`activity.defn(retry_policy=…)`
+  is invented).
+- (Phase 4) The rewrite prompt's "keep style" is not honoured (blank lines collapsed, `List[...]`);
+  cosmetic, visible in the diff.
+- (Phase 4) The Time-saved card counts `change_outputs` against a 2 h default estimate
+  (`baseline_hours` has no dedicated key yet).
+- (Phase 4) `regenerate` while an approve/validate job runs answers 409 (one run per project) — the UI
+  disables the buttons, the CLI reports it.
+
 - (Phase 3) `validate` still strips the human `- triggers:` metadata line (pre-existing OPEN defect,
   memory `llm-timeout-and-trigger-stripping-defects`); the live approve needed `accept_incomplete`.
 - (Phase 3) A TDD's State Transitions become orphan state nodes in the graph (health 0.25) although
@@ -200,6 +252,14 @@ approve unless `accept_incomplete`**; the change spec is extracted **whenever a 
   for Phase 5.
 
 ## Phase log
+- **Phase 4 — 2026-08-19 — done.** Commits on `feat/kg-change-pipeline`: WIP (models / code / diagrams /
+  tests_doc / engine / export, agent + prompts, `generate_change_outputs`, job kind + routes) → CLI +
+  mock defaults + tests → frontend Change outputs view + per-file downloads → docs → deterministic
+  auto-import + no `__init__` targets → BCR label on the grounding record → sibling-import coherence
+  → dataclass check → tolerant plans → cloud default for the chained job + corpus-aware auto-import →
+  RUNBOOK / HANDOFF. Gates: pytest 699 passed (681 + 18 new), ruff clean, mypy strict clean (189
+  files), `npm run build` clean; live runs on Nemotron: regenerate on `d64a03d8…` (1453 s), fresh
+  send → gate → approve → chained outputs on `76bdad1c…`, three code re-runs; screenshots in RUNBOOK.
 - **Phase 0 — 2026-08-17 — done.** Commits: plan docs → vendoring → kg core → API/CLI/examples →
   frontend → mypy-clean + docs → runbook/handoff. Gates: pytest 620 passed, ruff clean, mypy strict
   clean, `npm run build` clean; live UI upload + Nemotron enrichment recorded in RUNBOOK.

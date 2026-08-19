@@ -390,3 +390,110 @@ approve completes ✔ (with two hand edits and the `accept_incomplete` override,
   heavy); `curl` and the browser poller were fine — retry the poll.
 - Bash-tool heredocs in this harness still turn `\b` into backspaces and unescape `\n` — every
   patch script went through the Write tool.
+
+## Phase 4 — Post-approval change outputs: diagrams, modified code + diff, test docs (2026-08-18/19)
+
+### Automated gates
+
+| Gate | Result |
+|---|---|
+| `pytest -p no:warnings` | **699 passed** (681 from Phase 3 + 18 new: 16 `test_change_outputs.py` — models round trip, rewrite plan/order/dependents, component→file resolution, fence extract/continue, diagram checks + flow assembly, TC ids/merge/addendum + xlsx round trip + docx, engine end-to-end with `MockProvider` (ordered rewrite, continuation, syntax repair, unchanged copies, per-file persistence), stage failure keeps other stages, design summary/labels, auto-import, sibling-import coherence, dataclass check, tolerant plans, corpus exports; 2 `test_api_change_outputs.py` — approve job chains `change_outputs`, GET/regenerate/export.zip/files routes, 409/422/404s, CLI `approve-spec --change-outputs` + `change-outputs`) |
+| `ruff check src tests` | clean |
+| `mypy src` (strict) | clean, 189 files |
+| `npm run build` | clean; `npx tsc --noEmit` clean; `npm run lint` = the same 2 pre-existing `RunPanel`/`SpecChatPanel` findings |
+
+### Bring-up used for the live runs
+
+As at the top of this file (backend `127.0.0.1:8010` **without** `--reload`, frontend `127.0.0.1:3010`,
+demo account `kgdemo@example.com`). Playwright driver `scratchpad/pw/phase4.mjs` (`login` → `send` →
+`gate` → `approve` → `outputs`) plus `scratchpad/live_regen.py` (API: `POST …/change-outputs/regenerate`
++ poll) and `peek.py`. The backend was restarted three times between jobs to pick up fixes found
+during the runs (see gotchas) — never while a job was running. Every LLM call went to cloud
+Nemotron `nvidia/llama-3.3-nemotron-super-49b-v1` (`regenerate` defaults to `KB_DEFAULT_PROVIDER`;
+the first chained run used the server default `local-fallback`, fixed the same session — see gotchas).
+
+### Live run 1 — `POST /projects/d64a03d8…/change-outputs/regenerate {stage: all}` (the COMPLETED Phase-3 project)
+
+| Item | Measured |
+|---|---|
+| Job | `change_outputs` job, progress `diagrams… 0/3 → code… 1/3 → tests_doc… 2/3`, **1453 s** wall-clock, succeeded |
+| Diagrams stage | **187 s**; `order-state-machine.mmd` gains `PARTIALLY_PROVISIONED` / `PARTIALLY_DISPATCHED` with real transitions (incl. cancel → `CANCELLING_*`), `order-sequence.mmd` gains a `par` block per shipment group + per-group `delivery_confirmed(order_id, group_id)` signals, `system-architecture.mmd` gains a Shipment Group Manager node, new `order-state-machine-partial-shipment.mmd`, plus the spec's `orderlifecycleworkflow-workflow.mmd`; `system-flow-diagram.md` re-assembled (sections 1–3 original titles/intros, 4 = spec diagram, 5 = companion). Checks: all passed except the companion (`missing state(s): PARTIALLY_DISPATCHED, PARTIALLY_PROVISIONED` — the model drew a stand-alone group lifecycle with a stray `[state]` line; the prompt now asks for composite `state PARTIALLY_* { … }` blocks — see run 2b) |
+| Code stage | **1153 s**, 8 files rewritten in order `types → activities/__init__ → activities → workflows/__init__ → workflow → worker → starter → tests`; `types.py` gains `ShipmentGroup`, `PARTIALLY_PROVISIONED/PARTIALLY_DISPATCHED`, `list[ProvisioningResult]` / `list[DispatchResult]` / `shipment_groups` on `OrderState`; `order_workflow.py` (243 → 297 lines) fans out with `asyncio.gather(*provision_tasks, return_exceptions=True)` and again for dispatch, per-group compensation helpers (`_compensate_provisioning_up_to/_all`, `_compensate_dispatch_up_to/_all`), `@workflow.signal cancel_shipment_group(group_id)`, `get_status` with per-group state; `worker.py` registers `provision_group`/`dispatch_group`; `test_order_workflow.py` gains `test_partial_shipment_happy_path`, `test_cancel_single_shipment_group`, `test_compensation_for_failed_group`, `test_status_query_reflects_group_states`. Two spurious rewrites: `activities/__init__.py` (90 lines) and `workflows/__init__.py` (11 KB) — the "new component with no path" fallback picked the shortest path containing `activit`/`workflow` (fixed: package `__init__` files are never targets). `order_activities.py`: `ruff` F821 `timedelta` after the repair round (fixed: deterministic `auto_import`); `dispatch_group` imported by the workflow but the activities module kept `dispatch_order` (fixed: sibling-import coherence check → repair) |
+| Test-docs stage | **109 s**; matrix 17 → **23 rows**: new **TC-18…TC-23** (split into groups at provisioning; independent per-group dispatch failure/compensation; cancel one group, others continue; cancel whole order across groups; per-group status query; consolidated completion), updated **TC-06 / TC-09 / TC-10 / TC-12** (notes appended, originals kept); addendum for **TP-ORD-001** with the §3.2 out-of-scope line removed, §4.2 *Functional / Group-Level Compensation* added, §4.4 test data, deliverables, exit criteria, risks; linked TDD-ORD-002 / EPIC-002. The change label was `dfad0d25` (CR id) — fixed: the grounding record now stores the BCR id (`BCR-001`) and the API passes it |
+| Export | `GET …/change-outputs/export.zip` → 83 KB: `src/…` (README layout, imports `src.*` as the code expects), `tests/…`, `docs/diagrams/mermaid/*.mmd` (5) + `system-flow-diagram.md`, `docs/test-cases/TC-order-workflow.xlsx` + `TP-ORD-001-addendum-….docx/.md`, `changes.patch` (71 KB), `CHANGES.md` |
+
+### Live run 2 — fresh project: Send to workflow GUI → gate → approve → chained change outputs
+
+`/changes/dfad0d25…` → **Send to workflow GUI** → project **`76bdad1c-558d-4454-b4e6-27fe38e5006b`**
+(`phase4-project-after-send.png`).
+
+| Item | Measured |
+|---|---|
+| Send (TDD → grounded project, 38-component `changes.md`) | **232 s** (Phase 3: 212 s; a code job was running concurrently) |
+| Hand edits + validate | trigger line + State-Transitions bullets dropped (as in Phase 3) → validate **385 s** (concurrent with a code job): 2 grounding WARNs, **1 BLOCK "No workflow inputs were declared"** — this spec came out thin (2.4 KB vs 7.5 KB in Phase 3: Nemotron variance) → hand-added `## Inputs` / `## Outputs` bullets |
+| Approve (`accept_incomplete`, via jobs API) | **144 s** → **COMPLETED**, workflow `orderworkflow-partial-shipment` |
+| Chained `change_outputs` job (auto-started by the approve job's `after` hook) | started 5 s after approve; **diagrams FAILED at 325 s** — Nemotron leaked two bare strings into the `diagrams` JSON array (`"notes"`, `"Added PARTIALLY_PROVISIONED…"`), pydantic rejected the plan on both attempts; **code (1176 s) and tests_doc (163 s) still ran and were persisted**, the job reported `failed` with the diagrams error — exactly the per-stage resumability the plan asked for. Fixed the same session: the plans drop non-object list items |
+| `regenerate {stage: diagrams}` after the fix | **200 s**, all checks pass — the companion diagram is now `state PARTIALLY_PROVISIONED { GROUP_PROVISIONING → GROUP_PROVISIONED → GROUP_DISPATCHING → … }` / `state PARTIALLY_DISPATCHED { … }`; the other stages kept |
+| Test docs | new TC-18…TC-23, updated TC-06/09/10/12, addendum `TP-ORD-001-addendum-BCR-001` (label correct on this project) |
+| UI (`phase4-fresh-outputs-*.png`) | Results → **Workflows \| Change outputs 3/3** switch; Diagrams with Updated/Original toggle (`diagrams-updated`, `diagrams-original`, `diagram-partial`, `diagram-sequence`), Code with status badges + ast/ruff/repaired pills and unified / side-by-side viewers (`code-unified`, `code-split`, `code-workflow`, `code-tests`), Test cases with new/updated highlighting + only-changed filter (`tests`, `tests-changed`), **Download all (.zip)** → `BCR-001-76bdad1c-change-outputs.zip` (76 KB); the Time-saved card lists `change_outputs` 31 min against the 2 h estimate |
+| Provider label | the chained job ran on the approve job's compiler = server default `local-fallback` (Spark first, cloud fallback) — plan D6 says file rewrites never go to the gateway by default; fixed: the chained job now uses `KB_DEFAULT_PROVIDER` (cloud Nemotron) through the compiler selector |
+
+### Live run 3 — code stage re-runs on `d64a03d8…` after the fixes
+
+| Run | Result |
+|---|---|
+| Re-run A (auto-import + no `__init__` targets live) | **1132 s**; 6 files (types, activities, workflow, worker, starter, tests), no `__init__` rewrites; workflow still imported `dispatch_group` while activities kept `dispatch_order`; `types.py` declared `tracking_number` twice → `TypeError` at import — the coherence + dataclass checks were added after this run |
+| Re-run B (dataclass + coherence checks live) | **1102 s**; `types.py` **repaired** (duplicate field), `order_workflow.py` **repaired** and now imports only names the activities module defines (`dispatch_group`, `provision_group`, …), `test_order_workflow.py` failed `ast.parse` even after the repair round (an `async def` inside a list literal) — recorded as `ast_ok=false` + warning; `LineItem` still undefined in activities (corpus-aware auto-import came after) |
+| Re-run C (everything live: auto-import incl. corpus exports, sibling coherence, dataclass check) | **832 s**; **every file `ast ok` + `ruff ok`** (activities and types repaired once each, workflow and tests clean on the first answer); the bundle **imports and collects** for the first time |
+
+### Running the generated tests (scratch venv, `temporalio` + `pytest-asyncio`, `WorkflowEnvironment.start_time_skipping()`)
+
+Recorded honestly:
+
+- **Baseline first:** the corpus's *own* `tests/test_order_workflow.py` (unchanged, `src/` layout)
+  fails **4/4** in a fresh venv — `temporalio` 1.20.0 and 1.31.0, Python 3.11 and 3.12 alike: the
+  default data converter decodes an `OrderStatus(str, Enum)` field into a list of characters
+  (`status=['R','E','J',…]`), so every assertion on `.status` fails. Anything generated on top of
+  this code base inherits that unless it avoids `str`-Enum result fields.
+- Run-1 / re-run-A bundles: **collection error** — `types.py` duplicate `tracking_number` field
+  (`TypeError: non-default argument 'carrier' follows default argument`).
+- Fresh-project bundle (76bdad1c): **collection error** `NameError: LineItem` in activities; after a
+  one-line import fix, `ImportError: cannot import name 'dispatch_group'` (workflow ≠ activities).
+- Re-run-B bundle: **collection error** — `SyntaxError` at line 194 of the rewritten test module.
+- Re-run-C bundle: **collects, 4 tests run, 4 fail at runtime** — `make_order() got an unexpected keyword argument 'line_items'` (the rewritten helper kept the old signature while the new tests call it with `line_items=`) and `ValueError: More than one activity named compensate_group_provision` (a test double is registered twice) — internal slips inside the generated test module, not the workflow code (which imports cleanly).
+
+So: **no generated bundle ran green in this phase.** What the pipeline delivers today is a
+reviewable, checked draft (ast / ruff / coherence / dataclass verdicts on every file, a diff per
+file) rather than a passing test suite; the deterministic checks caught every failure listed above
+before a human did, and each round of fixes removed a failure class. Remaining model-quality issues
+(style drift, invented APIs such as `activity.defn(retry_policy=…)`, syntax slips in long test
+files) are Phase 5 candidates: a second repair round for the tests file, and a `py_compile`/import
+smoke test of the bundle in a subprocess.
+
+### Gotchas found in this phase
+
+- **A whole Python file inside JSON is what long-context models break** — the fenced-`complete`
+  protocol (decision) never truncated on `order_workflow.py`, but Nemotron *did* leak bare strings
+  into the diagrams JSON array once (structured plan rejected twice → stage failed, other stages
+  persisted). Plans now drop non-object list items.
+- **New components must never land in package `__init__.py`** — the "shortest path containing
+  'activit' / 'workflow'" fallback for a component with an empty path picked
+  `activities/__init__.py` and `workflows/__init__.py` (two wasted rewrites, 20 min).
+- **The model invents sibling names despite being given the signatures** (`dispatch_group` vs
+  `dispatch_order`), forgets imports (`timedelta`, `LineItem`) and duplicates dataclass fields —
+  each now a deterministic check feeding the single repair round (`missing_imports`,
+  `dataclass_problems`, `auto_import` incl. the corpus's own exports).
+- **The companion state diagram** came out as a stand-alone group lifecycle until the prompt asked
+  for composite `state PARTIALLY_* { … }` blocks; the required-state check is what surfaced it.
+- **The chained job inherits the approve job's compiler** — which is the server default
+  (`local-fallback`); D6 requires cloud for long generations, so the chain now selects
+  `KB_DEFAULT_PROVIDER` explicitly.
+- **The BCR id lives on the change request** (`bcr_meta.doc_id`), not on the project — the
+  grounding record now carries `change_request_label`, and the API/CLI pass it for older projects.
+- **Nemotron variance at the gate**: the fresh compile produced a 2.4 KB spec with no Inputs (a
+  BLOCK the Phase-3 run did not have); the gate did its job, one hand edit fixed it.
+- **The corpus's own tests do not pass in a fresh env** (see above) — establish the baseline before
+  judging generated tests.
+- Harness: background Bash calls die at 600 s (detach long drivers and watch the log with Monitor);
+  Bash heredocs still unescape `\n` — every multi-line patch went through the Write tool; the
+  Chrome DevTools MCP server was again unavailable, Playwright (`pw/phase4.mjs`) drove the browser.

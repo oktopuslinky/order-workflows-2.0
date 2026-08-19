@@ -723,3 +723,14 @@ def test_llm_plans_tolerate_stray_items() -> None:
     assert [d.name for d in plan.diagrams] == ["a.mmd"]
     tc = TestCaseUpdatePlan.model_validate({"new_cases": ["x", {"title": "t"}], "updated_cases": "nope", "addendum": "text"})
     assert [c.title for c in tc.new_cases] == ["t"] and tc.updated_cases == [] and tc.addendum.notes == []
+
+
+def test_corpus_exports_feed_auto_import() -> None:
+    from workflow_compiler.change_outputs.code import auto_import, corpus_exports
+
+    exports = corpus_exports(CORPUS_TEXTS, code_root="existing_Codebase", import_root="src")
+    assert exports["ProvisioningResult"] == "from src.shared.types import ProvisioningResult"
+    assert exports["provision_order"] == "from src.activities.order_activities import provision_order"
+    assert "test_status" not in exports  # tests are not package modules
+    fixed, added = auto_import("x = ProvisioningResult('r')\n", ["ProvisioningResult"], exports)
+    assert added == ["from src.shared.types import ProvisioningResult"] and fixed.startswith("from src.shared")

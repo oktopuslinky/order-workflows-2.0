@@ -23,6 +23,7 @@ from workflow_compiler.agents.change_outputs import ChangeOutputsAgent
 from workflow_compiler.change_outputs.code import (
     auto_import,
     check_syntax,
+    corpus_exports,
     dataclass_problems,
     exported_names,
     missing_imports,
@@ -628,7 +629,11 @@ class ChangeOutputsEngine:
                 if ok and ruff_ok is False and "F821" in ruff_out:
                     # The model kept forgetting an import: add the well-known
                     # ones deterministically (timedelta, RetryPolicy, …).
-                    code, added = auto_import(code, undefined_names(ruff_out))
+                    exports = corpus_exports(
+                        {**texts, **rewritten}, code_root=plan.code_root,
+                        import_root=plan.import_root or "src", exclude=path,
+                    )
+                    code, added = auto_import(code, undefined_names(ruff_out), exports)
                     if added:
                         entry.notes = (entry.notes + " " if entry.notes else "") + (
                             "Auto-imported: " + "; ".join(added)

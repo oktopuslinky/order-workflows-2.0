@@ -495,17 +495,40 @@ def undefined_names(ruff_output: str) -> list[str]:
     return seen
 
 
-def auto_import(code: str, names: Iterable[str]) -> tuple[str, list[str]]:
+def corpus_exports(
+    texts: Mapping[str, str], *, code_root: str, import_root: str, exclude: str = ""
+) -> dict[str, str]:
+    """``{name: "from <pkg>.<module> import <name>"}`` for every top-level name the
+    corpus's package modules define (the code base's own types / activities)."""
+    out: dict[str, str] = {}
+    for path, text in sorted(texts.items()):
+        if path == exclude or not path.endswith(".py") or path.endswith("__init__.py"):
+            continue
+        rel = path
+        if code_root and rel.startswith(code_root.rstrip("/") + "/"):
+            rel = rel[len(code_root.rstrip("/")) + 1:]
+        elif code_root:
+            continue  # tests etc. are not importable modules of the package
+        module = f"{import_root or 'src'}." + rel[:-3].replace("/", ".")
+        for name in defined_names(text):
+            out.setdefault(name, f"from {module} import {name}")
+    return out
+
+
+def auto_import(
+    code: str, names: Iterable[str], extra: Mapping[str, str] | None = None
+) -> tuple[str, list[str]]:
     """Insert the well-known import for each of ``names`` (deterministic, no model).
 
-    Only names in :data:`KNOWN_IMPORTS` are handled; the statement goes after
-    the last top-level import (or the module docstring / ``from __future__``
-    line). Returns the new code and the statements added.
+    Names in :data:`KNOWN_IMPORTS` and in ``extra`` (the corpus's own exports,
+    see :func:`corpus_exports`) are handled; the statement goes after the last
+    top-level import (or the module docstring / ``from __future__`` line).
+    Returns the new code and the statements added.
     """
     added: list[str] = []
     lines = code.split("\n")
     for name in names:
-        statement = KNOWN_IMPORTS.get(name)
+        statement = KNOWN_IMPORTS.get(name) or (extra or {}).get(name)
         if statement is None or statement in code:
             continue
         insert_at = 0

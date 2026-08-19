@@ -2086,6 +2086,7 @@ def create_app() -> FastAPI:
         project_id: str,
         request: JobStartRequest,
         compiler: ProjectCompiler = Depends(get_project_compiler),
+        selector: CompilerSelector = Depends(get_compiler_selector),
         user: User = Depends(get_current_user),
     ) -> JobResponse:
         """Start validate/approve in the background and return immediately (202).
@@ -2129,18 +2130,22 @@ def create_app() -> FastAPI:
             """Start the post-approval change outputs once an approve succeeded.
 
             A grounded project (``kb_id`` set) gets its diagrams / code / test
-            documents as a *separate* ``change_outputs`` job with the same
-            compiler, so the approve reports done when compilation is done and
-            a failure or timeout in the outputs leaves the approve result
-            intact. Ungrounded projects (and approves that left workflows
-            blocked) chain nothing.
+            documents as a *separate* ``change_outputs`` job, so the approve
+            reports done when compilation is done and a failure or timeout in
+            the outputs leaves the approve result intact. Like every
+            knowledge-base route the outputs run on the **cloud default
+            provider** (``KB_DEFAULT_PROVIDER``), never on the server's
+            local-gateway default — file rewrites are long generations (plan
+            D6). Ungrounded projects (and approves that left workflows blocked)
+            chain nothing.
             """
             loaded = await compiler.load_project(project_id)
             if loaded.kb_id is None or not loaded.workflow_ids:
                 return None
             if loaded.stage is not ProjectStage.COMPLETED:
                 return None
-            return await _start_change_outputs(loaded, compiler, user, stage="all")
+            chosen = _select_compiler(KB_DEFAULT_PROVIDER, None, compiler, selector)
+            return await _start_change_outputs(loaded, chosen, user, stage="all")
 
         after: Callable[[], Awaitable[object]] | None = None
         if request.kind == "validate":

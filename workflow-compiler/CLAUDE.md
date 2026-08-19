@@ -196,7 +196,8 @@ picture before changing pipeline behavior.
      decided by code (`code.py::plan_rewrites`: change-spec files + import dependents, topological,
      types → … → tests) and only the file text comes from the model (`ChangeOutputsAgent.rewrite_file`,
      one fenced block via `complete`, continuation on an unclosed fence, then `ast` / dataclass /
-     symbol / sibling-import / ruff checks with **up to `change_outputs_repair_rounds` targeted
+     symbol / sibling-import (nested imports too) / late-annotation / ruff checks with **up to
+     `change_outputs_repair_rounds` targeted
      repair rounds**, deterministic `auto_import`, a keep-style pass, and a **bundle smoke test** in
      a child interpreter (`change_outputs/smoke.py`) recorded on `CodeChangeBundle.smoke` — a
      verdict, never a gate); diagrams are checked deterministically; test-case ids come from the KB

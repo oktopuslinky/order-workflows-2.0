@@ -1185,7 +1185,10 @@ nothing of the in-flight stage. Every stage is *LLM drafts, code decides*
    Python file inside JSON is what long-context models truncate); an unclosed fence is continued
    (≤2×, overlap trimmed), then every deterministic check runs — `ast.parse`, dataclass sanity
    (`dataclass_problems`), the change spec's symbol presence, imports against the rewritten
-   siblings (`missing_imports`), ruff's pyflakes-class rules — and **up to N targeted repair
+   siblings (`missing_imports`, incl. imports nested in `with workflow.unsafe.imports_passed_through():`
+   / `try:` blocks), names used in `@workflow.query/signal/run` / `@activity.defn` annotations that
+   are only defined below the class or under `TYPE_CHECKING` (`late_annotation_names` — Temporal
+   evaluates those hints at import), ruff's pyflakes-class rules — and **up to N targeted repair
    rounds** (`change_outputs_repair_rounds`, default 2; the CLI/API pass the setting through
    `ProjectCompiler`) hand the model *all* the verdicts that still fail, re-checking after each
    round (`FileChecks.repair_rounds` / `.problems` record what each round was asked to fix);

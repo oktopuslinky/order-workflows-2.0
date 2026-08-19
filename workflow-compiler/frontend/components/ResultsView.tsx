@@ -3,13 +3,19 @@
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { saveAs } from "file-saver";
 import JSZip from "jszip";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { buildNodeStatus, type NodeRunStatus } from "@/lib/runHighlights";
 import { ChangeOutputsView } from "./ChangeOutputsView";
 import { FindingsPanel } from "./FindingsPanel";
 import { MermaidView } from "./MermaidView";
 import { RunPanel } from "./RunPanel";
-import type { CompilationProject, SpecFinding, WorkflowState } from "@/lib/types";
+import type {
+  CompilationProject,
+  Run,
+  SpecFinding,
+  WorkflowState,
+} from "@/lib/types";
 
 export function ResultsView({
   project,
@@ -53,6 +59,25 @@ export function ResultsView({
     queryKey: ["projectFiles", project.project_id, project.updated_at],
     queryFn: () => api.projectFiles(project.project_id),
   });
+
+  // The active workflow's live run, reported up by RunPanel so the diagram can
+  // light up as it executes. RunPanel is keyed by slug below, so switching
+  // workflows unmounts it and this resets to null via its cleanup.
+  const [liveRun, setLiveRun] = useState<{ run: Run; signals: string[] } | null>(
+    null,
+  );
+  const handleRunChanged = useCallback(
+    (run: Run | null, signals: string[]) =>
+      setLiveRun(run ? { run, signals } : null),
+    [],
+  );
+  const diagramSource = stateBySlug[active]?.mermaid_diagram?.source ?? "";
+  // Plain derivation (no manual useMemo): the React Compiler memoizes it, and it
+  // refused to preserve a hand-written memo over query-owned inputs.
+  const nodeStatus: Record<string, NodeRunStatus> | undefined =
+    liveRun && diagramSource
+      ? buildNodeStatus(diagramSource, liveRun.run.events, liveRun.run.state, liveRun.signals)
+      : undefined;
 
   async function downloadZip() {
     if (!files.data) return;
@@ -156,16 +181,27 @@ export function ResultsView({
             )}
             <div className="grid gap-4 lg:grid-cols-2">
               <div>
-                <h4 className="eyebrow mb-1.5">Diagram</h4>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <h4 className="eyebrow">Diagram</h4>
+                  {nodeStatus && <RunLegend />}
+                </div>
                 <div className="card p-2">
-                  <MermaidView source={state?.mermaid_diagram?.source ?? ""} />
+                  <MermaidView
+                    source={state?.mermaid_diagram?.source ?? ""}
+                    nodeStatus={nodeStatus}
+                  />
                 </div>
                 <ReviewCVPA state={state} />
               </div>
               <div>
                 <h4 className="eyebrow mb-1.5">Generated files</h4>
                 <CodeFiles files={state?.temporal_code?.files ?? []} />
-                <RunPanel projectId={project.project_id} slug={active} />
+                <RunPanel
+                  key={active}
+                  projectId={project.project_id}
+                  slug={active}
+                  onRunChanged={handleRunChanged}
+                />
               </div>
             </div>
           </>
@@ -174,6 +210,28 @@ export function ResultsView({
       </>
       )}
     </div>
+  );
+}
+
+function RunLegend() {
+  const entries: [string, string][] = [
+    ["var(--pass)", "done"],
+    ["var(--accent)", "running"],
+    ["var(--gate)", "waiting"],
+    ["var(--block)", "failed"],
+  ];
+  return (
+    <span className="flex items-center gap-2 text-[10px] text-[var(--muted)]">
+      {entries.map(([color, label]) => (
+        <span key={label} className="flex items-center gap-1">
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ backgroundColor: color }}
+          />
+          {label}
+        </span>
+      ))}
+    </span>
   );
 }
 

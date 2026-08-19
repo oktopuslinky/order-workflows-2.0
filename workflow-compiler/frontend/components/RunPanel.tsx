@@ -69,9 +69,12 @@ const STATE_LABEL: Record<RunState, string> = {
 export function RunPanel({
   projectId,
   slug,
+  onRunChanged,
 }: {
   projectId: string;
   slug: string;
+  /** The live run and its declared signals, for diagram highlighting. */
+  onRunChanged?: (run: Run | null, signalNames: string[]) => void;
 }) {
   const queryClient = useQueryClient();
   const [runId, setRunId] = useState<string | null>(null);
@@ -92,6 +95,16 @@ export function RunPanel({
     refetchInterval: (query) =>
       query.state.data && query.state.data.state !== "running" ? false : 1500,
   });
+
+  // Surface the live run to the parent so the diagram can follow along. The
+  // effect (not the query callback) is what guarantees the parent also hears
+  // about the poll updates and the reset to null on unmount.
+  const signalNames = (workflow?.signals ?? []).map((s) => s.name);
+  const signalKey = signalNames.join(",");
+  useEffect(() => {
+    onRunChanged?.(run.data ?? null, signalKey ? signalKey.split(",") : []);
+  }, [run.data, signalKey, onRunChanged]);
+  useEffect(() => () => onRunChanged?.(null, []), [onRunChanged]);
 
   const start = useMutation({
     mutationFn: (input: Record<string, unknown>) =>

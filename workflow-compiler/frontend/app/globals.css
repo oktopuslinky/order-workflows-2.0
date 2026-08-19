@@ -435,3 +435,54 @@ select option {
   background: color-mix(in srgb, var(--block) 14%, transparent);
   color: color-mix(in srgb, var(--block) 70%, var(--ink));
 }
+
+/* Live-run diagram highlighting (MermaidView + lib/runHighlights).
+   Node shapes vary by kind — rect for tasks, polygon for decisions, path for
+   stadium start/end — so every shape child is addressed. Tokens keep both
+   themes right. */
+g.node.run-done rect,
+g.node.run-done polygon,
+g.node.run-done circle,
+g.node.run-done path {
+  stroke: var(--pass) !important;
+  stroke-width: 2px !important;
+  fill: var(--pass-soft) !important;
+}
+g.node.run-active rect,
+g.node.run-active polygon,
+g.node.run-active circle,
+g.node.run-active path {
+  stroke: var(--accent) !important;
+  stroke-width: 2.5px !important;
+}
+g.node.run-waiting rect,
+g.node.run-waiting polygon,
+g.node.run-waiting circle,
+g.node.run-waiting path {
+  stroke: var(--gate) !important;
+  stroke-width: 2.5px !important;
+  fill: var(--gate-soft) !important;
+}
+g.node.run-failed rect,
+g.node.run-failed polygon,
+g.node.run-failed circle,
+g.node.run-failed path {
+  stroke: var(--block) !important;
+  stroke-width: 2.5px !important;
+  fill: var(--block-soft) !important;
+}
+g.node.run-active {
+  animation: run-pulse 1.1s ease-in-out infinite;
+}
+g.node.run-waiting {
+  animation: run-pulse 2s ease-in-out infinite;
+}
+@keyframes run-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}

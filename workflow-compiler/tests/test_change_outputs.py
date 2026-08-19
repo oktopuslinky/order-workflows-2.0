@@ -712,3 +712,14 @@ def test_dataclass_problems() -> None:
     assert any("'a' is declared twice" in p for p in problems)
     good = "from dataclasses import dataclass, field\n\n@dataclass\nclass D:\n    a: str\n    b: list = field(default_factory=list)\n"
     assert dataclass_problems(good) == []
+
+
+def test_llm_plans_tolerate_stray_items() -> None:
+    from workflow_compiler.change_outputs.models import DiagramUpdatePlan, TestCaseUpdatePlan
+
+    plan = DiagramUpdatePlan.model_validate(
+        {"diagrams": [{"name": "a.mmd", "mermaid": "stateDiagram-v2"}, "notes", "Added X"], "notes": "n"}
+    )
+    assert [d.name for d in plan.diagrams] == ["a.mmd"]
+    tc = TestCaseUpdatePlan.model_validate({"new_cases": ["x", {"title": "t"}], "updated_cases": "nope", "addendum": "text"})
+    assert [c.title for c in tc.new_cases] == ["t"] and tc.updated_cases == [] and tc.addendum.notes == []

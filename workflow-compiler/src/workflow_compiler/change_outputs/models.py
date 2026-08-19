@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from workflow_compiler.docs_export.xlsx_writer import TestCaseRow
 from workflow_compiler.models.base import WorkflowBaseModel
@@ -199,6 +199,14 @@ class DiagramDraft(BaseModel):
     notes: str = ""
 
 
+def _only_dicts(value: object) -> object:
+    """Drop list items that are not objects (long-context models sometimes leak
+    a stray string into an array); a whole non-list value becomes an empty list."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 class DiagramUpdatePlan(BaseModel):
     """The model's answer for ``update_diagrams``."""
 
@@ -206,6 +214,11 @@ class DiagramUpdatePlan(BaseModel):
 
     diagrams: list[DiagramDraft] = Field(default_factory=list)
     notes: str = ""
+
+    @field_validator("diagrams", mode="before")
+    @classmethod
+    def _clean_diagrams(cls, value: object) -> object:
+        return _only_dicts(value)
 
 
 class TestCaseDraft(BaseModel):
@@ -266,3 +279,13 @@ class TestCaseUpdatePlan(BaseModel):
     new_cases: list[TestCaseDraft] = Field(default_factory=list)
     updated_cases: list[TestCaseUpdate] = Field(default_factory=list)
     addendum: TestPlanAddendumDraft = Field(default_factory=TestPlanAddendumDraft)
+
+    @field_validator("new_cases", "updated_cases", mode="before")
+    @classmethod
+    def _clean_lists(cls, value: object) -> object:
+        return _only_dicts(value)
+
+    @field_validator("addendum", mode="before")
+    @classmethod
+    def _clean_addendum(cls, value: object) -> object:
+        return value if isinstance(value, dict) else {}

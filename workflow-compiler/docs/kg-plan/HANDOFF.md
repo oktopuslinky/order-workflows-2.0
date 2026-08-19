@@ -1,10 +1,10 @@
 # KG change pipeline — handoff
 
-**Current phase:** Phase 4 **complete** (2026-08-19). Next: Phase 5 (hardening, docs, demo runbook)
-— read `KG_CHANGE_PIPELINE_PLAN.md` §0 + Phase 5, then this file (especially "What exists after
-Phase 4" and "Open issues"), then `RUNBOOK.md` (Phase 4 section: the three live runs, what the
-generated tests did, gotchas). The 2026-08-14 audit's remaining P0 (CAS-on-save) and the
-model-quality follow-ups listed under "Open issues (Phase 4)" are the Phase 5 backlog.
+**Current phase:** Phase 5 **complete** (2026-08-19) — **the plan's five phases are done**; this is
+the final state file. Start with `RUNBOOK.md` (*Demo script* + Phase 5 results), then this file
+("What exists after Phase 5", "Ids / facts", "Open issues"), then `KG_CHANGE_PIPELINE_PLAN.md`
+for the contract. Follow-up work (if any) is the "Open issues" backlog — model-quality items,
+not missing features.
 
 **Worktree:** `C:\Users\devag\Documents\Code (local)\order-workflows-kg`, branch
 `feat/kg-change-pipeline` (from `demo/dialogue-plus-run` @ `0a6e84d`). Own `.venv` (Python 3.12,
@@ -122,7 +122,50 @@ fresh Send-to-workflow → gate → approve → chained outputs; file rewrites v
 with continuation + one repair round; chaining = **separate follow-on job**; Results UI =
 **Workflows | Change outputs** sub-view switch.
 
-## Ids / facts Phase 5 will need
+## What exists after Phase 5 (hardening, docs, demo)
+
+| Path | Role |
+|---|---|
+| `storage/ids.py` | **Store-boundary guards shared by every file store**: `is_safe_id` / `validate_store_id` (`[A-Za-z0-9_-]{1,128}` → else `StateNotFoundError`), `validate_slug` (bundle / spec dirs), `stored_version(path)` (JSON `version`, legacy = 0), `next_version(current, expected, label, key)` (CAS arithmetic → `StaleWriteError`). Wired into `storage/{file,project_store,user_store,change_store}.py`, `kg/store.py` (`validate_kb_id` / `validate_cr_id` now delegate) and `execution/bundles.py::bundle_dir`. |
+| `exceptions.py` | `StaleWriteError(WorkflowCompilerError)` — mapped to **409** by `api/app.py::_guard`. |
+| `models/project.py`, `kg/models.py`, `models/change.py` | `version: int = 0` on `CompilationProject`, `KnowledgeBase`, `ChangeRequest` — the store bumps it on **every** save; `save(obj, *, expected_version=None)` on every store protocol + implementation (file and in-memory). CAS is **opt-in** (decision, memory `kg-phase5-decisions`): no token = last-write-wins. |
+| `project_compiler.py`, `change/service.py` | `update_specs(..., expected_version=)`, `save_project(project, expected_version=)`, `ChangeRequestService.edit(..., expected_version=)` / `_save(cr, expected_version=)`; ctor knobs `change_outputs_repair_rounds` / `change_outputs_smoke` / `change_outputs_smoke_python` (from `Settings` in `from_settings`), passed to `ChangeOutputsEngine`. |
+| `api/app.py`, `api/schemas.py` | `expected_version?` on `SpecUpdateRequest`, `RenameProjectRequest`, `ArtifactUpdateRequest`; `If-Match` header (`"N"`, `W/"N"`, `N`, `*` = skip, non-integer → 400) via `_expected_version`; `ETag: "N"` on `GET /projects/{id}`, `/knowledge-bases/{id}`, `/change-requests/{id}` and on the write responses; `version` on `ProjectSummary` / `KnowledgeBaseResponse`; scrypt `hash_password` / `verify_password` in `asyncio.to_thread`; the change-outputs export zip name prefers the BCR business id. |
+| `docs_export/artifacts.py::safe_filename_part` | `[A-Za-z0-9._-]` reduction for document/model-derived filename parts; used by `change_outputs/export.py::export_filename`, `tests_doc.py::addendum_filename`, `docs_export/bundle.py::bundle_filename`. |
+| `change_outputs/code.py` | `normalise_style(original, updated) -> (text, changed)` (keep-style: PEP 585/604 generics + `from typing import` trim, two blank lines between top-level blocks, EOF newline — only when the original followed the rule; re-parsed), `describe_syntax_error(code, err)` (offending line ±3 with numbers + the *def-inside-a-list* hint), `late_annotation_names(code)` (names in `@workflow.query/signal/run` / `@activity.defn` annotations defined only below the class or only under `TYPE_CHECKING` — Temporal evaluates hints at import). |
+| `change_outputs/smoke.py` | `run_smoke(bundle, python="", timeout=180) -> SmokeResult` (export layout in a temp dir → one child interpreter: `py_compile` every file, import every module in bundle order → JSON verdict; never raises: `skipped` with a note when the interpreter cannot start), `bundle_layout`, `module_names`. |
+| `change_outputs/models.py` | `FileChecks += repair_rounds, problems[], style_normalised`; `SmokeResult{status passed\|failed\|skipped, python, compiled, compile_errors, modules, imported, import_errors, seconds, note}`; `CodeChangeBundle.smoke`. |
+| `change_outputs/engine.py` | ctor `repair_rounds=2, smoke=True, smoke_python=""`; `_diagnose(code, required, rewritten, texts, closed)` runs every deterministic check (syntax with context, dataclass, symbols, sibling imports incl. nested `with`/`try` blocks, late annotations, ruff) and renders **all** failing verdicts (numbered) for the repair prompt; `_run_code` loops repair rounds (`FileChecks.problems` records each), auto-imports after each round, applies `normalise_style`, records warnings per outcome, then `run_smoke` → `bundle.smoke` (+ warning) and persists. |
+| `prompts/templates/rewrite_source_file.md` | rule 8 pins the Temporal Python SDK surface (`@activity.defn` takes no `retry_policy`; `RetryPolicy` on `execute_activity`; no new `str`-Enum result fields; test-double / `WorkflowEnvironment` forms; helpers must exist with the signature the tests use). |
+| `config.py`, `metrics.py` | `change_outputs_repair_rounds` (2), `change_outputs_smoke` (True), `change_outputs_smoke_python` (""), `baseline_hours["change_outputs"] = 16.0`; `metrics.py` buckets `stage_timings["change_outputs"]` (label *Change outputs (diagrams, code diff, test docs)*). |
+| `scripts/reset_demo_state.py` | dry-run-by-default reset of KBs / CRs / projects (+ workflow states), `--yes` (backup zip first), `--keep <id>`, `--only`, `--generated`, `--no-backup`. |
+| Frontend | `lib/api.ts` (`saveSpec` / `renameProject` / `updateChangeArtifact` take `expectedVersion`), `lib/types.ts` (`version?`, `FileChecks` fields, `SmokeResult`, `CodeChangeBundle.smoke`), `app/projects/[id]/page.tsx` (sends the version, 409 → *Reload the latest version*), `components/ProjectsPanel.tsx`, `components/ArtifactPanel.tsx` (`crVersion`, 409 hint), `components/ChangeOutputsView.tsx` (`SmokeCard`, `repaired ×N` / `style kept` pills, repair-verdict list, 409 hint on Regenerate), `app/guide/page.tsx` + `SPEC_GUIDE.md` (*Change outputs* + CAS section). |
+| Tests | `tests/test_hardening.py` (11), `tests/test_api_change_requests.py::test_artifact_put_honours_expected_version`, `tests/test_change_outputs.py` (+8: `normalise_style`, smoke verdicts, second repair round + smoke, `repair_rounds=0`, time-saved bucket, `describe_syntax_error`, nested-import coherence, `late_annotation_names`). |
+| Docs | `docs/HOW_IT_WORKS.md` (§8c–§8g *Change pipeline map* banner, §7.3 store guards + CAS, §8g repair rounds / keep-style / smoke / config, route rows with `ETag` / `expected_version` / `If-Match`), `docs/architecture.md` (*The business-change pipeline end to end* — component + sequence diagrams, hardening note), `README.md` (*Business change pipeline — end to end*), `CLAUDE.md` (architecture essentials consolidated into one five-engine bullet + a store-guards/CAS bullet), `docs/kg-plan/RUNBOOK.md` (*Demo script* section + Phase 5 results), this file. |
+
+Locked in Phase 5 (user decisions, memory `kg-phase5-decisions`): CAS **opt-in**; the demo pass runs
+from a **fresh KB + CR**; the reset recipe is **document-only** (nothing deleted this session);
+`feat/live-diagram` is merged **only if every gate is green** (it is a real 3-way merge).
+
+## Ids / facts a follow-up will need
+
+- **Phase 5 demo pass (fresh, on this machine, `.workflow_state/`)**: KB
+  `4fc250d8b4cf4f3bbcb0fdcba0ec95fc` (*Order lifecycle (Existing_KG) — Phase 5 demo*, 394 nodes,
+  3 files skipped by enrichment — *Reindex + enrich* fills them), CR `61087a8b847c4d67b0f708378fff4c2a`
+  (BCR-001, complete, `project_ids = [41cec612…]`), project **`41cec612-b4b5-45c9-94d0-4678de821283`**
+  (COMPLETED without `accept_incomplete`; `change_outputs` all three stages done, code stage re-run
+  once with the nested-import fix — see RUNBOOK Phase 5 for the smoke / pytest verdicts).
+- **Reference state kept from earlier phases**: KB `86d9919378bd4ebe8329f8ff950a2a27`, CR
+  `dfad0d257db847919029f11dbef3c47d`, projects `d64a03d8…` (code stage re-run in Phase 5 with the
+  second repair round + smoke) and `76bdad1c…`. Nothing was deleted (decision); the reset recipe is
+  `scripts/reset_demo_state.py` (dry run by default).
+- **Drivers / logs**: `%LOCALAPPDATA%\Temp\claude\…\13185e58-…\scratchpad\pw\phase5.mjs` (+ `kb_ask.mjs`,
+  `state.json` cookies, `*.log`), `…\c9a65f4d-…\scratchpad\{live_regen*.log,json, p5_run1/, p5_demo/}`
+  (bundles + `pytest.log`), scratch venvs `tvenv` (py 3.12, temporalio 1.20) / `tvenv311`.
+- **Servers**: this worktree on `127.0.0.1:8010` / `:3010`; on Windows start them with
+  `Start-Process` (a shell that exits kills its children); the demo worktree holds 8000/3000.
+
+## Ids / facts Phase 5 needed (kept for reference)
 
 - **Live projects with change outputs** (`.workflow_state/projects/`): `d64a03d8-939d-425a-b649-8816dce80ff3`
   (three code re-runs, see RUNBOOK Phase 4) and **`76bdad1c-558d-4454-b4e6-27fe38e5006b`** (fresh
@@ -202,19 +245,25 @@ with continuation + one repair round; chaining = **separate follow-on job**; Res
 
 ## Open issues / notes
 
-- (Phase 4) **No generated bundle ran green**: every live bundle failed at import/collection for a
-  different model slip (duplicate dataclass field → caught by `dataclass_problems` now; invented
-  sibling name → `missing_imports`; missing import → `auto_import`; a `SyntaxError` in the long test
-  module that one repair round did not fix). Phase 5 candidates: a second repair round for the tests
-  file, a subprocess `py_compile` / import smoke test of the whole bundle after the code stage,
-  and pinning the temporalio API surface in the rewrite prompt (`activity.defn(retry_policy=…)`
-  is invented).
-- (Phase 4) The rewrite prompt's "keep style" is not honoured (blank lines collapsed, `List[...]`);
-  cosmetic, visible in the diff.
-- (Phase 4) The Time-saved card counts `change_outputs` against a 2 h default estimate
-  (`baseline_hours` has no dedicated key yet).
-- (Phase 4) `regenerate` while an approve/validate job runs answers 409 (one run per project) — the UI
-  disables the buttons, the CLI reports it.
+- (Phase 5) **Still no generated test suite ran green — but the demo project's final bundle imports
+  end to end (smoke 11/11)**; failures are now *reported before the download*: the bundle smoke test
+  (compile + import in a child interpreter) named the exact module each time and pytest in `tvenv`
+  confirmed it (RUNBOOK Phase 5: per test 0 pass · 4 fail · 2 hang — two baseline-class str-Enum
+  failures, two generated-test slips, two hangs where the test signals the order-level
+  `delivery_confirmed` while the workflow waits per group). Remaining model-quality items:
+  a syntax slip a long test module can keep after two repair rounds (the verdict now carries the
+  lines + a hint — measure on the next run), and Nemotron sometimes rewriting an existing diagram
+  coarser than the original (flagged by the required-states check, original kept). Ideas not
+  built: a third, *test-only* repair round that also runs the smoke import per file; a "restore
+  original" button per file/diagram; running the smoke in `tvenv` by default
+  (`change_outputs_smoke_python`).
+- (Phase 5) The `change_spec` step buckets under *discovery* in the time-saved card (its
+  `stage_timings` key is `change_spec`; only `change_outputs` got its own key by request).
+- (Phase 5) A change spec can name a *new* diagram file (`updated-system-architecture.mmd`); the
+  validator WARNs (not in the KB) and the diagram stage asks the model for it as a companion — the
+  model may return nothing (flagged). Fine for review; a hand edit of `changes.md` removes it.
+- (Phase 5) `regenerate` while another job runs still answers 409 by design (one run per project);
+  the UI now says so next to the button.
 
 - (Phase 3) `validate` still strips the human `- triggers:` metadata line (pre-existing OPEN defect,
   memory `llm-timeout-and-trigger-stripping-defects`); the live approve needed `accept_incomplete`.
@@ -252,6 +301,17 @@ with continuation + one repair round; chaining = **separate follow-on job**; Res
   for Phase 5.
 
 ## Phase log
+- **Phase 5 — 2026-08-19 — done.** Commits on `feat/kg-change-pipeline`: store-boundary guards +
+  opt-in CAS + scrypt off the loop (+ tests) → repair rounds / smoke test / keep-style / prompt pin /
+  baseline key (+ frontend CAS) → frontend smoke card + guide → reset script → docs (HOW_IT_WORKS,
+  architecture, README, CLAUDE.md) → syntax verdict context → export label → nested-import coherence
+  → mermaid error suppression → late-annotation check → `feat/live-diagram` merged (3-way, frontend
+  only, additive conflicts) → smoke-warning prefix → RUNBOOK demo script + Phase 5 results + HANDOFF. Gates: pytest **718
+  passed** (699 + 19 new), ruff clean, mypy strict clean (191 files), `npm run build` clean; live on
+  Nemotron: code re-run on `d64a03d8…` (1233 s) + one full demo pass (+ three code re-runs on the demo
+  project, the last with a passing bundle smoke) KB → CR → wizard → export →
+  send → gate → approve → chained outputs on `4fc250d8… / 61087a8b… / 41cec612…` with screenshots
+  `docs/kg-plan/screenshots/phase5-*.png`; generated-test results recorded honestly.
 - **Phase 4 — 2026-08-19 — done.** Commits on `feat/kg-change-pipeline`: WIP (models / code / diagrams /
   tests_doc / engine / export, agent + prompts, `generate_change_outputs`, job kind + routes) → CLI +
   mock defaults + tests → frontend Change outputs view + per-file downloads → docs → deterministic

@@ -850,9 +850,11 @@ async def test_engine_second_repair_round_and_smoke(kg: KgService, kb: Knowledge
         if kind == "complete" and "failed a deterministic check" in p
     ]
     assert len(repairs) == 2 and "SyntaxError" in repairs[0]
-    # The bundle smoke ran in a subprocess and was recorded.
+    # The bundle smoke ran in a subprocess and was recorded; its warning carries the
+    # code-stage prefix so a re-run of the stage drops it (stale-warning rule).
     smoke = outputs.code.smoke
     assert smoke is not None and smoke.status in {"passed", "failed"}
+    assert all(w.startswith("code ") for w in outputs.warnings if "smoke" in w)
     assert smoke.compiled == len([f for f in outputs.code.files if f.path.endswith(".py")])
     assert "src.shared.types" in smoke.modules
 

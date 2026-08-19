@@ -1,7 +1,9 @@
 # KG change pipeline — runbook
 
-Live-run recipe and recorded results, one section per phase. Everything here was executed
-against the real `Existing_KG` corpus; numbers are measured, not estimated.
+The **end-to-end demo script** (bring-up → exact clicks → ids → expected timings → gotchas → reset
+recipe) comes first; then one section per phase with the live-run recipe and the recorded results.
+Everything here was executed against the real `Existing_KG` corpus; numbers are measured, not
+estimated.
 
 ## Bring-up (this worktree)
 
@@ -22,6 +24,143 @@ jobs). Demo account: `kgdemo@example.com` / `kgdemo-pass-2026` (local account on
 
 Demo zip: `python scripts/make_kb_zip.py` → `examples/knowledge_bases/order-lifecycle.zip`
 (the corpus folder is a verbatim copy of the manager's `Existing_KG`).
+
+## Demo script — the whole business-change pipeline in one sitting (Phase 5, 2026-08-19)
+
+This is the script the Phase 5 demo pass followed end to end (measured timings are in the
+Phase 5 section below; the ids named here are the pass's own, kept on this machine). Everything
+happens in the browser except where a curl/API call is noted; every model call goes to cloud
+Nemotron (`nvidia/llama-3.3-nemotron-super-49b-v1`, the KB/CR default). Budget **≈ 75–90 min**
+wall-clock, of which ≈ 55 min is model time; the long stretches are marked so the presenter can
+talk over them (or pre-run steps 1–2 and open the ready KB / CR instead).
+
+### 0. Bring-up (5 min, once)
+
+1. Servers as at the top of this file: backend `127.0.0.1:8010` (no `--reload`), frontend
+   `127.0.0.1:3010` with `NEXT_PUBLIC_API_BASE=http://127.0.0.1:8010`. On Windows start them
+   detached (`Start-Process`) — a shell that exits takes its children with it.
+2. Open `http://127.0.0.1:3010/login`, sign in as `kgdemo@example.com` / `kgdemo-pass-2026`
+   (or *Create account*).
+3. Optional reset — see *Reset the demo state* below (nothing in this script needs it; a second
+   KB/CR/project with the same name is fine).
+
+### 1. Knowledge base (≈ 23 min cold, ≈ 6 min when the KB directory already has an `llm_cache/`)
+
+1. **Knowledge** (nav) → drop `examples/knowledge_bases/order-lifecycle.zip` (or click the file
+   input), name *Order lifecycle (Existing_KG) — Phase 5 demo*, provider **Nemotron (cloud)**,
+   *LLM enrichment* **on** → **Upload and index** (`phase5-kb-upload-form.png`).
+2. Redirected to `/knowledge/<kb_id>`; the header pill says *indexing…*, the banner walks the
+   22 file nodes (`doc:README.md (1/22)` … `mod:existing_Codebase/starter.py` … `process
+   clustering`) — **≈ 35 s per file + 2 clustering batches**; talk over it, or open a ready KB
+   (`phase5-kb-indexing.png`).
+3. Pill *ready* → Graph card ≈ 390–400 nodes / ≈ 960 edges, catalog `EPIC-001`, `US-001..007`,
+   `TC-01..17`, `BR-01..12`, documents `BRD-ORD-001` / `TDD-ORD-001` / `TP-ORD-001`
+   (`phase5-kb-ready.png`). If the warnings say *N file(s) skipped after repeated LLM failures*,
+   **Reindex + enrich** re-asks only those (≈ 30 s each; the rest come from `llm_cache/`).
+4. **Ask the graph** → *how does dispatch compensate provisioning*, budget 4000 → coverage 100 %,
+   sources `existing_Codebase/workflows/order_workflow.py` lines …, the state-machine diagram
+   (`phase5-kb-ask.png`). Optional: **Impact** from `complete_order`, 2 hops.
+
+### 2. Change request + wizard (≈ 20 min of model time; 4 steps)
+
+1. **Changes** (nav) → *New change request*: KB = the one above, upload
+   `examples/change_requests/BCR-001-partial-shipment-support.docx`, provider Nemotron →
+   **Create change request** (`phase5-cr-new-form.png`). The page opens with the parsed
+   metadata (BCR-001 · VP Supply Chain Operations · target OrderWorkflow) and 6 requirements —
+   no model call (`phase5-cr-created.png`).
+2. **Start wizard** → ids reserved instantly (`EPIC-002`, `TDD-ORD-002`, next TC `TC-18`, 86-row
+   impact traversal) and the *impact questions* job runs (**≈ 40 s**, `phase5-wizard-started.png`).
+3. **Impact**: 2–3 questions → click a suggested chip (it fills the box) → **Answer** (3–15 s
+   each; or **Skip**) → **Draft now** (**≈ 3.5 min**: draft + coverage pass;
+   `phase5-impact-drafting.png` → `phase5-impact-drafted.png`: ≈ 25–30 affected rows, KG
+   appendix, Sources) → optional **Revise** (*add EPIC-001 DoD + TP §3.2 rows*, ≈ 1 min) or
+   **Edit** → **Approve** (`phase5-impact-approved.png`). Approve auto-starts the next step's
+   questions (**≈ 1 min**).
+4. **EPIC**: 3 questions → chips → **Draft now** (**≈ 1.5 min**; Epic Statement / Business
+   Value / In-Scope Capabilities / DoD / Story Map `US-008…` / NFRs / Dependencies / Risks) →
+   **Approve** (`phase5-epic-*.png`).
+5. **Stories**: 3 questions → **Draft now** (**≈ 2.5 min**, batches of 3; one `## US-00N` section
+   each with Given/When ACs) → **Approve** (`phase5-stories-*.png`).
+6. **TDD**: 5 questions → **Draft now** (**≈ 2.5 min**, 4 chunked calls; 8 numbered sections,
+   each *Existing* / *Proposed*, `PARTIALLY_*` states, `list[ProvisioningResult]`, `get_status`
+   per group, the companion diagram named) → **Approve** → header pill **complete**
+   (`phase5-tdd-*.png`, `phase5-wizard-complete.png`).
+7. **Export**: on the TDD panel **.docx** (`TDD-ORD-002-…docx`, < 1 s), header **Export all
+   (.zip)** (`BCR-001-<cr>-export.zip`: 4 + N docx, xlsx preview, markdown, MANIFEST) — open the
+   TDD next to `TDD-ORD-001` in Word for the look (`phase5-cr-export.png`).
+
+### 3. Send to workflow GUI → the spec gate (≈ 5.5 min compile + 2.5 min validate)
+
+1. **Send to workflow GUI** (visible once the TDD is approved; `phase5-cr-send-button.png`) →
+   overlay *Compiling the TDD into a grounded workflow project* (`phase5-cr-sending.png`) —
+   **≈ 4–5.5 min** (segmentation → grounded facts → change spec) → redirected to
+   `/projects/<id>` (`phase5-project-after-send.png`); the CR page now lists the project.
+2. Spec tab: the workflow spec + **`changes.md`** (≈ 35–40 components with KG node ids,
+   requirement ids, Sources; `phase5-project-changes-md.png`); header *Grounded by … · from
+   BCR-001*.
+3. Hand edits that Nemotron variance may need (Phase 3/4/5 all differed): if `- triggers:` is
+   empty give it a value; drop the descriptive *State Transitions* bullets (R9); if the spec has
+   no `## Inputs` / `## Outputs`, add them. **Save** (compare-and-swap: the editor sends the
+   project version; a *409 … changed since it was loaded* means another tab or a job saved
+   first → *Reload the latest version*).
+4. **Validate** (**≈ 2–2.5 min**, `phase5-project-validating.png` → `phase5-project-validated.png`):
+   expect completeness WARNs on the new states, a `changes.md` WARN for a diagram path the KB does
+   not have (the model named the *new* file) — none blocking in this pass.
+5. Optional **Resolve** tab (guided Q&A over both files; wait for *Questions ready* before
+   *Start resolving*).
+
+### 4. Approve → change outputs (≈ 3–4 min approve + ≈ 25–30 min outputs)
+
+1. **Approve** (tick *accept incomplete* only if a BLOCK remains) → **≈ 3–4 min** → stage
+   **COMPLETED**, graph health, Temporal design + code (`phase5-project-approving.png` →
+   `phase5-project-approved.png`).
+2. The approve job's `after` hook starts the **change_outputs** job on cloud Nemotron: Results →
+   **Workflows | Change outputs** shows *diagrams… → code… → tests_doc…* with per-file persistence
+   (`phase5-outputs-running.png`); **≈ 3 min diagrams + ≈ 20 min code (6 files, up to 2 repair
+   rounds each, keep-style, bundle smoke) + ≈ 2 min test docs**.
+3. When done: **Diagrams** (Updated / Original toggle, the companion
+   `order-state-machine-partial-shipment.mmd`; `phase5-outputs-diagrams-*.png`), **Code** (status
+   / ast / ruff / `repaired ×N` / `style kept` pills, the *Bundle smoke test* card, unified /
+   side-by-side; `phase5-outputs-code-*.png`), **Test cases** (TC-18…, updated TC-06/09/10/12,
+   addendum; `phase5-outputs-tests*.png`), **Download all (.zip)** →
+   `BCR-001-<project>-change-outputs.zip` (README layout; `phase5-final-outputs-*.png` show the final state with the smoke test **passed 11/11**).
+4. Honesty slide: the smoke card and the RUNBOOK's *Running the generated tests* — the corpus's own
+   tests fail 4/4 in a fresh env (str-Enum decode), so a green run is not the bar; the deliverable
+   is a checked, reviewable diff.
+
+### Reset the demo state (document-only recipe; nothing was deleted this session)
+
+```powershell
+cd "…\order-workflows-kg\workflow-compiler"
+.\.venv\Scripts\python scripts\reset_demo_state.py                 # dry run — lists every KB / CR / project (+ workflow states)
+.\.venv\Scripts\python scripts\reset_demo_state.py --only projects  # dry run, projects only
+.\.venv\Scripts\python scripts\reset_demo_state.py --yes --keep 86d9919378bd4ebe8329f8ff950a2a27 --keep dfad0d257db847919029f11dbef3c47d
+#   deletes everything except the reference KB + CR, after writing .workflow_state\backup-<stamp>.zip
+```
+
+Stop the backend first (a running job would keep writing), keep `users/` (the script never
+touches accounts), and `generated/<project-id>/` only goes with `--generated`. To start truly
+empty, delete `.workflow_state\` after stopping both servers and register the demo account
+again.
+
+### Gotchas that bite a live demo (collected over phases 0–5)
+
+- **Ports / servers**: 8000/3000 may belong to another worktree; `netstat -ano | findstr :8010`.
+  Never `--reload` with a job running; on Windows start servers with `Start-Process` (a closing
+  shell kills its children).
+- **Nemotron pace + hygiene**: ≈ 35 s per enrichment file, 504s happen (the client retries; the
+  UI keeps polling); JSON answers occasionally carry stray strings — every plan tolerates them.
+- **Wizard re-asks**: the model sometimes re-asks a recorded decision — answer consistently or
+  Skip. Whole-document revisions are section-spliced; deleting a table row is a hand edit.
+- **Spec variance at the gate**: the trigger line, State-Transitions bullets, missing
+  Inputs/Outputs, a thin spec — the gate catches them; one hand edit each.
+- **Chrome + downloads**: the automation profile blocks rapid multi-downloads; click one at a
+  time (Playwright's context is fine).
+- **Two tabs on one project**: saves are compare-and-swap now — the second tab gets a 409 and a
+  *Reload the latest version* link instead of overwriting.
+- **Generated tests**: the bundle imports (smoke) but a long test module can still hold a syntax
+  slip after two repair rounds; the verdict is on the card, the file is kept with the error.
+
 
 ## Phase 0 — Knowledge base foundation (2026-08-17)
 
@@ -497,3 +636,129 @@ smoke test of the bundle in a subprocess.
 - Harness: background Bash calls die at 600 s (detach long drivers and watch the log with Monitor);
   Bash heredocs still unescape `\n` — every multi-line patch went through the Write tool; the
   Chrome DevTools MCP server was again unavailable, Playwright (`pw/phase4.mjs`) drove the browser.
+
+## Phase 5 — Hardening, docs, demo runbook (2026-08-18/19)
+
+### Automated gates
+
+| Gate | Result |
+|---|---|
+| `pytest -p no:warnings` | **718 passed** (699 from Phase 4 + 19 new: 11 `test_hardening.py` — id/slug guards, `next_version` / `stored_version`, every file store refusing path-shaped ids on load *and* save, `bundle_dir`, CAS on the project / CR / KB stores (file + in-memory), filename sanitising, HTTP `ETag` / `expected_version` / `If-Match` → 409 on `PUT /spec` + `PATCH`, path-shaped ids over HTTP; 1 CR artifact-PUT CAS test; 8 in `test_change_outputs.py` — `normalise_style`, subprocess smoke verdicts (failed / passed / compile error / interpreter missing), engine second repair round + smoke, `repair_rounds=0`, `change_outputs` time-saved bucket, `describe_syntax_error`, nested-import coherence, `late_annotation_names`) |
+| `ruff check src tests` | clean |
+| `mypy src` (strict) | clean, 191 files |
+| `npm run build` | clean; `npx tsc --noEmit` clean; `npm run lint` = the same 2 pre-existing `RunPanel`/`SpecChatPanel` findings |
+
+### What was hardened (and how to see it)
+
+- **Store-boundary guards** — `storage/ids.py`; every file store + `bundle_dir` + export filenames.
+  `GET /projects/..%2Fx` → 404, a crafted id can never build a path; export names like
+  `BCR-001-41cec612-change-outputs.zip` come out of `safe_filename_part`.
+- **Compare-and-swap** — `version` on projects / KBs / CRs, bumped on every save; opt-in
+  `expected_version` / `If-Match`; `ETag` on the GETs. Live (project `41cec612…`, script stage
+  `cas`): `PUT /spec` with the current version 4 → **200, ETag "5"**; the same PUT again with 4 →
+  **409** *"changed since it was loaded (stored version 5, expected 4). Reload and retry."*;
+  `PATCH` with `If-Match: "4"` → **409**. The editors send the version and show *Reload the latest
+  version* on 409.
+- **scrypt off the event loop** — register / login hash in `asyncio.to_thread`.
+- **Phase-4 backlog** — N targeted repair rounds (all failing verdicts in one prompt, syntax
+  errors with the offending lines + the def-inside-a-list hint), the bundle **smoke test**
+  (`py_compile` + import of the export layout in a child interpreter, on the card), the
+  **keep-style** pass, the temporalio API surface pinned in the rewrite prompt, the
+  `change_outputs` baseline key (16 h; the Time-saved card lists it), the sibling-import check
+  walking nested imports, the export zip named after the BCR id, mermaid errors no longer
+  appended to the page, 409 hint on Regenerate.
+
+### Live run 1 — code stage re-run on `d64a03d8…` with the second repair round + smoke test (Nemotron)
+
+`POST …/change-outputs/regenerate {stage: code}` (`scratchpad/live_regen_p5_code.log/.json`, bundle
++ pytest log under `scratchpad/p5_run1/`):
+
+| Item | Measured |
+|---|---|
+| Job | **1233 s** (code stage 1227 s), succeeded; 6 files rewritten in order types → activities → workflow → worker → starter → tests |
+| Per-file verdicts | `types.py` clean first answer (0 rounds), `starter.py` 0 rounds; `order_activities.py` **1 round** (verdict: must define `compensate_provisioning`, `compensate_dispatch` + `LineItem` undefined — fixed), `worker.py` 1 round (imports names the rewritten activities do not define — fixed), `order_workflow.py` 1 round (F821 — fixed); **every source file `ast ok` + `ruff ok` + `style kept`** (`List[...]` → `list[...]`, blank lines restored) |
+| `tests/test_order_workflow.py` | **still does not parse after 2 repair rounds** — the model wrote `async def fake_dispatch_group_failing(…)` *inside* the `activities=[…]` list literal (line 160) three times running; the repair prompt only carried *"invalid syntax (line 160)"* → `describe_syntax_error` now adds the lines and the explicit "define it at module level, put the NAME in the list" hint (landed after this run; exercised by run 2) |
+| Bundle smoke test | **failed** — `compiled 10`, `imported 10/11` (**every `src.*` module imports**), the one error is the test module's SyntaxError; 1.5 s |
+| Generated tests in `tvenv` (py 3.12, temporalio 1.20) | **collection error** at the same line — exactly what the smoke card said before the download (baseline: the corpus's own tests fail 4/4, re-confirmed 2026-08-19) |
+
+### Live run 2 — the full demo pass (fresh KB → CR → wizard → export → send → gate → approve → outputs)
+
+Driven with `scratchpad/pw/phase5.mjs` (`login → kb → cr → wizard → export → send → gate → cas →
+approve → outputs`) following the *Demo script* section; all model calls on cloud Nemotron
+`nvidia/llama-3.3-nemotron-super-49b-v1`; the backend was restarted three times between jobs to pick up
+fixes found during the run (never while a job ran). Ids: KB **`4fc250d8b4cf4f3bbcb0fdcba0ec95fc`**
+(*Order lifecycle (Existing_KG) — Phase 5 demo*), CR **`61087a8b847c4d67b0f708378fff4c2a`**,
+project **`41cec612-b4b5-45c9-94d0-4678de821283`** (all under `.workflow_state/` on this machine).
+
+| Step | Measured |
+|---|---|
+| KB upload + enrich (cold, 22 file nodes + clustering) | **1387 s = 23 min**; 394 nodes / 960 edges; catalog `EPIC-001`, `US-001..007`, `TC-01..17`, `BR-01..12`, `BCR-001`, documents `BRD/TDD/TP-ORD-001`; warnings: top-level folder stripped, *3 file(s) skipped after repeated LLM failures* (Nemotron JSON hygiene — Reindex + enrich would re-ask only those); *Ask the graph* "how does dispatch compensate provisioning" → coverage 100 % (`phase5-kb-*.png`) |
+| CR create (docx → meta / 6 requirements / 20 seeds) | < 1 s; `phase5-cr-created.png` |
+| Start wizard → impact questions | **39 s** (ids EPIC-002 / TDD-ORD-002 / TC-18, 86 impact rows) |
+| Impact: 2 questions (chips) → draft → approve | answers 3 s / 12 s; draft **202 s** (draft + coverage pass); v1 = 25 affected rows naming `order_workflow.py`, `types.py`, `complete_order`, TC-06/09/10, US-003/004/005, EPIC-001, the state-machine diagram; 14 sources, coverage 0.75 |
+| EPIC: 3 questions → draft → approve | next-step questions ≈ 48 s; draft **88 s**; Epic Statement / Business Value / In-Scope Capabilities / DoD / Story Map / NFRs / Dependencies / Risks |
+| Stories: 3 questions → draft → approve | questions ≈ 5.6 min (one slow Nemotron call); draft **149 s** (3 batches) → **US-008…US-014** (7 stories, 21 Given/When ACs) |
+| TDD: 5 questions → draft → approve | questions ≈ 54 s; draft **136 s** (4 chunks) → 8 sections × Existing/Proposed, `PARTIALLY_PROVISIONED/DISPATCHED`, `list[ProvisioningResult]`, `get_status`, companion diagram; CR **complete** |
+| Wizard end to end | 02:22:22 → 02:42:43 = **20 min** wall-clock, unattended (`phase5-<step>-*.png`, `phase5-wizard-complete.png`) |
+| Export (UI) | TDD `.docx` 40 103 B, `BCR-001-61087a8b-export.zip` 382 644 B, both < 1 s (`phase5-cr-export.png`) |
+| Send to workflow GUI | **330 s** (segmentation 81 s, extraction 157 s, change spec 91 s); grounding coverage 0.82, 9 sources, requirement ids BCR-01-01…06; `changes.md` **34 components** (21 modify / 7 add / 6 verify: 4 modules, 7 activities, 3 types, 1 signal, 1 query, 4 diagrams, 6 tests, 8 docs); spec 3.2 KB with the trigger line **present** this time (`phase5-project-after-send.png`, `phase5-project-changes-md.png`) |
+| Hand edits + `PUT /spec` (expected_version 2 → ETag "3") + validate | validate **141 s** — findings: 2 completeness WARNs (`state: PARTIALLY_PROVISIONED / _DISPATCHED`), 1 `changes.md` WARN (`updated-system-architecture.mmd` not in the KB — the model named the *new* file); **no BLOCK** (`phase5-project-validat*.png`) |
+| CAS demo | see *What was hardened* (200 → 409 → 409) |
+| Approve (no override needed) | **247 s** → **COMPLETED**, workflow `orderlifecycleworkflow` (`phase5-project-approv*.png`) |
+| Chained `change_outputs` (auto, cloud Nemotron) | started 5 s after approve; **1675 s = 28 min**: diagrams 266 s, code 1315 s, tests_doc 98 s (`phase5-outputs-running.png`) |
+| Diagrams | `order-sequence.mmd` (par block per group), `system-architecture.mmd`, companion `order-state-machine-partial-shipment.mmd` (all checks pass), spec diagram; `order-state-machine.mmd` **check failed** (the model rewrote it as a coarse 6-state machine dropping `PROVISIONING/DISPATCHING/…` — flagged, original kept side by side); `updated-system-architecture.mmd` (a companion the change spec invented) — model returned no diagram (flagged) |
+| Code (first chained run) | 6 files, **every file `ast ok` + `ruff ok`**, tests file clean on the first answer, `types.py`/`starter.py` 0 rounds, activities / worker / workflow 1 round each, `style kept` on all; **bundle smoke test FAILED**: `src.workflows.order_workflow` (and `worker`, `starter`, `tests`) — `ImportError: cannot import name 'compensate_provisioning' from src.activities.order_activities`. Root cause: the workflow imports its activities inside Temporal's `with workflow.unsafe.imports_passed_through():` block and the sibling-import coherence check only walked top-level imports → **fixed** (`ast.walk`), test added; the smoke test did exactly what it was added for (`phase5-outputs-code-smoke.png`) |
+| Generated tests in `tvenv` (first chained run) | **collection error** — the same ImportError (`scratchpad/p5_demo/pytest.log`) |
+| Test docs | 17 → **23 rows**: new **TC-18…TC-23**, updated **TC-05/06/09/10/12**; addendum `TP-ORD-001-addendum-BCR-001` (`phase5-outputs-tests*.png`) |
+| Export | **Download all (.zip)** → `BCR-001-41cec612-change-outputs.zip` (75 023 B, README layout) |
+| Time-saved card | lists `change_outputs` 28 min against the new **16 h** estimate (`phase5-outputs-diagrams-updated.png`) |
+| Code re-runs on the same project (`regenerate {stage: code}`) after the nested-import fix | **run 2 — 902 s**: every file `ast ok` / `ruff ok`, `types.py` 1 round (F821), activities 1 round (`dispatch_order` symbol), workflow 1 round (F821), tests clean; **smoke FAILED** again, differently: `NameError: name 'GroupStatus' is not defined` — the model redefined `GroupStatus` *below* the workflow class and used it in a `@workflow.query` annotation, which Temporal evaluates at import (`typing.get_type_hints`); ruff was satisfied (the name exists in the file) → new deterministic check `late_annotation_names` (+ prompt rule) landed. **run 3 — failed at 1093 s: Nemotron `HTTP 504`** on the activities file (the provider's retries gave up; the stage is recorded `failed`, the job re-runnable — a partial bundle stays persisted). **run 4 — 692 s**: activities 1 round, workflow 1 round, four files clean first answer, all `style kept`; **bundle smoke test PASSED — 11 compiled, 11/11 modules imported** (`phase5-final-outputs-code-smoke.png`), the first bundle of the whole project that imports end to end |
+| Generated tests of the final bundle, one process per test, 120 s hard timeout (`scratchpad/p5_demo_rerun2/per_test.log`) | 6 tests: **0 pass · 4 fail · 2 hang** — `test_validation_failure_rejects_without_provisioning` and `test_cancel_after_provisioning_compensates_reservation` fail **exactly like the corpus baseline** (`status == ['R','E','J',…]`, the str-Enum decode); `test_partial_shipment_provisioning` `TypeError: LineItem.__init__() missing 'unit_price'` and `test_mixed_cancellations` `signal() got an unexpected keyword argument 'group_id'` are slips inside the generated test module (helper / signal signature vs. the rewritten types and workflow); `test_happy_path_reaches_dispatched` and `test_status_query_reflects_current_state` **hang** — the rewritten workflow waits for a per-group `delivery_confirmed` the old-style test never sends. The workflow / activities / types / worker / starter modules themselves import and run under the time-skipping test server. |
+| Final export | `BCR-001-41cec612-change-outputs.zip` (75 420 B); note the outputs' warning list still shows the *previous* runs' smoke failures twice — fixed after this run (smoke warnings now carry the `code ` prefix a stage re-run drops) |
+
+### Running the generated tests (scratch venv `tvenv`: py 3.12, temporalio 1.20, pytest-asyncio 1.4)
+
+Recorded honestly, against the corpus baseline (**the corpus's own tests fail 4/4** — str-Enum
+decode through temporalio's default converter — re-confirmed at the start of this phase):
+
+- `d64a03d8…` re-run (run 1): **collection error** — `SyntaxError` at line 160 of the rewritten
+  test module (`async def` inside a list literal), predicted by the smoke card.
+- `41cec612…` chained run: **collection error** — `ImportError: cannot import name
+  'compensate_provisioning'` (workflow ≠ activities inside `imports_passed_through`), predicted by
+  the smoke card; check fixed the same session.
+- `41cec612…` code re-run 2: **collection error** — `NameError: GroupStatus` (annotation evaluated at
+  import, name defined below the class), predicted by the smoke card; check + prompt rule added.
+- `41cec612…` code re-run 4 (final): **the bundle imports (smoke passed 11/11)**; per test with a
+  120 s timeout: **0 pass · 4 fail · 2 hang** — 2 baseline-class failures (str-Enum decode, same
+  as the corpus), 2 generated-test slips (helper kwargs / signal kwargs), 2 hangs (test signals
+  the order-level `delivery_confirmed`, the workflow now waits per group).
+
+So: **still no generated test suite ran green in this phase — but for the first time a generated
+bundle imports end to end** (smoke 11/11 on the demo project's final run), and the gap moved from
+"does not import" to "the generated *tests* disagree with the generated *workflow* about the
+contract" (per-group delivery signals, helper kwargs) plus the corpus's own str-Enum decode. The
+smoke test tells the reviewer *before* the download exactly where a bundle breaks, and each live
+slip became a deterministic check or a better verdict (nested imports, late annotations, syntax
+context + hint). The deliverable remains a checked, reviewable diff.
+
+### Gotchas found in this phase
+
+- **A shell that exits kills its children on Windows** — servers started with `(… &)` from the
+  Bash tool died with the call; `Start-Process … -WindowStyle Hidden` (PowerShell) keeps uvicorn
+  / `next dev` alive across tool calls.
+- **Every heredoc path unescapes** — `\n` inside a JS/TS string literal, `\\.` in a regex — even a
+  Python here-string; the only safe path for multi-line patches is the Write tool + running the
+  file (Bash `sed` one-liners are fine).
+- **Temporal workflow modules import inside `with workflow.unsafe.imports_passed_through():`** — any
+  import-coherence check must `ast.walk`, not iterate `tree.body`.
+- **The smoke test is the honest verdict** — per-file `ast`/ruff/coherence all passed on the
+  demo project's first chained run and the bundle still did not import; without the child
+  interpreter the reviewer would have found out from pytest.
+- **Nemotron variance on the same corpus**: run 1 wrote a `def` inside a list three times running;
+  the demo run's test module was clean on the first answer but the workflow imported a name the
+  activities dropped. Every deterministic verdict added this phase came from one of these.
+- **Fresh KB = cold `llm_cache/`** (23 min); a KB directory that already has the cache re-enriches
+  in ≈ 5 min — for a live demo, pre-index or reuse the KB.
+- Mermaid appends a "bomb" to `document.body` on a syntax error unless
+  `suppressErrorRendering: true` — a regenerated diagram with a slip put it at the bottom of the
+  Results tab.

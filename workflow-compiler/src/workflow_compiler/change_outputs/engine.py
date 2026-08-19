@@ -676,12 +676,12 @@ class ChangeOutputsEngine:
                     e.split(":", 1)[0] for e in smoke.compile_errors
                 ]
                 outputs.warnings.append(
-                    "bundle smoke test failed: " + ", ".join(failing[:6])
+                    "code bundle smoke test failed: " + ", ".join(failing[:6])
                     + (" …" if len(failing) > 6 else "")
                     + (f" ({smoke.note})" if smoke.note else "")
                 )
             elif smoke.status == "skipped" and smoke.note:
-                outputs.warnings.append(f"bundle smoke test skipped: {smoke.note}")
+                outputs.warnings.append(f"code bundle smoke test skipped: {smoke.note}")
             if persist is not None:
                 await persist(project)
 

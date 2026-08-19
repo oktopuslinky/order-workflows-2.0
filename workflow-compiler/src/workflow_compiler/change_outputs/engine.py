@@ -25,6 +25,7 @@ from workflow_compiler.change_outputs.code import (
     check_syntax,
     corpus_exports,
     dataclass_problems,
+    describe_syntax_error,
     exported_names,
     missing_imports,
     missing_symbols,
@@ -702,7 +703,7 @@ class ChangeOutputsEngine:
         if ok and not closed:
             ok, err = False, "the answer was cut off before the closing fence"
         if not ok:
-            return False, err, f"SyntaxError: {err}", None, ""
+            return False, err, describe_syntax_error(code, err), None, ""
         verdicts: list[str] = []
         dc_problems = dataclass_problems(code)
         if dc_problems:

@@ -885,3 +885,24 @@ def test_time_saved_buckets_change_outputs() -> None:
     assert report is not None
     row = next(r for r in report.rows if r.category == "change_outputs")
     assert row.human_baseline_hours == 16.0 and "Change outputs" in row.label
+
+
+def test_describe_syntax_error_adds_context_and_hint() -> None:
+    from workflow_compiler.change_outputs.code import check_syntax, describe_syntax_error
+
+    code = (
+        "ACTS = []\n\n\nasync def test_x():\n    async with Worker(\n        activities=ACTS + [\n"
+        "            async def fake(group_id: str) -> str:\n                return group_id,\n"
+        "        ],\n    ):\n        pass\n"
+    )
+    ok, err = check_syntax(code)
+    assert not ok and "line 7" in err
+    verdict = describe_syntax_error(code, err)
+    assert verdict.startswith("SyntaxError:")
+    assert ">>    7 |             async def fake" in verdict
+    assert "cannot appear inside a list literal" in verdict
+    # A plain syntax error elsewhere gets the snippet but no list hint.
+    plain = "def f(:\n    pass\n"
+    v2 = describe_syntax_error(plain, check_syntax(plain)[1])
+    assert ">>    1 | def f(:" in v2 and "list literal" not in v2
+    assert describe_syntax_error("x", "weird message") == "SyntaxError: weird message"

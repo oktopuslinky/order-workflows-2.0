@@ -333,6 +333,42 @@ def check_syntax(code: str) -> tuple[bool, str]:
     return True, ""
 
 
+_DEF_LINE = re.compile(r"^\s*(async\s+def|def|class)\b")
+
+
+def describe_syntax_error(code: str, error: str) -> str:
+    """Turn ``check_syntax``'s terse message into a repair verdict the model can act on.
+
+    Adds the offending line with three lines of context (line numbers) and, for the slip
+    long test modules keep making live — an ``async def`` / ``def`` written *inside* a list
+    literal or call argument (``activities=[..., async def fake(...): ...]``) — an explicit
+    instruction: define the function at module level and reference it by name. Everything
+    here is deterministic; the LLM only sees a better description of the same failure.
+    """
+    match = re.search(r"\(line (\d+)\)", error)
+    if not match:
+        return f"SyntaxError: {error}"
+    lineno = int(match.group(1))
+    lines = code.split("\n")
+    if not 1 <= lineno <= len(lines):
+        return f"SyntaxError: {error}"
+    lo, hi = max(1, lineno - 3), min(len(lines), lineno + 3)
+    snippet = "\n".join(
+        f"{'>>' if n == lineno else '  '} {n:4d} | {lines[n - 1]}" for n in range(lo, hi + 1)
+    )
+    verdict = f"SyntaxError: {error}\n{snippet}"
+    offending = lines[lineno - 1]
+    previous = next((line for line in reversed(lines[: lineno - 1]) if line.strip()), "")
+    if _DEF_LINE.match(offending) and previous.rstrip().endswith(("[", ",", "(", "{", "+")):
+        verdict += (
+            "\nA `def` / `async def` / `class` cannot appear inside a list literal, a call "
+            "argument or an expression. Define the function at module level (or at the top of "
+            "the test function, before the `Worker(...)` call) and put only its NAME in the "
+            "list, e.g. `activities=[*HAPPY_PATH_ACTIVITIES, fake_dispatch_group_failing]`."
+        )
+    return verdict
+
+
 def ruff_check(code: str, *, timeout: float = 30.0) -> tuple[bool | None, str]:
     """Run ruff's pyflakes-class rules over ``code``; ``None`` when ruff is unavailable."""
     try:

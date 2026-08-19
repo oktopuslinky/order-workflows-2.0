@@ -11,6 +11,10 @@ function loadMermaid() {
       mod.default.initialize({
         startOnLoad: false,
         theme: dark ? "dark" : "neutral",
+        // A diagram the model got wrong must show *our* error text next to the
+        // diagram, not mermaid's "bomb" appended to document.body (seen live when a
+        // regenerated .mmd had a syntax slip).
+        suppressErrorRendering: true,
       });
       return mod.default;
     });

@@ -27,6 +27,7 @@ from workflow_compiler.change_outputs.code import (
     dataclass_problems,
     describe_syntax_error,
     exported_names,
+    late_annotation_names,
     missing_imports,
     missing_symbols,
     normalise_style,
@@ -725,6 +726,14 @@ class ChangeOutputsEngine:
                 "This file imports names that the rewritten sibling modules do not define:\n"
                 + listing
                 + "\nUse the sibling's real names — do not invent new ones."
+            )
+        late = late_annotation_names(code)
+        if late:
+            verdicts.append(
+                "Temporal evaluates the type hints of @workflow.query / @workflow.signal / "
+                "@workflow.run / @activity.defn methods while the module is imported, so every "
+                "name in those annotations must be defined or imported ABOVE the class:\n"
+                + "\n".join(f"- {item}" for item in late)
             )
         ruff_ok, ruff_out = ruff_check(code)
         if ruff_ok is False and "F821" in ruff_out:

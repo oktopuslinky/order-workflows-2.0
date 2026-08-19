@@ -12,6 +12,7 @@ available), and produces the unified diff.
 from __future__ import annotations
 
 import ast
+import builtins
 import difflib
 import re
 import subprocess
@@ -722,6 +723,96 @@ def _has_default(node: ast.AnnAssign) -> bool:
     if isinstance(value, ast.Call) and _unparse(value.func).endswith("field"):
         return any(kw.arg in ("default", "default_factory") for kw in value.keywords)
     return True
+
+
+_TEMPORAL_DECORATORS = ("workflow.query", "workflow.signal", "workflow.run", "workflow.update",
+                        "activity.defn", "workflow.defn")
+
+
+def _decorator_names(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> list[str]:
+    names: list[str] = []
+    for deco in node.decorator_list:
+        target = deco.func if isinstance(deco, ast.Call) else deco
+        names.append(_unparse(target))
+    return names
+
+
+def _annotation_names(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    found: set[str] = set()
+    nodes: list[ast.AST] = [a.annotation for a in fn.args.args + fn.args.kwonlyargs if a.annotation]
+    if fn.returns is not None:
+        nodes.append(fn.returns)
+    for node in nodes:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Name):
+                found.add(sub.id)
+    return found
+
+
+def late_annotation_names(code: str) -> list[str]:
+    """Names a Temporal-decorated method annotates with but that the module defines only *later*.
+
+    ``@workflow.query`` / ``@workflow.signal`` / ``@workflow.run`` / ``@activity.defn`` evaluate
+    the function's type hints when the decorator runs (``typing.get_type_hints``), i.e. while
+    the module is being imported — a ``class GroupStatus`` written *below* the workflow class,
+    or a name that is only imported under ``if TYPE_CHECKING:``, raises ``NameError`` at import
+    although ruff (F821) is satisfied because the name exists somewhere in the file. Returns
+    ``["GroupStatus (used in OrderWorkflow.group_status, defined at line 240)", …]``.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+    defined_at: dict[str, int] = {}
+    type_checking_only: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and _unparse(node.test).endswith("TYPE_CHECKING"):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.ImportFrom | ast.Import):
+                    for alias in sub.names:
+                        type_checking_only.add((alias.asname or alias.name).split(".")[0])
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            for alias in node.names:
+                name = (alias.asname or alias.name).split(".")[0]
+                if name not in type_checking_only:
+                    defined_at.setdefault(name, node.lineno)
+        elif isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            defined_at.setdefault(node.name, node.lineno)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    defined_at.setdefault(target.id, node.lineno)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            defined_at.setdefault(node.target.id, node.lineno)
+    problems: list[str] = []
+    seen: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if not any(d.startswith(_TEMPORAL_DECORATORS) for d in _decorator_names(node)):
+            continue
+        for name in sorted(_annotation_names(node)):
+            if name in dir(builtins) or name in seen:
+                continue
+            if name in type_checking_only:
+                problems.append(
+                    f"{name} (used in the annotations of `{node.name}`, imported only under "
+                    "`if TYPE_CHECKING:` — Temporal evaluates these hints at import time; "
+                    "import it "
+                    "for real, inside `with workflow.unsafe.imports_passed_through():` if needed)"
+                )
+                seen.add(name)
+                continue
+            where = defined_at.get(name)
+            if where is not None and where > node.lineno:
+                problems.append(
+                    f"{name} (used in the annotations of `{node.name}` at line {node.lineno}, but "
+                    f"defined only at line {where} — move the definition above, or import it from "
+                    "the shared types module if it already exists there)"
+                )
+                seen.add(name)
+    return problems
 
 
 def dataclass_problems(code: str) -> list[str]:

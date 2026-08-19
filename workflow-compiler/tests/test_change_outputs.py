@@ -915,3 +915,34 @@ def test_describe_syntax_error_adds_context_and_hint() -> None:
     v2 = describe_syntax_error(plain, check_syntax(plain)[1])
     assert ">>    1 | def f(:" in v2 and "list literal" not in v2
     assert describe_syntax_error("x", "weird message") == "SyntaxError: weird message"
+
+
+def test_late_annotation_names_for_temporal_decorated_methods() -> None:
+    from workflow_compiler.change_outputs.code import late_annotation_names
+
+    code = (
+        "from __future__ import annotations\n"
+        "from typing import TYPE_CHECKING\n"
+        "from temporalio import workflow\n"
+        "if TYPE_CHECKING:\n    from src.shared.types import OrderRequest\n\n\n"
+        "@workflow.defn\nclass OrderWorkflow:\n"
+        "    @workflow.run\n    async def run(self, req: OrderRequest) -> Summary:\n        return Summary()\n\n"
+        "    @workflow.query\n    def group_status(self, group_id: str) -> GroupStatus:\n        ...\n\n"
+        "    def helper(self) -> Later:\n        ...\n\n\n"
+        "class GroupStatus:\n    pass\n\n\nclass Summary:\n    pass\n\n\nclass Later:\n    pass\n"
+    )
+    problems = late_annotation_names(code)
+    text = "\n".join(problems)
+    assert "GroupStatus" in text and "defined only at line" in text
+    assert "Summary" in text
+    assert "OrderRequest" in text and "TYPE_CHECKING" in text
+    assert "Later" not in text  # an undecorated helper is not evaluated at import time
+    # Names defined above the class (or imported for real) are fine.
+    ok = (
+        "from temporalio import workflow\nfrom src.shared.types import OrderRequest\n\n\n"
+        "class GroupStatus:\n    pass\n\n\n@workflow.defn\nclass W:\n"
+        "    @workflow.query\n    def q(self, x: str) -> GroupStatus:\n        ...\n"
+        "    @workflow.run\n    async def run(self, r: OrderRequest) -> dict[str, list[int]]:\n        ...\n"
+    )
+    assert late_annotation_names(ok) == []
+    assert late_annotation_names("def f(:") == []

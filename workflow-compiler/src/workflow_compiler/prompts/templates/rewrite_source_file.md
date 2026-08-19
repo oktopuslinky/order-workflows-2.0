@@ -62,7 +62,11 @@ Rules — read them all:
      RetryPolicy`; import `timedelta` from `datetime`).
    - `@workflow.defn` on the class, `@workflow.run` on ONE `async def run(self, …)`;
      `@workflow.signal` / `@workflow.query` on methods (queries are sync and never
-     await); `workflow.wait_condition(lambda: …)` for waits.
+     await); `workflow.wait_condition(lambda: …)` for waits. Temporal evaluates the
+     type hints of these methods (and of `@activity.defn` functions) at IMPORT time:
+     every name in their annotations must be imported or defined ABOVE the class —
+     never below it and never only under `if TYPE_CHECKING:`; reuse the shared
+     types module instead of redefining a type locally.
    - Activity results cross the data converter as JSON: keep result dataclasses
      to plain fields (`str`, `int`, `float`, `bool`, `list[...]`, nested
      dataclasses). Do NOT add new `(str, Enum)` fields to activity or workflow

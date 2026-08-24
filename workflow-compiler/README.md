@@ -17,6 +17,44 @@ or many), `workflow-compiler` produces:
 The human-in-the-loop gate is the **spec**: you edit the spec files and validate them as many
 times as you like; code is only generated from what you approved.
 
+## Quick start
+
+Clean machine to generated Temporal code, fully offline, no API key. Requires **Python 3.12+**
+and Git ([details below](#prerequisites)).
+
+```bash
+git clone https://github.com/SoumyajitPodder/Intelligent_Workflow_Builder.git
+cd Intelligent_Workflow_Builder/workflow-compiler
+```
+
+The Python package lives in the **`workflow-compiler/` subdirectory** of the clone — that is where
+`pyproject.toml` is, and every command in this README runs from there.
+
+```powershell
+# Windows (PowerShell)
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+```bash
+# macOS / Linux
+python3.12 -m venv .venv
+source .venv/bin/activate
+```
+
+```bash
+pip install .
+workflow-compiler init --provider mock --yes
+workflow-compiler compile examples/order_workflow.md --provider mock --spec-dir ./specs-out
+```
+
+That last command prints a `project_id` **and the exact two commands that finish the run** —
+`validate`, then `approve-spec`. Copy them from the output; the generated Temporal bundle lands in
+`./generated/<project-id>/<slug>/`.
+
+From here: [Install](#install) to point it at a real LLM provider, [Use — CLI](#use--cli) for the
+full command set, or [Use — Frontend](#use--frontend) for the web UI.
+
 ## How it works
 
 ```
@@ -39,8 +77,9 @@ deterministic.
 
 Detailed design, CLI flag tables, and the full HTTP API reference live in the docs:
 
-- [`docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md) — full ground-up walkthrough, CLI reference (§9.2),
-  HTTP API reference (§9.3)
+- [`docs/HOW_IT_WORKS.md`](docs/HOW_IT_WORKS.md) — full ground-up walkthrough, plus the
+  [CLI reference](docs/HOW_IT_WORKS.md#152-cli-climainpy-typer--rich) (§15.2) and the
+  [HTTP API reference](docs/HOW_IT_WORKS.md#153-http-api-apiapppy-fastapi) (§15.3)
 - [`docs/architecture.md`](docs/architecture.md) — component and sequence diagrams
 - [`docs/EDIT_FORMAT_GUIDE.md`](docs/EDIT_FORMAT_GUIDE.md) — the edit-request document format
 
@@ -56,6 +95,9 @@ Detailed design, CLI flag tables, and the full HTTP API reference live in the do
 Check your Python version with `python --version` (Windows: `py -3.12 --version`) — a 3.11 or
 older default Python will fail to install the package.
 
+Everything below runs from the **`workflow-compiler/` directory inside the clone**, not from the
+repository root: that is where `pyproject.toml`, `examples/` and `frontend/` live.
+
 ## Install
 
 Installing and configuring are two separate steps. `pip` cannot do the second one for you — a
@@ -64,9 +106,14 @@ wheel never runs code at install time — so configuration is a command you type
 **1. Get the code, in a Python 3.12+ virtual environment.**
 
 ```bash
-git clone https://github.com/oktopuslinky/order-workflows-2.0.git
-cd order-workflows-2.0
+git clone https://github.com/SoumyajitPodder/Intelligent_Workflow_Builder.git
+cd Intelligent_Workflow_Builder/workflow-compiler
 ```
+
+The same code is mirrored to
+[`oktopuslinky/order-workflows-2.0`](https://github.com/oktopuslinky/order-workflows-2.0) on the
+`feat/kg-change-pipeline` branch — clone that one with
+`git clone -b feat/kg-change-pipeline <url>` if you prefer the mirror.
 
 ```bash
 # macOS / Linux
@@ -124,21 +171,26 @@ where compiled state is persisted as JSON.
 
 ```bash
 # Fully offline smoke test (mock provider, no API key needed):
-workflow-compiler compile examples/order_workflow.md --provider mock --spec-dir ./specs
+workflow-compiler compile examples/order_workflow.md --provider mock --spec-dir ./specs-out
 
 # The real pipeline:
-workflow-compiler compile your_doc.docx --spec-dir ./specs   # → one editable spec file per workflow
+workflow-compiler compile your_doc.docx --spec-dir ./specs-out   # → one editable spec file per workflow
 # ... edit the spec files in any editor ...
-workflow-compiler validate <project-id> --spec-dir ./specs   # fold edits back in, re-check
-workflow-compiler approve-spec <project-id> --spec-dir ./specs   # compile through to Temporal code
+workflow-compiler validate <project-id> --spec-dir ./specs-out   # fold edits back in, re-check
+workflow-compiler approve-spec <project-id> --spec-dir ./specs-out   # compile through to Temporal code
 ```
+
+You never have to note the `project_id` down: `compile` (and `validate`) print it along with the
+exact next command to run. `--spec-dir` is any directory you choose — the repo already ships an
+example `specs/` from an earlier run, and `specs-*/` is git-ignored, so `./specs-out` keeps your
+working tree clean.
 
 Generated bundles land under `./generated/<project-id>/<slug>/`. Other commands: `init` (write the
 `.env` configuration — see Install), `edit` (apply an edit-request document to a compiled project),
 `approve` / `reject` (manual override for a below-threshold graph), `show`, `models`, and
 `kb init|list|show|ask|impact|search|delete` (knowledge bases) and `cr create|list|show|draft|approve|export [--format md|docx|xlsx|zip]|delete` (change requests — see below). `workflow-compiler <command> --help` is the
 authoritative flag reference; the full command guide is in
-[`docs/HOW_IT_WORKS.md` §9.2](docs/HOW_IT_WORKS.md).
+[`docs/HOW_IT_WORKS.md` §15.2](docs/HOW_IT_WORKS.md#152-cli-climainpy-typer--rich).
 
 ### Business change pipeline — end to end (phases 0–5)
 
@@ -181,7 +233,7 @@ workflow-compiler kb impact order-lifecycle complete_order
 
 `--enrich` (the UI default) adds per-file summaries/topics/entities and process clusters through
 the selected LLM provider (one call per document/module; cached). Design and routes:
-[`docs/HOW_IT_WORKS.md` §8c / §9.3](docs/HOW_IT_WORKS.md); the multi-phase plan lives in
+[`docs/HOW_IT_WORKS.md` §10](docs/HOW_IT_WORKS.md#10-knowledge-bases-kg) / [§15.3](docs/HOW_IT_WORKS.md#153-http-api-apiapppy-fastapi); the multi-phase plan lives in
 `docs/kg-plan/`.
 
 ### Change requests (business-change pipeline, phase 1)
@@ -201,7 +253,7 @@ workflow-compiler cr draft <cr-id> impact --auto --out impact.md    # questions 
 workflow-compiler cr approve <cr-id> impact && workflow-compiler cr draft <cr-id> epic --auto
 ```
 
-Design and routes: [`docs/HOW_IT_WORKS.md` §8d / §9.3](docs/HOW_IT_WORKS.md).
+Design and routes: [`docs/HOW_IT_WORKS.md` §11](docs/HOW_IT_WORKS.md#11-change-requests-change) / [§15.3](docs/HOW_IT_WORKS.md#153-http-api-apiapppy-fastapi).
 
 ### Word / Excel export (business-change pipeline, phase 2)
 
@@ -229,9 +281,9 @@ through the same Save ⇄ Validate ⇄ Resolve ⇄ Approve gate as the workflow 
 *Proposed* blocks approval; unknown paths / requirement ids warn with suggestions):
 
 ```bash
-workflow-compiler compile examples/change_requests/TDD-ORD-002.docx --spec-dir ./specs \
+workflow-compiler compile examples/change_requests/TDD-ORD-002.docx --spec-dir ./specs-out \
     --kb <kb-id> --change-request <cr-id>        # writes <slug>.md + changes.md + overview.md
-workflow-compiler validate <project-id> --spec-dir ./specs   # folds changes.md back in too
+workflow-compiler validate <project-id> --spec-dir ./specs-out   # folds changes.md back in too
 ```
 
 In the UI: pick *Ground with knowledge base* next to the provider on the home page, or press
@@ -254,7 +306,7 @@ this runs as a `change_outputs` job chained after approve; the Results tab gets 
 table, Regenerate per stage, Download all). CLI:
 
 ```bash
-workflow-compiler approve-spec <project-id> --spec-dir ./specs --change-outputs   # chain it
+workflow-compiler approve-spec <project-id> --spec-dir ./specs-out --change-outputs   # chain it
 workflow-compiler change-outputs <project-id> --stage code                        # re-run one stage
 # → ./generated/<project-id>/change-outputs/{src,tests,docs,changes.patch,CHANGES.md}
 ```
@@ -288,14 +340,22 @@ Interactive docs at http://localhost:8000/docs.
 > so it always sees the `workflow_compiler` you installed. A bare `uvicorn` resolves through `PATH`
 > and may belong to a different environment — the symptom is
 > `ModuleNotFoundError: No module named 'workflow_compiler'` from the reloader subprocess.
-> Check which one you would get with `where uvicorn` (Windows) / `which uvicorn` (macOS/Linux). The API uses local accounts (register once via
-`POST /auth/register`; a session cookie rides every call). Full endpoint reference:
-[`docs/HOW_IT_WORKS.md` §9.3](docs/HOW_IT_WORKS.md).
+> Check which one you would get with `where uvicorn` (Windows) / `which uvicorn` (macOS/Linux).
+
+The API uses local accounts: register once, and a session cookie rides every later call.
+
+```bash
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "password": "your-password"}'
+```
+
+Full endpoint reference: [`docs/HOW_IT_WORKS.md` §15.3](docs/HOW_IT_WORKS.md#153-http-api-apiapppy-fastapi).
 
 ## Use — Frontend
 
 A Next.js frontend lives in [`frontend/`](frontend/). Run the backend API and the frontend dev
-server side by side (two terminals, both from the repo root):
+server side by side (two terminals, both starting from the `workflow-compiler/` directory):
 
 ```bash
 # Terminal 1 — backend API (http://localhost:8000), venv activated
@@ -335,7 +395,7 @@ Three behaviors worth knowing:
 
 Because the specs change, validation must run again before approval. The same flow is
 available over HTTP (`POST /projects/{id}/dialogue`, then `/dialogue/answer`); see
-[`docs/HOW_IT_WORKS.md` §9.3](docs/HOW_IT_WORKS.md).
+[`docs/HOW_IT_WORKS.md` §15.3](docs/HOW_IT_WORKS.md#153-http-api-apiapppy-fastapi).
 
 ## Use — Library
 
@@ -355,7 +415,7 @@ asyncio.run(main())
 
 For the spec-centric project flow, use `ProjectCompiler` (`workflow_compiler.project_compiler`).
 For tests / offline work, inject a `MockProvider` and an `InMemoryStateStore` — see
-[`docs/HOW_IT_WORKS.md` §9.1](docs/HOW_IT_WORKS.md).
+[`docs/HOW_IT_WORKS.md` §15.1](docs/HOW_IT_WORKS.md#151-library).
 
 ## Develop
 
@@ -387,6 +447,16 @@ The test suite runs fully offline against a deterministic mock provider — no A
   (e.g. `300`).
 - **`pip install` fails resolving the package** — check you are on Python 3.12+ inside the
   activated venv (`python --version`).
+- **`ERROR: Directory '.' is not installable. Neither 'setup.py' nor 'pyproject.toml' found.`** —
+  you are one level too high. The package is in the clone's `workflow-compiler/` subdirectory:
+  `cd workflow-compiler`, then `pip install .`.
+- **`.venv\Scripts\Activate.ps1 cannot be loaded because running scripts is disabled`** — allow
+  scripts for this shell only: `Set-ExecutionPolicy -Scope Process RemoteSigned`. Alternatives:
+  `.venv\Scripts\activate.bat` from `cmd`, or skip activation entirely and call
+  `.venv\Scripts\python.exe -m pip install .`.
+- **`Filename too long` while cloning on Windows** — clone into a short path (paths in this repo
+  reach ~140 characters, and Windows caps at 260), or clone with
+  `git clone -c core.longpaths=true <url>`.
 
 ## Layout
 

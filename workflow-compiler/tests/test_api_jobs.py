@@ -242,7 +242,13 @@ def test_jobs_list_reports_the_run(client: TestClient) -> None:
     assert job_id in ids
 
     scoped = client.get("/jobs", params={"project_id": project_id})
-    assert {j["job_id"] for j in scoped.json()} == {job_id}
+    # The filter is by project, not "only the jobs this test started": a cloud
+    # provider (the default) chains a speculative `predraft` run off a successful
+    # validate, so the list legitimately holds it too.
+    scoped_jobs = scoped.json()
+    assert job_id in {j["job_id"] for j in scoped_jobs}
+    assert {j["project_id"] for j in scoped_jobs} == {project_id}
+    assert {j["kind"] for j in scoped_jobs} <= {"validate", "predraft"}
 
 
 def test_cancel_finished_job_is_a_no_op(client: TestClient) -> None:

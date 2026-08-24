@@ -10,7 +10,7 @@ review report, a CVPA classification, a Temporal design, and runnable Temporal P
 a staged pipeline with a human approval gate in the middle.
 
 `README.md` is a lean overview + install/quickstart guide. `docs/HOW_IT_WORKS.md` is the
-authoritative reference for CLI flags (§9.2), the HTTP API (§9.3), and the full design;
+authoritative reference for CLI flags (§15.2), the HTTP API (§15.3), and the full design;
 `docs/architecture.md` holds the component/sequence diagrams. Keep all three in sync when
 behavior changes (the working tree shows they are updated alongside code).
 
@@ -158,7 +158,7 @@ picture before changing pipeline behavior.
 
 - **The business-change pipeline is one flow of five deterministic-glue engines, each behind a
   façade, all grounded by the knowledge graph** (`docs/kg-plan/` holds the plan, handoff and
-  demo runbook; HOW_IT_WORKS §8c–§8g and `docs/architecture.md` "end to end" hold the detail).
+  demo runbook; HOW_IT_WORKS §10–§14 and `docs/architecture.md` "end to end" hold the detail).
   1. **Knowledge bases (`kg/`)** — a zipped corpus → Context Hub graph via the vendored subset
      `kg/contexthub/` (pinned SHA + local edits in its `VENDORED.md`; excluded from `mypy --strict`;
      never imported outside `workflow_compiler.kg`). **`KgService` is the only KG surface**:

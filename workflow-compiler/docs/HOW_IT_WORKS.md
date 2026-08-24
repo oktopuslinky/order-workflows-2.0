@@ -1,92 +1,167 @@
-# How workflow-compiler Works — A Complete, Ground-Up Walkthrough
+# How workflow-compiler Works
 
-This document explains the **entire system end to end**, assuming you know nothing about the
-project. By the end you should understand *what* it does, *why* each piece exists, *how* the pieces
-fit together, and *where* each piece lives in the code. Read it top to bottom; later sections build
-on earlier ones.
+This document explains the full system from start to end. You do not need to know the project
+before you read it. When you finish, you will know *what* the system does, *why* each part
+exists, *how* the parts connect, and *where* each part lives in the code. Read the sections in
+order. Each section uses the sections before it.
 
-> If you just want to run it, see the [README](../README.md). This document is the "how and why."
+> If you only want to run the tool, read the [README](../README.md). This document explains the
+> "how" and the "why".
+
+## Table of contents
+
+1. [What problem does this solve?](#1-what-problem-does-this-solve)
+2. [Glossary](#2-glossary)
+3. [The one object that holds everything: `WorkflowState`](#3-the-one-object-that-holds-everything-workflowstate)
+4. [The pipeline at a glance](#4-the-pipeline-at-a-glance)
+5. [Installation and configuration](#5-installation-and-configuration)
+6. [The stages, one by one](#6-the-stages-one-by-one)
+   - [Stage 0 — Document ingestion](#stage-0--document-ingestion-parser-no-llm)
+   - [Stage 1 — Workflow discovery](#stage-1--workflow-discovery-llm)
+   - [Stage 2 — Fact extraction](#stage-2--fact-extraction-llm)
+   - [Stage 3 — Graph building](#stage-3--graph-building-deterministic-no-llm)
+   - [Stage 3b — Mermaid rendering](#stage-3b--mermaid-rendering-deterministic)
+   - [Stage 4 — Review](#stage-4--review-deterministic-no-llm)
+   - [The approval gate](#the-approval-gate)
+   - [Stage 5 — CVPA classification](#stage-5--cvpa-classification-llm-after-approval)
+   - [Stage 6 — Temporal design](#stage-6--temporal-design-llm-after-approval)
+   - [Stage 7 — Temporal code generation](#stage-7--temporal-code-generation-deterministic-no-llm-after-approval)
+7. [Shared machinery](#7-shared-machinery)
+   - [7.1 The LLM layer](#71-the-llm-layer)
+   - [7.2 Prompts](#72-prompts)
+   - [7.3 State storage](#73-state-storage)
+   - [7.4 Editing the graph](#74-editing-the-graph-grapheditor)
+   - [7.5 Confidence scores](#75-confidence-scores)
+   - [7.6 Errors](#76-errors)
+   - [7.7 Configuration and logging](#77-configuration-and-logging)
+   - [7.8 The Temporal code-generation layer](#78-the-temporal-code-generation-layer-codegentemporal)
+   - [7.9 Progress and observability](#79-progress-and-observability)
+   - [7.10 The sequential review pipeline](#710-the-sequential-review-pipeline)
+8. [The engine: `WorkflowCompiler`](#8-the-engine-workflowcompiler)
+9. [The front-end: `ProjectCompiler`](#9-the-front-end-projectcompiler)
+   - [9.1 The parts](#91-the-parts)
+   - [9.2 Edit requests](#92-edit-requests)
+   - [9.3 Time saved](#93-time-saved)
+   - [9.4 Cross-workflow triggers](#94-cross-workflow-triggers)
+   - [9.5 Debug surface](#95-debug-surface)
+10. [Knowledge bases (`kg/`)](#10-knowledge-bases-kg)
+11. [Change requests (`change/`)](#11-change-requests-change)
+12. [Document export (`docs_export/`)](#12-document-export-docs_export)
+13. [Grounded projects and the change spec](#13-grounded-projects-and-the-change-spec)
+14. [Post-approval change outputs (`change_outputs/`)](#14-post-approval-change-outputs-change_outputs)
+15. [The three entry points](#15-the-three-entry-points)
+    - [15.1 Library](#151-library)
+    - [15.2 CLI](#152-cli-climainpy-typer--rich)
+    - [15.3 HTTP API](#153-http-api-apiapppy-fastapi)
+16. [A worked example](#16-a-worked-example)
+17. [Testing strategy](#17-testing-strategy)
+18. [How to extend the system](#18-how-to-extend-the-system)
+19. [File map](#19-file-map)
+20. [Gotchas and "why is it like that?"](#20-gotchas-and-why-is-it-like-that)
 
 ---
 
 ## 1. What problem does this solve?
 
-Businesses describe their processes in **prose** — Word docs, PDFs, wiki pages: *"When a customer
-submits an order, validate the payment. If it's valid, the warehouse ships it; if not, cancel the
-order and notify the customer."*
+Businesses describe their processes in prose. The prose lives in Word documents, PDF files and
+wiki pages. For example: *"When a customer submits an order, validate the payment. If it is
+valid, the warehouse ships it. If not, cancel the order and notify the customer."*
 
-That prose is unstructured. You cannot run it, diagram it reliably, or hand it to engineers to
-implement without a lot of manual translation. **workflow-compiler** automates that translation. It
-takes a business document and produces a chain of increasingly structured, machine-usable
-artifacts:
+Prose has no structure. You cannot run it. You cannot draw a reliable diagram from it. You cannot
+give it to engineers without a lot of manual translation. **workflow-compiler** does that
+translation for you. It reads a business document and produces a chain of artifacts. Each
+artifact in the chain has more structure than the one before it, and a machine can use each one.
 
-| Artifact | Plain-English meaning |
+| Artifact | What it is, in plain words |
 |---|---|
-| **Workflow metadata** | The title card: name, purpose, who's involved, what systems, what triggers it, where it starts/ends. |
-| **Workflow facts** | Every atomic statement pulled out of the prose, sorted into 13 buckets (activities, decisions, exceptions, retries, …), plus — when the document supports it — an **id-referenced relational structure** that says *how* those facts connect (which exception each activity raises, which compensation reverses which activity, which steps run in parallel). |
-| **Workflow graph** | A flowchart as data: nodes (steps) and edges (arrows), normalized and de-duplicated. |
-| **Mermaid diagram** | That graph rendered as text you can paste into a diagram tool to *see* it. |
-| **Review report** | An automatic QA pass: "this node is unreachable," "this decision has no 'no' branch," plus a health score. |
-| **CVPA classification** | Every step labeled as **C**apture, **V**alidate, **P**rocess, or **A**ctivate — a standard way to reason about business processes. |
-| **Temporal design** | A blueprint for implementing the workflow on [Temporal](https://temporal.io) (activities, signals, retries, compensations) — *specifications only, not code* — including a typed **plan IR** that orders the "categories of action" and binds each step's inputs to the workflow input or earlier step outputs. |
-| **Temporal code bundle** | Runnable Temporal Python SDK source files (`shared.py`, `activities.py`, `workflow.py`, `worker.py`, `starter.py`, `README.md`) rendered **deterministically** from the design. The LLM never writes this code. |
+| **Workflow metadata** | The title card. It holds the name, the purpose, the people involved, the systems involved, the events that start the workflow, and where the workflow starts and ends. |
+| **Workflow facts** | Every single statement pulled out of the prose, sorted into 13 groups (activities, decisions, exceptions, retries, and so on). When the document supports it, the facts also include an **id-linked relational structure**. The structure says *how* the facts connect: which exception each activity raises, which compensation reverses which activity, and which steps run in parallel. |
+| **Workflow graph** | A flowchart stored as data. It has nodes (steps) and edges (arrows). The graph is normalized and has no duplicates. |
+| **Mermaid diagram** | The graph written as text. You can paste the text into a diagram tool to *see* the graph. |
+| **Review report** | An automatic quality check. Examples: "this node cannot be reached", "this decision has no 'no' branch". It also gives a health score. |
+| **CVPA classification** | Every step gets one label: **C**apture, **V**alidate, **P**rocess or **A**ctivate. This is a standard way to think about business processes. |
+| **Temporal design** | A blueprint for running the workflow on [Temporal](https://temporal.io). It lists activities, signals, retries and compensations. It is a *specification only, not code*. It includes a typed **plan IR** that puts the "categories of action" in order and connects each step's inputs to the workflow input or to the outputs of earlier steps. |
+| **Temporal code bundle** | Runnable Temporal Python SDK source files (`shared.py`, `activities.py`, `workflow.py`, `worker.py`, `starter.py`, `README.md`). A deterministic renderer makes them from the design. The LLM never writes this code. |
 | **Confidence scores** | How sure the system is about each stage. |
 
-A **human approval gate** sits in the middle: the structured graph is generated and reviewed, then
-a person approves (or rejects) it before the final design artifacts are produced. This keeps the
-expensive, opinionated outputs (CVPA, Temporal design, Temporal code) tied to a graph a human
-signed off on.
+A **human approval gate** sits in the middle of the chain. The system builds and reviews the
+structured graph. Then a person approves or rejects the graph. Only after approval does the
+system produce the final design artifacts. This rule keeps the expensive outputs (CVPA, Temporal
+design, Temporal code) tied to a graph that a person signed off.
 
 ---
 
-## 2. Key terms (glossary)
+## 2. Glossary
 
-You'll see these throughout. Skim now, refer back as needed.
+These terms appear through the whole document. Read them now. Come back to them when you need to.
 
-- **LLM (Large Language Model)** — an AI text model (here, NVIDIA-hosted *Nemotron*). Used for the
-  "understanding" stages (reading prose, classifying). It is **never** used where determinism
-  matters (building the graph).
-- **Agent** — a small class that performs *one* stage of the pipeline (e.g. "extract facts"). Each
-  agent takes the current state, does its job, and returns the updated state.
-- **Pydantic** — a Python library for data models that validate themselves. Every artifact is a
-  Pydantic model, so malformed data is rejected early.
-- **NetworkX** — a graph library. The graph builder uses it to reason about reachability, cycles,
-  etc.
-- **Mermaid** — a text format for diagrams (`flowchart TD ...`). Paste into <https://mermaid.live>
-  to render.
-- **CVPA** — *Capture / Validate / Process / Activate*. A four-phase lens for business processes:
+- **LLM (Large Language Model)** — an AI text model. Here it is NVIDIA-hosted *Nemotron*. The
+  system uses the LLM for the "understanding" stages: reading prose and classifying. The system
+  **never** uses the LLM where the result must be exact, such as building the graph.
+- **Deterministic** — a deterministic step gives the same output every time you give it the same
+  input. No model is involved. You can test it without a network.
+- **Agent** — a small class that does *one* stage of the pipeline (for example, "extract facts").
+  Each agent takes the current state, does its job, and returns the updated state.
+- **Pydantic** — a Python library for data models that check their own data. Every artifact is a
+  Pydantic model, so the system rejects malformed data early.
+- **NetworkX** — a graph library. The graph builder uses it to find unreachable nodes, cycles and
+  similar problems.
+- **Mermaid** — a text format for diagrams (`flowchart TD ...`). Paste it into
+  <https://mermaid.live> to render it.
+- **CVPA** — *Capture / Validate / Process / Activate*. A four-phase view of a business process:
   intake → checks → core work → downstream effects.
-- **Temporal** — a workflow-orchestration platform. We generate a *design* (specification) for it
-  with the LLM **and then deterministically render that design into runnable Temporal Python code**.
-- **Plan IR** — the typed intermediate representation inside a Temporal design: an ordered list of
-  `TemporalStep` "categories of action" (activity, child workflow, signal gate, timer, parallel,
-  branch) whose inputs are explicitly *bound* to the workflow input or an earlier step's output. The
-  code generator walks this IR; it is what makes generated code data-flow-correct rather than guessed.
-- **Code generator** — a *deterministic* (no-LLM) renderer that turns the approved Temporal design +
-  plan IR into Temporal Python SDK source files via Jinja templates (`codegen/temporal/`).
-- **WorkflowState** — the single object that flows through the whole pipeline, accumulating
+- **Temporal** — a platform that runs long-lived workflows reliably. The LLM writes a *design*
+  (a specification) for it. A deterministic renderer then turns that design into runnable Temporal
+  Python code.
+- **Plan IR** — the typed intermediate representation inside a Temporal design. It is an ordered
+  list of `TemporalStep` "categories of action" (activity, child workflow, signal gate, timer,
+  parallel, branch). Each step's inputs are explicitly *bound* to the workflow input or to an
+  earlier step's output. The code generator walks this list. This is what makes the generated code
+  correct about data flow instead of a guess.
+- **Code generator** — a *deterministic* (no-LLM) renderer. It turns the approved Temporal design
+  and plan IR into Temporal Python SDK source files through Jinja templates (`codegen/temporal/`).
+- **Jinja** — a template language. A template is a file with holes in it. The renderer fills the
+  holes with data.
+- **WorkflowState** — the single object that moves through the whole pipeline and collects the
   artifacts. **This is the heart of the system.**
-- **Provider** — an implementation of the LLM interface. The real one calls NVIDIA; the `mock` one
-  returns canned answers for tests.
-- **Progress callback** — an optional observer (`ProgressCallback`) the compiler calls with a timed
-  `ProgressEvent` as each step starts and finishes, so callers can render a live "what is happening
-  at what time" view without coupling to compiler internals.
-- **Sequential review pipeline** — the *default* quality lever on the LLM stages: generate **one**
-  canonical output, then improve it with **three sequential review passes**
-  (completeness → grounding → consistency) that emit **minimal patches or `no_change`**, never a
-  rewrite. Idempotent by construction. On by default. See
-  [§7.10](#710-the-sequential-review-pipeline-default-on).
-- **Patch** — a single deterministic edit (`add`/`remove`/`modify`/`merge`/`flag`/`no_change`) a
-  review pass requests, carrying its supporting **evidence** from the document. Applied by a pure
-  *applier*, never by the model.
+- **Provider** — an implementation of the LLM interface. The real provider calls NVIDIA. The
+  `mock` provider returns fixed answers for tests.
+- **Progress callback** — an optional observer (`ProgressCallback`). The compiler calls it with a
+  timed `ProgressEvent` when each step starts and finishes. Callers can show a live "what happens
+  now" view without knowing the compiler's internals.
+- **Sequential review pipeline** — the *default* quality lever on the LLM stages. The system
+  generates **one** canonical output, then improves it with **three review passes in sequence**
+  (completeness → grounding → consistency). Each pass emits **minimal patches or `no_change`**,
+  never a rewrite. Running it twice gives the same result (it is idempotent). It is on by default.
+  See [§7.10](#710-the-sequential-review-pipeline).
+- **Patch** — one deterministic edit (`add` / `remove` / `modify` / `merge` / `flag` /
+  `no_change`) that a review pass requests. A patch carries its **evidence** from the document. A
+  pure *applier* applies the patch; the model never does.
+- **Knowledge base (KB)** — a zipped set of documents, diagrams, code and tests from an existing
+  system, indexed into a graph. Later stages use it to ground their output in real names and
+  files. See [§10](#10-knowledge-bases-kg).
+- **Change request (CR)** — a business-change document (a BCR) paired with a knowledge base, and
+  walked through a four-step wizard. See [§11](#11-change-requests-change).
+- **BCR** — Business Change Request. The document that asks for a change to an existing system.
+- **TDD** — Technical Design Document. The last artifact the change wizard produces.
+- **EPIC / user story / test case (TC)** — the standard agile units of work: a large goal, the
+  small pieces of that goal, and the checks that prove a piece works.
+- **Job** — a piece of work that runs in the background on the server. The caller starts it, gets
+  an id back at once, and polls for the result.
+- **CAS (compare-and-swap)** — a save rule. A writer says "I loaded version N". The store refuses
+  the save when the stored version is no longer N. This prevents one writer from silently
+  overwriting another writer's work.
 
 ---
 
-## 3. The one mental model: `WorkflowState`
+## 3. The one object that holds everything: `WorkflowState`
 
-Everything revolves around one object: `WorkflowState`
-(`src/workflow_compiler/models/state.py`). Think of it as a **folder that travels down an assembly
-line**. It starts almost empty (just the document text) and each station fills in one more field.
+Everything turns around one object: `WorkflowState`
+(`src/workflow_compiler/models/state.py`). Think of it as **a folder that moves along an
+assembly line**. At the start it holds almost nothing (only the document text). Each station on
+the line fills in one more field.
+
+The class, with one comment per field that says which stage fills it:
 
 ```python
 class WorkflowState:
@@ -108,32 +183,36 @@ class WorkflowState:
     created_at / updated_at     # timestamps; touch() bumps updated_at
 ```
 
-Every field except `document_text` is `None` until its producing stage runs. The `stage` enum
-records progress. Because the whole thing is one Pydantic model, it can be **serialized to JSON and
-saved to disk**, then reloaded later to continue (that's exactly how the approval gate works across
-separate CLI commands or HTTP requests).
+Every field except `document_text` is `None` until its stage runs. The `stage` value records the
+progress. The whole object is one Pydantic model. So the system can **write it to JSON, save it
+to disk, and load it again later** to continue. This is exactly how the approval gate works
+across separate CLI commands or HTTP requests.
 
-The ordered stages (`models/enums.py` → `CompilationStage`):
+The stages, in order (`models/enums.py` → `CompilationStage`):
 
 ```
 INGESTED → METADATA_EXTRACTED → FACTS_EXTRACTED → GRAPH_BUILT → REVIEWED
          → CLASSIFIED → TEMPORAL_DESIGNED → CODE_GENERATED → COMPLETED   (FAILED on error)
 ```
 
-(The enum also declares a `DIAGRAMMED` value reserved for a future diagram-export stage; the current
-pipeline advances `CODE_GENERATED → COMPLETED` directly.)
+The enum also declares a `DIAGRAMMED` value. It is reserved for a future diagram-export stage.
+The current pipeline goes from `CODE_GENERATED` to `COMPLETED` directly.
 
-**The readiness checklist** is computed between fact extraction and graph building. A deterministic
-`ChecklistValidator` (`checklist/validator.py`) scores the document against the requirements that
-`examples/ideal_temporal_workflow.md` satisfies — a trigger, named inputs, decisions with both
-branches, bound compensations, and so on — and attaches the result to `state.checklist`. The spec
-layer (§8b) surfaces every uncleared item as an **Open Question** in the workflow's spec file; the
-user's answers are folded back in as **deterministic local amendments** (`checklist/amend.py`) — no
-LLM re-run — at spec approval, and unmet *required* items become blocking findings there.
+**The readiness checklist.** The system computes this checklist between fact extraction and
+graph building. A deterministic `ChecklistValidator` (`checklist/validator.py`) scores the
+document against the requirements that `examples/ideal_temporal_workflow.md` satisfies: a
+trigger, named inputs, decisions with both branches, bound compensations, and so on. It attaches
+the result to `state.checklist`. The spec layer ([§9](#9-the-front-end-projectcompiler)) shows
+every item that is not cleared as an **Open Question** in the workflow's spec file. At spec
+approval, the user's answers go back in as **deterministic local amendments**
+(`checklist/amend.py`). No LLM runs again. A *required* item that is still unmet becomes a
+blocking finding.
 
 ---
 
 ## 4. The pipeline at a glance
+
+The flow, with the LLM stages marked:
 
 ```
             ┌─────────── LLM stages ───────────┐
@@ -152,32 +231,36 @@ Document ─▶ Parser ─▶ Discovery ─▶ Fact Extract ─▶ Graph Builder
                                                                  COMPLETED
 ```
 
-Three crucial design rules:
+Three design rules govern the pipeline:
 
-1. **LLM where judgment is needed, determinism where correctness is needed.** Reading prose and
-   classifying are LLM jobs. *Building the graph, reviewing it, and generating Temporal code are pure
-   functions* — same input in, same output out, every time, no model involved.
-2. **The gate splits the pipeline.** `compile_document` runs everything up to and including Review,
-   then stops. `approve_graph` runs the rest (CVPA → Temporal design → Temporal code). This is what
-   makes the human-in-the-loop real.
-3. **The LLM specifies; the generator emits code.** The Temporal *design* stage (LLM) produces a
-   specification — names, parameters, policies, and a typed plan IR — but never source code. A
-   separate *deterministic* generator renders that approved design into runnable Temporal Python.
+1. **The LLM works where judgment is needed. Deterministic code works where correctness is
+   needed.** Reading prose and classifying are LLM jobs. *Building the graph, reviewing it, and
+   generating Temporal code are pure functions.* The same input gives the same output, every
+   time, with no model.
+2. **The gate splits the pipeline.** `compile_document` runs every stage up to and including
+   Review, then stops. `approve_graph` runs the rest (CVPA → Temporal design → Temporal code).
+   This is what makes the human-in-the-loop real.
+3. **The LLM specifies. The generator emits code.** The Temporal *design* stage (LLM) produces a
+   specification: names, parameters, policies and a typed plan IR. It never produces source code.
+   A separate *deterministic* generator renders the approved design into runnable Temporal Python.
 
-Every stage is observable: the compiler emits timed `start`/`done` `ProgressEvent`s to an optional
-`ProgressCallback`, which the CLI renders as a live, timestamped step log.
+Every stage is observable. The compiler emits timed `start` / `done` `ProgressEvent`s to an
+optional `ProgressCallback`. The CLI renders them as a live step log with timestamps.
 
-The orchestrator that runs all of this is `WorkflowCompiler` (`src/workflow_compiler/compiler.py`).
-It is the **engine**; the user-facing entry point is the spec-centric `ProjectCompiler` front-end
-(§8b), where the human gate is the editable spec files and the graph gate above becomes an
-automatic health-score threshold (with `approve`/`reject` as the manual override).
+`WorkflowCompiler` (`src/workflow_compiler/compiler.py`) runs all of this. It is the **engine**.
+The user-facing entry point is the spec-centric `ProjectCompiler` front-end
+([§9](#9-the-front-end-projectcompiler)). There, the human gate is a set of editable spec files,
+and the graph gate above becomes an automatic health-score threshold. `approve` and `reject`
+remain as the manual override.
 
 ---
 
-## 5. Installation & configuration (so the rest makes sense)
+## 5. Installation and configuration
 
-Installation and configuration are two steps. A wheel cannot run code at install time, so `pip`
-cannot write the configuration for you — `init` is a command the user types.
+Installation and configuration are two steps. A Python wheel cannot run code at install time, so
+`pip` cannot write the configuration for you. `init` is a command the user types.
+
+Install the package and create the configuration file:
 
 ```bash
 # Requires Python 3.12+ (use a virtual environment — see README.md for full steps)
@@ -185,23 +268,24 @@ pip install .                    # installs the package + the `workflow-compiler
 workflow-compiler init           # asks for provider + credentials, writes .env
 ```
 
-Contributors install `pip install -e ".[dev]"` instead — `-e` keeps the install pointed at the
-working tree, `[dev]` adds `pytest`/`ruff`/`mypy` (README §Develop).
+Contributors install with `pip install -e ".[dev]"` instead. The `-e` flag keeps the install
+pointed at the working tree. The `[dev]` extra adds `pytest`, `ruff` and `mypy` (README §Develop).
 
-`init` is non-interactive with `--yes`, which is what CI and containers use:
+`init` asks no questions when you pass `--yes`. CI systems and containers use this form:
 
 ```bash
 workflow-compiler init --provider mock --yes                       # offline, no key
 workflow-compiler init --provider nemotron --nvidia-api-key "$K" --yes
 ```
 
-It accepts `--provider` (`nemotron` | `local` | `local-fallback` | `mock`), `--nvidia-api-key`,
-`--env-file` (default `./.env`), `--force` (replace an existing file), and `--yes`. Rendering
-lives in `cli/init_env.py::render_env` — a pure function of its arguments, so the generated file
-is tested without a terminal (`tests/test_cli_init.py`). `init` never validates credentials
-against a live provider; it writes the file and names anything still missing.
+`init` accepts these flags: `--provider` (`nemotron` | `local` | `local-fallback` | `mock`),
+`--nvidia-api-key`, `--env-file` (default `./.env`), `--force` (replace an existing file), and
+`--yes`. The rendering lives in `cli/init_env.py::render_env`. It is a pure function of its
+arguments, so the tests check the generated file without a terminal (`tests/test_cli_init.py`).
+`init` never checks the credentials against a live provider. It writes the file and names anything
+that is still missing.
 
-The result — `.env`, read by `config.py` via `python-dotenv`:
+The result is a `.env` file. `config.py` reads it through `python-dotenv`:
 
 ```dotenv
 NVIDIA_API_KEY=nvapi-xxxx                 # only needed for the LLM stages
@@ -210,317 +294,366 @@ WORKFLOW_COMPILER_LLM_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
 WORKFLOW_COMPILER_STATE_STORE_PATH=.workflow_state   # where states are saved as JSON
 ```
 
-- `NVIDIA_API_KEY` is loaded into the process environment and used as a bearer token. It is **never
-  logged or printed**.
-- `WORKFLOW_COMPILER_*` settings are read by `Settings` (pydantic-settings) in `config.py`.
-- For offline use/tests there's a `mock` provider that needs no key.
+- The system loads `NVIDIA_API_KEY` into the process environment and uses it as a bearer token.
+  The system **never logs or prints** the key.
+- `Settings` (pydantic-settings, in `config.py`) reads the `WORKFLOW_COMPILER_*` values.
+- For offline use and tests, the `mock` provider needs no key.
 
-`get_settings()` is cached (`functools.lru_cache`) so the `.env` is read once per process.
+`get_settings()` is cached (`functools.lru_cache`), so the process reads `.env` once.
 
 ---
 
-## 6. Stage-by-stage deep dive
+## 6. The stages, one by one
 
-For each stage: **what goes in, what it does, how, what comes out, and the code.**
+For each stage, this section gives: **what goes in, what the stage does, how it does it, what
+comes out, and where the code is.**
 
 ### Stage 0 — Document ingestion (Parser, no LLM)
 
-- **In:** a file path or raw bytes/string (`.docx`, `.pdf`, `.txt`, `.md`, `.html`).
-- **Out:** a `DocumentContent` object holding normalized plain `text`, a detected `document_format`,
-  `metadata` (char/word counts), and `sections`.
+- **In:** a file path, or raw bytes or a string (`.docx`, `.pdf`, `.txt`, `.md`, `.html`).
+- **Out:** a `DocumentContent` object. It holds the normalized plain `text`, the detected
+  `document_format`, `metadata` (character and word counts), and `sections`.
 - **Code:** `src/workflow_compiler/ingestion/`. `DocumentParserFactory.parse(source)` picks the
-  right parser by file extension / MIME type / explicit format, then that parser
-  (`DocxParser`, `PdfParser`, `MarkdownParser`, `HtmlParser`, `TextParser`) extracts text.
-- **Why a factory?** So the rest of the system never cares about file types — it just gets `text`.
-- **Notable details:** encoding is auto-detected (`encoding.py` using `charset-normalizer`); empty
-  or oversized files raise typed errors (`EmptyDocumentError`, `FileValidationError`); Markdown
-  parsing produces readable plain text that **keeps the `#` heading markers** (multi-workflow
-  segmentation slices by them) and **preserves snake_case identifiers verbatim** — emphasis
-  stripping only applies at word boundaries, so `order_id` can never be mangled into `orderid`
-  (the field names are what workflow inputs/outputs and cross-references bind by).
+  correct parser by file extension, MIME type, or an explicit format. That parser (`DocxParser`,
+  `PdfParser`, `MarkdownParser`, `HtmlParser`, `TextParser`) extracts the text.
+- **Details worth knowing:**
+  - The system detects the text encoding (`encoding.py`, with `charset-normalizer`).
+  - Empty or oversized files raise typed errors (`EmptyDocumentError`, `FileValidationError`).
+  - Markdown parsing produces readable plain text that **keeps the `#` heading markers**.
+    Multi-workflow segmentation slices the document by those markers.
+  - Markdown parsing **keeps snake_case identifiers exactly as written**. The parser strips
+    emphasis marks only at word boundaries, so `order_id` can never become `orderid`. This
+    matters because workflow inputs, outputs and cross-references bind by those field names.
 
-The CLI/compiler take the parser's `content.text` and put it into a fresh `WorkflowState`.
+The CLI and the compiler take `content.text` from the parser and put it into a new
+`WorkflowState`.
 
-### Stage 1 — Workflow Discovery (LLM)
+**Why a factory?** The rest of the system never needs to know about file types. It only receives
+`text`.
+
+### Stage 1 — Workflow discovery (LLM)
 
 - **In:** `state.document_text`.
-- **Out:** `state.workflow_metadata` (name, purpose, actors, systems, trigger events, start/end
-  states). Stage → `METADATA_EXTRACTED`.
+- **Out:** `state.workflow_metadata` (name, purpose, actors, systems, trigger events, start and
+  end states). Stage → `METADATA_EXTRACTED`.
 - **Code:** `agents/discovery.py` → `WorkflowDiscoveryAgent`.
 - **How:**
   1. Render the prompt template `prompts/templates/discover_workflow.md` with the document text.
-  2. Call `llm.structured(prompt, WorkflowDiscovery, system=...)`. The provider returns JSON
-     validated into the `WorkflowDiscovery` Pydantic schema (permissive: extra keys ignored, so a
-     slightly-off model response still parses).
-  3. Clean the result into a `WorkflowMetadata` (`_clean_list` strips/dedupes/lowercases-dedupe
-     lists; a missing name raises `CompilationError`).
-  4. **Confidence:** blend the model's self-reported confidence with *completeness* (how many of the
-     7 scored fields were populated) → `confidence_scores.metadata`.
-- **Quality lever:** by default the agent is wrapped in the **sequential review pipeline**, which
-  generates this metadata once and then runs three review passes over it (completeness / grounding /
-  consistency) to fill gaps, drop ungrounded items, and merge equivalent labels — see
-  [§7.11](#711-the-sequential-review-pipeline-default-on). (This codebase discovers one workflow per
-  document, so the "workflow review" passes operate on the metadata's lists.)
+  2. Call `llm.structured(prompt, WorkflowDiscovery, system=...)`. The provider returns JSON. The
+     system validates the JSON into the `WorkflowDiscovery` Pydantic schema. The schema is
+     permissive: it ignores extra keys, so a slightly wrong model response still parses.
+  3. Clean the result into a `WorkflowMetadata`. `_clean_list` strips, de-duplicates and
+     lower-cases each list. A missing name raises `CompilationError`.
+  4. **Confidence:** the agent blends the model's own confidence with *completeness* (how many of
+     the 7 scored fields have a value). The result goes to `confidence_scores.metadata`.
+- **Quality lever:** by default the **sequential review pipeline** wraps this agent. The pipeline
+  generates the metadata once, then runs three review passes over it (completeness, grounding,
+  consistency). The passes fill gaps, drop items with no support in the document, and merge labels
+  that mean the same thing. See [§7.10](#710-the-sequential-review-pipeline). This codebase
+  discovers one workflow per document, so the "workflow review" passes work on the lists inside
+  the metadata.
 
-### Stage 2 — Fact Extraction (LLM)
+### Stage 2 — Fact extraction (LLM)
 
 - **In:** `state.document_text`.
-- **Out:** `state.workflow_facts` — a flat list of `WorkflowFact` objects (each with a `statement`,
-  `category`, `confidence`) **plus an optional `structure`** (`WorkflowStructure`) holding the
-  relational layer. Stage → `FACTS_EXTRACTED`.
-- **Code:** `agents/fact_extraction.py` → `FactExtractionAgent`; structure models in
+- **Out:** `state.workflow_facts`. This is a flat list of `WorkflowFact` objects (each with a
+  `statement`, a `category` and a `confidence`), **plus an optional `structure`**
+  (`WorkflowStructure`) that holds the relational layer. Stage → `FACTS_EXTRACTED`.
+- **Code:** `agents/fact_extraction.py` → `FactExtractionAgent`. The structure models are in
   `models/structure.py`.
-- **How:** render `extract_facts.md`, call `llm.structured(..., FactExtraction)`. The model returns
-  **two layers** in one call:
-  1. **Flat scalar facts** — `inputs, outputs, rules, apis, systems, timers, retries` — short
-     statements with no inter-entity relations.
-  2. **Relational structure** — entities that each carry a short **id** and relations expressed by
-     *referencing those ids*: `activity_nodes {id, name, parallel_group}`,
+- **How:** render `extract_facts.md`, then call `llm.structured(..., FactExtraction)`. The model
+  returns **two layers** in one call:
+  1. **Flat scalar facts** — `inputs, outputs, rules, apis, systems, timers, retries`. These are
+     short statements with no relations between entities.
+  2. **Relational structure** — entities that each carry a short **id**, plus relations that
+     *refer to those ids*: `activity_nodes {id, name, parallel_group}`,
      `decision_nodes {id, question, after, yes_target, no_target}`,
      `exception_nodes {id, reason, raised_by}`,
      `compensation_nodes {id, name, compensates}`, `event_nodes {id, name, emitted_by}`,
      `transition_edges {source, target, trigger}`.
-- **Referential-integrity validation (the anti-hallucination guard):** `WorkflowStructure.validated()`
-  drops any relation that points at an id the model never declared — the entity is kept, the dangling
-  link is nulled, and a warning is recorded. The model literally cannot wire an edge to a node that
-  doesn't exist; if it tries, the bad link is discarded. It also drops **state transitions whose
-  endpoints are actually entity ids** (e.g. `a1 -> a2`): a common failure mode where the model leaks
-  the *step flow* into the *state graph*, which would otherwise build a junk subgraph duplicating the
-  real flow. Real state-name transitions (`active -> upgrade_in_progress`) are kept. The count of
-  dropped references is surfaced in the confidence note.
-- **Backward compatibility:** if the relational layer is empty (a legacy/minimal extraction), the
-  agent falls back to the old flat-list path and `structure` stays `None`. Either way the flat
-  `WorkflowFacts.facts` are derived (from the structure when present), so every downstream consumer
-  (CVPA, Temporal, the CLI summary) keeps working unchanged.
-- **Cleaning:** `_normalize` collapses whitespace and repeatedly strips quotes/trailing periods until
-  stable (`"Validate payment".` → `Validate payment`); case-insensitive duplicates are removed.
-- **Confidence:** blends self-reported confidence with how many categories were populated →
-  `confidence_scores.facts`. The note records counts, duplicates removed, and dangling refs dropped.
-- **Quality lever:** by default this stage (and discovery) is wrapped in the **sequential review
-  pipeline** — generate once, then completeness/grounding/consistency review passes that patch the
-  facts in place (see [§7.10](#710-the-sequential-review-pipeline-default-on)).
+- **Referential-integrity validation (the guard against hallucination):**
+  `WorkflowStructure.validated()` drops every relation that points at an id the model never
+  declared. The entity stays, the dangling link becomes null, and the system records a warning.
+  The model cannot wire an edge to a node that does not exist. If it tries, the bad link is
+  discarded. The validation also drops **state transitions whose endpoints are entity ids**
+  (for example `a1 -> a2`). This is a common failure: the model leaks the *step flow* into the
+  *state graph*, which would build a junk subgraph that duplicates the real flow. Real
+  state-name transitions (`active -> upgrade_in_progress`) are kept. The count of dropped
+  references appears in the confidence note.
+- **Backward compatibility:** when the relational layer is empty (an old or minimal extraction),
+  the agent uses the old flat-list path, and `structure` stays `None`. In both cases the system
+  derives the flat `WorkflowFacts.facts` (from the structure when one is present). So every
+  downstream consumer (CVPA, Temporal, the CLI summary) keeps working without change.
+- **Cleaning:** `_normalize` collapses whitespace. It strips quotes and trailing periods again and
+  again until the text stops changing (`"Validate payment".` → `Validate payment`). It removes
+  duplicates without regard to letter case.
+- **Confidence:** the agent blends the model's own confidence with how many categories have
+  values. The result goes to `confidence_scores.facts`. The note records the counts, the
+  duplicates removed, and the dangling references dropped.
+- **Quality lever:** by default the **sequential review pipeline** wraps this stage (and
+  discovery). It generates once, then the completeness, grounding and consistency passes patch the
+  facts in place. See [§7.10](#710-the-sequential-review-pipeline).
 
-**Why facts before a graph?** The facts are the *typed building blocks*. The graph builder doesn't
-re-read the prose — it works purely from these facts. Capturing the **relations** here (not just the
-nouns) is what lets the builder wire edges *semantically* instead of guessing by position.
+**Why facts before a graph?** The facts are the *typed building blocks*. The graph builder does
+not read the prose again. It works only from these facts. Capturing the **relations** here (not
+only the nouns) is what lets the builder wire edges *by meaning* instead of guessing by position.
 
-### Stage 3 — Graph Building (deterministic, no LLM) — *the cleverest part*
+### Stage 3 — Graph building (deterministic, no LLM)
+
+This is the cleverest part of the pipeline.
 
 - **In:** `state.workflow_facts`.
-- **Out:** `state.workflow_graph` (a `WorkflowGraph` of `WorkflowNode`s + `WorkflowEdge`s) **and** a
-  Mermaid diagram. Stage → `GRAPH_BUILT`.
-- **Code:** `graph/builder.py` → `WorkflowGraphBuilder`. Returns both the canonical `WorkflowGraph`
-  and a backing NetworkX `MultiDiGraph` (used later for review).
+- **Out:** `state.workflow_graph` (a `WorkflowGraph` of `WorkflowNode`s and `WorkflowEdge`s)
+  **and** a Mermaid diagram. Stage → `GRAPH_BUILT`.
+- **Code:** `graph/builder.py` → `WorkflowGraphBuilder`. It returns the canonical `WorkflowGraph`
+  and a NetworkX `MultiDiGraph` behind it (the review stage uses the second one).
 
-This is a rules engine, not a model. There are **two wiring paths**, chosen by the agent based on
-what Fact Extraction produced:
+This is a rules engine, not a model. There are **two wiring paths**. The agent chooses one based
+on what fact extraction produced.
 
-- **Semantic path — `build_from_structure(structure)` (preferred).** When the facts carry a relational
-  `structure`, edges are placed by *reading the explicit links*: a decision is inserted **after the
-  activity its `after` names** with its `yes_target`/`no_target` branches; an exception's error edge
-  comes from the activity that **`raised_by`** it; a compensation hangs off the exception of the
-  activity it **`compensates`** (never blanket-routed to the first one); an event emits from its
-  **`emitted_by`** activity; activities sharing a `parallel_group` become a real fork/join. An
-  exception with no compensation is routed to a terminal (reject/fail) so it ends the flow instead of
-  dangling as a dead-end. References were already validated in Stage 2, so the wiring is grounded — no
-  guessing.
-- **Positional path — `build(facts)` (fallback).** When only flat facts exist (no structure), the
-  builder can't know which decision gates which branch, so it pairs the *i-th* activity with the
-  *i-th* decision / exception / compensation. This is plausible but can mis-attribute relationships —
-  which is exactly why the relational path exists. It remains for legacy/minimal inputs.
+**Semantic path — `build_from_structure(structure)` (preferred).** When the facts carry a
+relational `structure`, the builder places edges by *reading the explicit links*:
 
-The positional `build()`, step by step:
+- A decision goes **after the activity that its `after` field names**, with its `yes_target` and
+  `no_target` branches.
+- An exception's error edge starts at the activity that **`raised_by`** names.
+- A compensation hangs off the exception of the activity that it **`compensates`**. The builder
+  never routes all compensations to the first exception.
+- An event is emitted by the activity that **`emitted_by`** names.
+- Activities that share a `parallel_group` become a real fork and join.
+- An exception with no compensation goes to a terminal node (reject or fail). So it ends the flow
+  instead of hanging as a dead end.
 
-1. **Categorize** facts into activities/decisions/events/exceptions/retries/compensations/
-   transitions (`_categorize`).
-2. **Create `start` and `end` nodes** (NodeType.START / END).
-3. **Activities → task nodes** (`activity_1`, `activity_2`, …). An activity whose text matches a
-   "parallel" regex (`in parallel`, `concurrently`, …) is set aside as a *parallel* branch.
-4. **Build the linear spine:** `start → activity_1 → activity_2 → … → end` as a list of `_EdgeSpec`s.
-5. **Weave in parallelism:** if any parallel activities exist, insert a `gateway_fork` and
+Stage 2 already validated the references, so this wiring is grounded. There is no guessing.
+
+**Positional path — `build(facts)` (fallback).** When only flat facts exist (no structure), the
+builder cannot know which decision gates which branch. So it pairs the *i-th* activity with the
+*i-th* decision, exception and compensation. This is plausible, but it can attach relations to
+the wrong step. That is exactly why the relational path exists. The positional path remains for
+old and minimal inputs.
+
+The positional `build()` runs these steps:
+
+1. **Categorize** the facts into activities, decisions, events, exceptions, retries,
+   compensations and transitions (`_categorize`).
+2. **Create the `start` and `end` nodes** (NodeType.START / END).
+3. **Turn activities into task nodes** (`activity_1`, `activity_2`, …). An activity whose text
+   matches a "parallel" pattern (`in parallel`, `concurrently`, …) is set aside as a *parallel*
+   branch.
+4. **Build the linear spine:** `start → activity_1 → activity_2 → … → end`, as a list of
+   `_EdgeSpec`s.
+5. **Weave in parallelism:** when parallel activities exist, insert a `gateway_fork` and a
    `gateway_join` so the parallel tasks split and rejoin (`_weave_parallel`).
-6. **Weave in decisions:** each decision becomes a `{diamond}` node with a **`yes`** edge to the
-   normal next step and a **`no`** edge to the matching exception (or `end`) — guaranteeing both
-   branches exist (`_weave_decision`).
-7. **Attach exceptions:** a dotted **error** edge from the relevant activity to an exception node;
-   if a compensation exists, route exception → compensation → end (saga rollback)
-   (`_attach_exception`).
-8. **Attach retries:** a **retry** edge from an exception back to the activity it retries
-   (`_attach_retry`). (Retry/compensation back-edges are *intended* loops — the reviewer won't flag
-   them.)
-9. **Attach events:** trigger-like events (`submit`, `receive`, …) connect `start → event → first
-   activity`; other events are emitted from the last activity (`_attach_event`).
-10. **State transitions:** `"A -> B"` style facts create/reuse `state_*` nodes and connect them
-    (`_attach_transition`).
-11. **Emit:** de-duplicate edge specs, assign stable ids (`e1`, `e2`, …), and drop any edge whose
-    endpoints don't exist (`_emit`). Node ids are stable and meaningful (`activity_3`,
+6. **Weave in decisions:** each decision becomes a `{diamond}` node. It gets a **`yes`** edge to
+   the normal next step and a **`no`** edge to the matching exception (or to `end`). So both
+   branches always exist (`_weave_decision`).
+7. **Attach exceptions:** a dotted **error** edge goes from the related activity to an exception
+   node. When a compensation exists, the route is exception → compensation → end (the saga
+   rollback) (`_attach_exception`).
+8. **Attach retries:** a **retry** edge goes from an exception back to the activity that it retries
+   (`_attach_retry`). Retry and compensation back-edges are *intended* loops. The reviewer does not
+   flag them.
+9. **Attach events:** trigger-like events (`submit`, `receive`, …) connect
+   `start → event → first activity`. Other events are emitted from the last activity
+   (`_attach_event`).
+10. **Add state transitions:** facts of the form `"A -> B"` create or reuse `state_*` nodes and
+    connect them (`_attach_transition`).
+11. **Emit:** remove duplicate edge specs, assign stable ids (`e1`, `e2`, …), and drop any edge
+    whose endpoints do not exist (`_emit`). Node ids are stable and meaningful (`activity_3`,
     `decision_1`, `exception_1`, `gateway_fork`).
 
-Node and edge *types* come from `enums.py`: `NodeType` (START/END/TASK/DECISION/GATEWAY/EVENT/…) and
-`EdgeType` (SEQUENCE/CONDITIONAL/ERROR/RETRY/COMPENSATION/SIGNAL/…). The `WorkflowGraph` model
-enforces an invariant: **node ids must be unique** (validated by Pydantic).
+Node and edge *types* come from `enums.py`: `NodeType` (START / END / TASK / DECISION / GATEWAY /
+EVENT / …) and `EdgeType` (SEQUENCE / CONDITIONAL / ERROR / RETRY / COMPENSATION / SIGNAL / …).
+The `WorkflowGraph` model enforces one invariant: **node ids must be unique** (Pydantic checks
+it).
 
-- **Confidence:** based on the breadth of structural fact categories present (more kinds of facts →
-  higher) → `confidence_scores.graph`.
+- **Confidence:** based on how many structural fact categories are present. More kinds of facts
+  give a higher score. The result goes to `confidence_scores.graph`.
 
 ### Stage 3b — Mermaid rendering (deterministic)
 
 - **Code:** `graph/mermaid.py` → `to_mermaid(graph)`.
-- Produces a `flowchart TD` where node *shape* encodes type: `(["Start"])` for start/end/events,
-  `{"Valid?"}` for decisions, `{{"Fork"}}` for gateways, `["Task"]` for tasks. Dotted arrows
-  (`-.->`) for error/retry/compensation/signal edges; `-->|label|` for labeled edges.
-- **Two hard-won correctness rules** (these were real bugs, now permanent):
-  - `end` is a **reserved Mermaid keyword**. Any node id that collides with a reserved word is
-    rewritten (`end` → `end_node`) via `_safe_id`, so diagrams render.
-  - Edge labels use the **bare** `|label|` form (not quoted), and characters that break the parser
-    (`"`, `|`, newlines) are neutralized.
+- The output is a `flowchart TD`. The *shape* of a node shows its type: `(["Start"])` for start,
+  end and events; `{"Valid?"}` for decisions; `{{"Fork"}}` for gateways; `["Task"]` for tasks.
+  Dotted arrows (`-.->`) show error, retry, compensation and signal edges. `-->|label|` shows
+  labeled edges.
+- **Two correctness rules.** Both were real bugs. Both are now permanent fixes:
+  - `end` is a **reserved word in Mermaid**. `_safe_id` rewrites any node id that collides with a
+    reserved word (`end` → `end_node`), so the diagram renders.
+  - Edge labels use the **bare** `|label|` form, not a quoted form. Characters that break the
+    parser (`"`, `|`, newlines) are neutralized.
 
 ### Stage 4 — Review (deterministic, no LLM)
 
 - **In:** `state.workflow_graph`.
-- **Out:** `state.review_report` (a `ReviewReport`). Stage → `REVIEWED`, `approval_status = PENDING`.
-- **Code:** `graph/review.py` → `GraphReviewer.review(graph)`, wrapped by the `DefaultReviewManager`.
-- **What it checks** (each produces a `ReviewIssue` with a severity and optional suggested fix):
-  - missing start / missing end (errors),
-  - isolated/disconnected nodes, orphan nodes (no incoming), dead-ends (no outgoing),
-  - unreachable subgraphs (can't be reached from start),
-  - duplicate nodes (same normalized label),
-  - decisions missing a branch,
-  - **unintended cycles** — but retry/compensation loops are recognized as intentional and *not*
-    flagged.
-- **Scoring:** a `health_score` in `[0,1]` computed by penalizing issues by severity weight
-  (CRITICAL 0.5, ERROR 0.25, WARNING 0.05); a `confidence` reflecting the reachable fraction of the
-  graph. Convenience properties expose `.errors`, `.warnings`, `.suggested_fixes`.
+- **Out:** `state.review_report` (a `ReviewReport`). Stage → `REVIEWED`,
+  `approval_status = PENDING`.
+- **Code:** `graph/review.py` → `GraphReviewer.review(graph)`, wrapped by
+  `DefaultReviewManager`.
+- **What it checks.** Each check produces a `ReviewIssue` with a severity and an optional
+  suggested fix:
+  - a missing start or a missing end (errors),
+  - isolated or disconnected nodes, orphan nodes (no incoming edge), dead ends (no outgoing edge),
+  - unreachable subgraphs (no path from start),
+  - duplicate nodes (the same normalized label),
+  - decisions with a missing branch,
+  - **unintended cycles**. Retry and compensation loops are intentional, so the reviewer does
+    *not* flag them.
+- **Scoring:** a `health_score` in `[0,1]`. Each issue lowers the score by a weight that depends
+  on its severity (CRITICAL 0.5, ERROR 0.25, WARNING 0.05). A `confidence` value shows the
+  fraction of the graph that is reachable. Convenience properties expose `.errors`, `.warnings`
+  and `.suggested_fixes`.
 
 ### The approval gate
 
-After Review, `compile_document` **stops** and saves the state with `approval_status = PENDING`.
-Nothing downstream runs yet. A human now inspects the graph/diagram/review and decides:
+After Review, `compile_document` **stops** and saves the state with
+`approval_status = PENDING`. Nothing downstream runs yet. A person now looks at the graph, the
+diagram and the review, and decides:
 
-- **Approve** → run CVPA → Temporal design → Temporal code generation (below), set `COMPLETED`.
-- **Reject** → set `approval_status = REJECTED`, record the reason in the report summary, **halt**.
+- **Approve** → the system runs CVPA → Temporal design → Temporal code generation (below), and
+  sets `COMPLETED`.
+- **Reject** → the system sets `approval_status = REJECTED`, records the reason in the report
+  summary, and **halts**.
 
-This is implemented as two separate operations (`approve_graph` / `reject_graph`) that *load the
-saved state by id*, act, and save again — so the gate can span separate CLI invocations or HTTP
-requests, even separate processes.
+Two separate operations implement the gate: `approve_graph` and `reject_graph`. Each one *loads
+the saved state by id*, acts, and saves again. So the gate can span separate CLI commands, HTTP
+requests, and even separate processes.
 
-### Stage 5 — CVPA Classification (LLM, post-approval)
+### Stage 5 — CVPA classification (LLM, after approval)
 
 - **In:** `state.workflow_graph`.
-- **Out:** `state.cvpa_classification` + a **re-colored** Mermaid diagram. Stage → `CLASSIFIED`.
+- **Out:** `state.cvpa_classification`, plus a **re-colored** Mermaid diagram. Stage →
+  `CLASSIFIED`.
 - **Code:** `agents/cvpa.py` → `CVPAClassifierAgent`.
-- **The rule that must hold:** *every node is assigned to exactly one phase* — Capture, Validate,
-  Process, or Activate. The LLM proposes assignments, but the agent **reconciles** them so the rule
-  always holds:
-  1. Serialize the graph to compact text and ask the LLM (`classify_cvpa.md`) for `{node_id, phase,
-     rationale, confidence}` per node.
-  2. Keep only valid assignments (known node id, parseable phase); on duplicates keep the
-     highest-confidence one.
-  3. **Fill any node the model missed** using a structural fallback keyed on node type
-     (START/EVENT→Capture, DECISION/GATEWAY→Validate, TASK/SUBPROCESS/TIMER→Process,
-     END/SIGNAL→Activate) at reduced confidence, with a clear "Fallback by node type" rationale.
-  4. Build per-phase summaries.
-- **Confidence:** blends mean per-node confidence with how much of the coverage came from the model
-  vs. fallback → `confidence_scores.cvpa`.
-- **Re-coloring:** the agent then calls `to_mermaid_with_cvpa(graph, classification)` and replaces
-  `state.mermaid_diagram`. That renderer emits Mermaid `classDef`s and `class` statements so each
-  node is colored by phase: **Capture = blue, Validate = amber, Process = green, Activate =
-  purple**, Unclassified = grey. This is the "go back and color-code the diagram" step.
+- **The rule that must hold:** *every node belongs to exactly one phase* — Capture, Validate,
+  Process or Activate. The LLM proposes the assignments. The agent then **reconciles** them so the
+  rule always holds:
+  1. Serialize the graph to compact text. Ask the LLM (`classify_cvpa.md`) for
+     `{node_id, phase, rationale, confidence}` for each node.
+  2. Keep only valid assignments (a known node id and a phase that parses). When a node has two
+     assignments, keep the one with the higher confidence.
+  3. **Fill in every node the model missed** with a fallback based on node type
+     (START/EVENT → Capture, DECISION/GATEWAY → Validate, TASK/SUBPROCESS/TIMER → Process,
+     END/SIGNAL → Activate). These get a lower confidence and a clear "Fallback by node type"
+     rationale.
+  4. Build a summary for each phase.
+- **Confidence:** the agent blends the mean confidence per node with the share of the coverage
+  that came from the model rather than from the fallback. The result goes to
+  `confidence_scores.cvpa`.
+- **Re-coloring:** the agent calls `to_mermaid_with_cvpa(graph, classification)` and replaces
+  `state.mermaid_diagram`. That renderer emits Mermaid `classDef` and `class` statements, so each
+  node gets the color of its phase: **Capture = blue, Validate = amber, Process = green,
+  Activate = purple**, Unclassified = grey. This is the "go back and color the diagram" step.
 
-### Stage 6 — Temporal Design (LLM, post-approval)
+### Stage 6 — Temporal design (LLM, after approval)
 
 - **In:** `state.workflow_graph` + `state.cvpa_classification` + `state.workflow_facts`.
 - **Out:** `state.temporal_design` (a `TemporalWorkflowDesign`). Stage → `TEMPORAL_DESIGNED`.
 - **Code:** `agents/temporal.py` → `TemporalGeneratorAgent`.
-- **What it generates** (architecture **specifications only — never executable code**), in two layers:
-  - **Declarations** — a workflow name + task queue, typed `workflow_inputs`, **activities** (with
-    typed params, outputs, result type, timeouts, retry policies), **signals** (human/external
-    waits), **queries** (in-flight state), **child workflows** (subprocesses), **timers**
-    (SLAs/deadlines), and **compensation activities** (saga rollbacks naming the activity they undo),
-    plus a default retry policy.
+- **What it generates.** The output is an architecture **specification only. It is never
+  executable code.** It has two layers:
+  - **Declarations** — a workflow name and task queue; typed `workflow_inputs`; **activities**
+    (with typed parameters, outputs, a result type, timeouts and retry policies); **signals**
+    (waits for a person or an external system); **queries** (state while the workflow runs);
+    **child workflows** (subprocesses); **timers** (SLAs and deadlines); **compensation
+    activities** (saga rollbacks that name the activity they undo); and a default retry policy.
   - **Plan IR (`plan`)** — an ordered list of `TemporalStep` "categories of action"
     (`activity` / `child_workflow` / `signal_gate` / `timer` / `parallel` / `branch`). Each step
-    carries `bindings` that source every input from the **workflow input**, an **earlier step's
-    output**, or a **constant** (`BindingSource`), and a `result_name` so later steps can consume it.
-    `parallel`/`branch` steps nest child steps in `lanes`. This IR is the explicit control-and-data
-    flow the code generator walks; when the model omits it, the generator synthesizes a linear plan
-    from the declarations in graph order (backward compatibility).
-- **How:** render `design_temporal.md` with the graph + CVPA + **facts** text (so retries, timeouts,
-  compensations, and I/O are *derived from the document* rather than guessed), call `llm.structured(
-  ..., TemporalDesignOutput)`, then **normalize**: names are slugged to PascalCase, empty entries and
-  zero-duration timers are dropped, retry values are clamped to valid ranges, unknown step kinds /
-  binding sources are coerced to safe defaults, and the workflow name falls back to the metadata name
-  if the model omits it.
-- **Confidence:** blends self-reported confidence with design completeness → `confidence_scores.
-  temporal`.
-- **No-code guarantee:** the design models have no field that could carry source code (a test
-  asserts `code`/`body`/`implementation` fields don't exist), and the system prompt explicitly
-  forbids emitting SDK code. The runnable code is produced by the *separate, deterministic* Stage 7
-  — so "the LLM specifies, templates emit code" holds.
+    carries `bindings` that take every input from the **workflow input**, an **earlier step's
+    output**, or a **constant** (`BindingSource`). Each step has a `result_name` so later steps
+    can use its result. `parallel` and `branch` steps nest child steps in `lanes`. This IR is the
+    explicit control flow and data flow that the code generator walks. When the model omits it,
+    the generator builds a linear plan from the declarations in graph order (backward
+    compatibility).
+- **How:** render `design_temporal.md` with the graph, the CVPA result and the **facts** text.
+  The facts text is included so that retries, timeouts, compensations and inputs and outputs
+  *come from the document* and are not guessed. Call `llm.structured(..., TemporalDesignOutput)`.
+  Then **normalize**: names become PascalCase; empty entries and zero-duration timers are dropped;
+  retry values are clamped to valid ranges; unknown step kinds and binding sources become safe
+  defaults; and the workflow name falls back to the metadata name when the model omits it.
+- **Confidence:** the agent blends the model's own confidence with the completeness of the design.
+  The result goes to `confidence_scores.temporal`.
+- **No-code guarantee:** the design models have no field that could carry source code. A test
+  asserts that `code`, `body` and `implementation` fields do not exist. The system prompt also
+  forbids SDK code. The *separate, deterministic* Stage 7 produces the runnable code. So the rule
+  "the LLM specifies, templates emit code" holds.
 
-### Stage 7 — Temporal Code Generation (deterministic, no LLM, post-approval)
+### Stage 7 — Temporal code generation (deterministic, no LLM, after approval)
 
-- **In:** `state.temporal_design` (required) + `state.workflow_graph` (for ordering when the plan IR
-  is absent).
+- **In:** `state.temporal_design` (required) + `state.workflow_graph` (used for ordering when the
+  plan IR is absent).
 - **Out:** `state.temporal_code` (a `TemporalCodeBundle` of `GeneratedFile`s). Stage →
-  `CODE_GENERATED`; the compiler then marks the run `COMPLETED`.
-- **Code:** `agents/temporal_code.py` → `TemporalCodeGeneratorAgent` (a no-LLM agent, like the graph
-  builder), delegating to `codegen/temporal/generator.py` → `TemporalPythonCodeGenerator`.
-- **How it works:** like the graph builder, this is a renderer, not a model. It walks the design's
-  **plan IR** and emits the body of `@workflow.run` *in Python* (where it is unit-testable), while
-  Jinja templates render the surrounding file skeletons and the simple signal/query/timer/child
-  declarations:
-  - **activity / child_workflow** → `await workflow.execute_activity(...)` /
-    `execute_child_workflow(...)`, constructing the typed input dataclass and binding each field from
-    its `InputBinding` (workflow input → `arg.<field>`, step output → that step's result variable,
-    constant → the dataclass default). The result is captured into `result_name`.
+  `CODE_GENERATED`. The compiler then marks the run `COMPLETED`.
+- **Code:** `agents/temporal_code.py` → `TemporalCodeGeneratorAgent` (a no-LLM agent, like the
+  graph builder). It delegates to `codegen/temporal/generator.py` →
+  `TemporalPythonCodeGenerator`.
+- **How it works.** Like the graph builder, this is a renderer, not a model. It walks the design's
+  **plan IR** and emits the body of `@workflow.run` *in Python code* (where unit tests can check
+  it). Jinja templates render the file skeletons around that body, plus the simple signal, query,
+  timer and child declarations. For each step kind:
+  - **activity / child_workflow** → `await workflow.execute_activity(...)` or
+    `execute_child_workflow(...)`. The generator builds the typed input dataclass and binds each
+    field from its `InputBinding` (workflow input → `arg.<field>`; step output → that step's
+    result variable; constant → the dataclass default). The result is stored in `result_name`.
   - **signal_gate** → `await workflow.wait_condition(lambda: self._<signal>_received)`. When the
-    design declares a timer that pairs with the signal (the step's explicit `timer` ref, or the
-    unique timer sharing a meaningful name token — `carrier.picked_up` ↔ `CarrierPickupTimeout`),
-    the wait is **bounded**: `wait_condition(..., timeout=<TIMER_CONST>)`, so a signal that never
-    arrives raises `TimeoutError` and fires the saga compensations instead of blocking forever.
-    Only a gate with no pairable timer stays unbounded, marked with an explicit TODO.
-  - **timer** → `await workflow.sleep(<TIMER_CONST>)` using the declared duration.
-  - **parallel** → concurrent calls via `asyncio.gather(...)` (the workflow template only imports
-    `asyncio` when a parallel step is actually present). Each lane's result is **captured
-    positionally** from the gather so a later step can bind to it (no discarded results → no
-    `NameError`).
-  - **branch** → a real `if/else`. When the design bound the branch to a data dependency it
-    branches on that expression (`if bool(<expr>):`). When the predicate is a simple comparison
-    whose identifier resolves to a known step result or workflow input
-    (`eligibility == 'eligible'`), the **real condition is emitted as code**
+    design declares a timer that pairs with the signal (the step's explicit `timer` reference, or
+    the one timer that shares a meaningful name token, such as `carrier.picked_up` ↔
+    `CarrierPickupTimeout`), the wait is **bounded**: `wait_condition(..., timeout=<TIMER_CONST>)`.
+    So a signal that never arrives raises `TimeoutError` and fires the saga compensations instead
+    of blocking forever. Only a gate with no timer to pair with stays unbounded. That gate gets an
+    explicit TODO.
+  - **timer** → `await workflow.sleep(<TIMER_CONST>)` with the declared duration.
+  - **parallel** → concurrent calls through `asyncio.gather(...)`. The workflow template imports
+    `asyncio` only when a parallel step is present. The result of each lane is **captured by
+    position** from the gather, so a later step can bind to it. No result is discarded, so there
+    is no `NameError`.
+  - **branch** → a real `if/else`. When the design bound the branch to a data dependency, the
+    code branches on that expression (`if bool(<expr>):`). When the predicate is a simple
+    comparison whose identifier resolves to a known step result or workflow input
+    (`eligibility == 'eligible'`), the generator **emits the real condition as code**
     (`should_x = eligibility == 'eligible'`). Only when neither resolves does it emit an explicit
-    placeholder flag (`should_<predicate> = True  # TODO`) — named and commented, never a silent
-    literal `if True` — defaulting to the main (then) path so the stub bundle runs out of the box.
+    placeholder flag (`should_<predicate> = True  # TODO`). The flag is named and has a comment.
+    It is never a silent `if True`. It defaults to the main (then) path, so the stub bundle runs
+    out of the box.
   - **Saga compensation** — every activity that has a registered compensation appends
-    `(comp_fn, comp_input)` to a `compensations` list — including activities **inside a parallel
-    group** (registered after the gather succeeds). The compensation input is built from the
-    compensation's own `bindings` (so a `release`/`reverse` receives the id it must undo), not an
-    empty dataclass. On any exception the `@workflow.run` body fires the compensations **in
-    reverse** before re-raising, retrying each with the workflow's default retry policy and setting
-    `self._status = "compensated"`. Compensations are matched to their activity by normalized
-    (PascalCase) name, so casing differences don't break the link.
-- **The emitted bundle** is six files written in order: `shared.py` (input dataclasses),
-  `activities.py` (`@activity.defn` stubs that log and **return a typed placeholder** with a
-  `# TODO`, so `python worker.py` + `python starter.py` run the workflow end-to-end out of the
-  box — replace the placeholder with real logic), `workflow.py`
-  (`@workflow.defn` with the generated run body, signals, queries), `worker.py` (registers the
-  workflow + activities on the task queue), `starter.py` (a client that starts one execution), and
-  `README.md` (run instructions). They use **flat, absolute imports** (`from activities import ...`)
-  and are each run directly from inside the package directory — matching the Temporal Python docs, so
-  no package install or `PYTHONPATH` is needed. See `docs/TEMPORAL_CODEGEN_FINDINGS.md` for the
-  standard this satisfies (and the earlier hallucinations it was built to prevent).
-- **Confidence/notes:** records `"<n> files for package '<name>'"` in `confidence_scores.notes`.
+    `(comp_fn, comp_input)` to a `compensations` list. This includes activities **inside a
+    parallel group** (registered after the gather succeeds). The compensation input comes from the
+    compensation's own `bindings`, so a `release` or `reverse` receives the id it must undo, not an
+    empty dataclass. On any exception, the `@workflow.run` body fires the compensations **in
+    reverse order** before it raises the exception again. It retries each one with the workflow's
+    default retry policy and sets `self._status = "compensated"`. Compensations match their
+    activity by normalized (PascalCase) name, so a difference in letter case does not break the
+    link.
+- **The emitted bundle** is six files, written in this order:
+  1. `shared.py` — the input dataclasses.
+  2. `activities.py` — `@activity.defn` stubs that log and **return a typed placeholder** with a
+     `# TODO`. Because of this, `python worker.py` plus `python starter.py` run the workflow from
+     start to end out of the box. Replace the placeholder with real logic.
+  3. `workflow.py` — `@workflow.defn` with the generated run body, signals and queries.
+  4. `worker.py` — registers the workflow and the activities on the task queue.
+  5. `starter.py` — a client that starts one execution.
+  6. `README.md` — run instructions.
+
+  The files use **flat, absolute imports** (`from activities import ...`). You run each one
+  directly from inside the package directory. This matches the Temporal Python docs, so you need
+  no package install and no `PYTHONPATH`. See `docs/TEMPORAL_CODEGEN_FINDINGS.md` for the standard
+  this satisfies, and for the earlier hallucinations that this design prevents.
+- **Confidence and notes:** the agent records `"<n> files for package '<name>'"` in
+  `confidence_scores.notes`.
 
 ---
 
-## 7. Cross-cutting machinery (the parts every stage relies on)
+## 7. Shared machinery
 
-### 7.1 The LLM layer — provider-agnostic by design
+Every stage relies on the parts in this section.
 
-The single most important architectural rule: **agents depend only on the abstract
-`BaseLLMProvider` interface** (`interfaces/llm.py`), never on a concrete vendor. That interface has
-three methods: `complete`, `structured`, `embed`.
+### 7.1 The LLM layer
+
+The single most important architecture rule: **agents depend only on the abstract
+`BaseLLMProvider` interface** (`interfaces/llm.py`). They never depend on a concrete vendor. The
+interface has three methods: `complete`, `structured` and `embed`.
+
+The class hierarchy, from the abstract interface down to the concrete providers:
 
 ```
 BaseLLMProvider (abstract: complete / structured / embed)
@@ -542,210 +675,244 @@ MockProvider (llm/providers/mock.py) — returns queued/canned responses (no net
                                        same interface directly. Used everywhere in tests.
 ```
 
-- **`HttpChatProvider.structured(prompt, schema)`** is the workhorse used by every LLM agent. It:
-  1. appends the target JSON Schema to the prompt and asks for JSON only,
-  2. POSTs the chat request (with retries),
-  3. extracts JSON from the reply (`json_utils.extract_json` tolerates stray prose/fences),
-  4. validates it into the Pydantic `schema`,
-  5. on failure, **re-asks** up to `structured_retries` times, feeding the validation error back to
-     the model; if it still fails, raises `SchemaValidationError`.
-- **Reliability** lives in `chat()` + `retry_async` (`llm/retry.py`): exponential backoff with
-  jitter, retrying only on timeouts, connection errors, and configured HTTP statuses.
-- **Auth:** `_auth_headers` adds `Authorization: Bearer <key>` from a `SecretStr` (so the key won't
-  print).
-- **Provider selection** is data-driven via `ProviderFactory` (`llm/factory.py`): providers register
-  under a name (`nemotron` (default), `local`, `local-fallback`, `openai-compatible`, `mock`);
-  `factory.from_settings()` builds the one named in `.env`. **Adding a new vendor never touches agent
-  or compiler code** — you register a builder.
-- **Local eGPU gateway + fallback (opt-in).** `local-fallback` makes a local gateway the primary LLM
-  and Nemotron the automatic safety net. The gateway (`GatewaySessionProvider`) is OpenAI-compatible
-  for chat but authenticates with **email+password** (`LLM_GATEWAY_EMAIL`/`LLM_GATEWAY_PASSWORD`) —
-  it logs in lazily, replays the session as a bearer token, refreshes before expiry, and re-logs-in
-  once on a 401. `FallbackProvider` delegates each call to the gateway and, only on
-  `ProviderConnectionError`/`ProviderTimeoutError`/HTTP-5xx, retries on Nemotron (caching "down"
-  briefly); auth failures and other 4xx surface instead of being masked. Model discovery reads the
-  gateway's public `/auth/config` (no auth) — exposed via `workflow-compiler models`,
-  `GET /providers/local/models`, and the frontend picker; the per-compile `model` selection is
-  applied by injecting a provider built with that local-model override.
-- **Why Nemotron has a "detailed thinking off" preamble:** Nemotron "super" models are reasoning
-  models that, left alone, emit long chains of thought that slow down and pollute JSON output. The
-  preamble keeps responses fast and clean.
+**`HttpChatProvider.structured(prompt, schema)`** is the workhorse. Every LLM agent uses it. It:
 
-### 7.2 Prompts — markdown templates, not hardcoded strings
+1. appends the target JSON Schema to the prompt and asks for JSON only,
+2. POSTs the chat request (with retries),
+3. extracts JSON from the reply (`json_utils.extract_json` tolerates stray prose and code
+   fences),
+4. validates the JSON into the Pydantic `schema`,
+5. on failure, **asks again** up to `structured_retries` times, and gives the validation error
+   back to the model. If it still fails, it raises `SchemaValidationError`.
 
-`prompts/templates/*.md` hold every prompt (`discover_workflow`, `discover_workflows`,
-`extract_facts`, `classify_cvpa`, `design_temporal`, plus the review/validator pass prompts). Only
-LLM stages have templates — graph building, Mermaid rendering, and code generation are
-deterministic and prompt-less. Each file has YAML front-matter declaring its
-`variables`. `PromptManager.render("classify_cvpa", workflow_graph=...)` loads (and caches) the
-template and substitutes variables (`prompts/loader.py`, `renderer.py`, `manager.py`). Editing a
-prompt requires no code change.
+**Reliability** lives in `chat()` plus `retry_async` (`llm/retry.py`): exponential backoff with
+jitter. It retries only on timeouts, connection errors and configured HTTP statuses.
 
-### 7.3 State storage — how the gate persists across calls
+**Auth:** `_auth_headers` adds `Authorization: Bearer <key>` from a `SecretStr`, so the key
+cannot print.
 
-`interfaces/state_store.py` defines `StateStore` (`save/load/exists/delete/list_ids`). Two
-implementations (`storage/`):
+**Provider selection** is data-driven through `ProviderFactory` (`llm/factory.py`). Providers
+register under a name: `nemotron` (default), `local`, `local-fallback`, `openai-compatible`,
+`mock`. `factory.from_settings()` builds the provider that `.env` names. **Adding a new vendor
+never touches agent or compiler code.** You register a builder.
 
-- **`FileStateStore`** — writes each state as `<root>/<workflow_id>.json`. Writes are **atomic**
-  (temp file + `replace`) so a crash can't corrupt a file, and blocking I/O runs in a thread via
-  `asyncio.to_thread`. This is the default (root from `WORKFLOW_COMPILER_STATE_STORE_PATH`).
-- **`InMemoryStateStore`** — a dict, deep-copying on save/load so stored state can't be mutated by
-  reference. Used in tests.
+**Local eGPU gateway with fallback (opt-in).** `local-fallback` makes a local gateway the primary
+LLM and Nemotron the automatic safety net.
 
-Missing ids raise `StateNotFoundError`. This store is *why* `compile` (request 1) and `approve`
-(request 2, possibly a different process) can work together: the state is durable between them.
+- The gateway (`GatewaySessionProvider`) speaks the OpenAI chat format, but it authenticates with
+  an **email and password** (`LLM_GATEWAY_EMAIL` / `LLM_GATEWAY_PASSWORD`). It logs in when it
+  first needs to, sends the session as a bearer token, refreshes before expiry, and logs in again
+  once on a 401.
+- `FallbackProvider` sends each call to the gateway. Only on `ProviderConnectionError`,
+  `ProviderTimeoutError` or an HTTP 5xx does it retry on Nemotron. It remembers "down" for a short
+  time. Auth failures and other 4xx errors surface. They are not masked.
+- Model discovery reads the gateway's public `/auth/config` (no auth). It is exposed through
+  `workflow-compiler models`, `GET /providers/local/models`, and the frontend picker. The
+  per-compile `model` selection works by injecting a provider built with that local-model
+  override.
 
-**Store-boundary guards (Phase 5 hardening, `storage/ids.py`).** Every file-backed store —
-workflow states, projects (`storage/project_store.py`), users, change requests
-(`storage/change_store.py`), knowledge bases (`kg/store.py`) — and the generated-bundle directory
-(`execution/bundles.py::bundle_dir`) validates the id/slug **before** building a path
-(`[A-Za-z0-9_-]{1,128}`); anything path-shaped (`..`, separators, drive letters) is refused as
-`StateNotFoundError` — an id that cannot exist is indistinguishable from one that does not, and the
-check must never reveal whether the input would have resolved. Export filenames built from
-document or model text (`BCR-001`, `TP-ORD-001`, labels) go through
-`docs_export/artifacts.py::safe_filename_part`. Zip uploads were already zip-slip-safe
+**Why Nemotron has a "detailed thinking off" preamble.** Nemotron "super" models are reasoning
+models. Left alone, they emit long chains of thought. Those chains slow the call down and pollute
+the JSON output. The preamble keeps responses fast and clean.
+
+### 7.2 Prompts
+
+`prompts/templates/*.md` holds every prompt: `discover_workflow`, `discover_workflows`,
+`extract_facts`, `classify_cvpa`, `design_temporal`, plus the review and validator pass prompts.
+Only LLM stages have templates. Graph building, Mermaid rendering and code generation are
+deterministic and have no prompt.
+
+Each file has YAML front matter that declares its `variables`.
+`PromptManager.render("classify_cvpa", workflow_graph=...)` loads the template (and caches it)
+and fills in the variables (`prompts/loader.py`, `renderer.py`, `manager.py`). You can edit a
+prompt without a code change.
+
+### 7.3 State storage
+
+`interfaces/state_store.py` defines `StateStore` (`save` / `load` / `exists` / `delete` /
+`list_ids`). There are two implementations (`storage/`):
+
+- **`FileStateStore`** writes each state as `<root>/<workflow_id>.json`. Writes are **atomic**
+  (write a temp file, then `replace`), so a crash cannot corrupt a file. Blocking I/O runs in a
+  thread through `asyncio.to_thread`. This is the default. The root comes from
+  `WORKFLOW_COMPILER_STATE_STORE_PATH`.
+- **`InMemoryStateStore`** is a dict. It deep-copies on save and load, so stored state cannot
+  change through a shared reference. Tests use it.
+
+A missing id raises `StateNotFoundError`. This store is *why* `compile` (request 1) and
+`approve` (request 2, possibly in a different process) can work together: the state lasts between
+them.
+
+**Store-boundary guards (Phase 5 hardening, `storage/ids.py`).** Every file-backed store
+validates the id or slug **before** it builds a path. This covers workflow states, projects
+(`storage/project_store.py`), users, change requests (`storage/change_store.py`), knowledge bases
+(`kg/store.py`), and the generated-bundle directory (`execution/bundles.py::bundle_dir`). The
+allowed pattern is `[A-Za-z0-9_-]{1,128}`. Anything that looks like a path (`..`, separators,
+drive letters) is refused as `StateNotFoundError`. An id that cannot exist must look the same as
+an id that does not exist. The check must never reveal whether the input would have resolved.
+Export filenames built from document or model text (`BCR-001`, `TP-ORD-001`, labels) go through
+`docs_export/artifacts.py::safe_filename_part`. Zip uploads were already safe against zip-slip
 (`kg/ingest.py`).
 
-**Compare-and-swap on save (opt-in).** `CompilationProject`, `KnowledgeBase` and `ChangeRequest`
-carry an integer `version` that the store bumps on **every** save (legacy records read as 0). A
-writer may pass `expected_version=` to `save(...)`; when the stored version differs the save is
-refused with `StaleWriteError` (HTTP **409** — *"changed since it was loaded … reload and retry"*)
-instead of silently overwriting a job's or another tab's write. Writers that pass nothing keep
-last-write-wins (the CLI, background jobs, older clients). Over HTTP the token travels as
-`expected_version` in the body **or** an `If-Match: "N"` header (`W/"N"` and bare `N` accepted;
-`*` = no check; a non-integer is 400) on `PUT /projects/{id}/spec`, `PATCH /projects/{id}` and
-`PUT /change-requests/{id}/artifacts/{kind}`; `GET /projects/{id}`, `GET /knowledge-bases/{id}` and
-`GET /change-requests/{id}` answer with `ETag: "N"` and the version is in the body (also on the
-project summaries). The frontend always sends it and shows a *Reload the latest version* action on
-409. Passwords are still scrypt-hashed, but hashing/verification now runs in a worker thread
-(`asyncio.to_thread`) so a login cannot stall the event loop.
+**Compare-and-swap on save (opt-in).** `CompilationProject`, `KnowledgeBase` and
+`ChangeRequest` carry an integer `version`. The store bumps it on **every** save. Old records
+read as version 0. A writer may pass `expected_version=` to `save(...)`. When the stored version
+is different, the store refuses the save with `StaleWriteError` (HTTP **409** — *"changed since
+it was loaded … reload and retry"*). It does not silently overwrite another job's or another
+tab's write. Writers that pass nothing keep last-write-wins behavior (the CLI, background jobs,
+older clients).
 
-### 7.4 Editing the graph — `GraphEditor`
+Over HTTP the token travels in one of two ways: as `expected_version` in the body, or as an
+`If-Match: "N"` header. The header accepts `W/"N"` and a bare `N`; `*` means no check; a
+non-integer is a 400. The routes that accept it are `PUT /projects/{id}/spec`,
+`PATCH /projects/{id}` and `PUT /change-requests/{id}/artifacts/{kind}`. The routes
+`GET /projects/{id}`, `GET /knowledge-bases/{id}` and `GET /change-requests/{id}` answer with
+`ETag: "N"`, and the version is also in the body (and in the project summaries). The frontend
+always sends the token. On a 409 it shows a *Reload the latest version* action.
 
-If a reviewer wants to fix the graph before approving, `review/editor.py` → `GraphEditor` offers six
-**pure, validated** operations: `add_node`, `remove_node` (drops incident edges), `rename_node`,
-`modify_node_type`, `add_edge` (auto-assigns the next `eN` id, validates endpoints), `remove_edge`.
-Each returns a **new** validated `WorkflowGraph`; invalid edits raise `GraphEditError` rather than
-corrupting state. (The integration tests show a reviewer editing a graph and the change surviving a
-save/reload.)
+Passwords are still scrypt-hashed. Hashing and verification now run in a worker thread
+(`asyncio.to_thread`), so a login cannot stall the event loop.
+
+### 7.4 Editing the graph (`GraphEditor`)
+
+A reviewer may want to fix the graph before approval. `review/editor.py` → `GraphEditor` offers
+six **pure, validated** operations: `add_node`, `remove_node` (also drops the edges that touch
+it), `rename_node`, `modify_node_type`, `add_edge` (assigns the next `eN` id and validates the
+endpoints), and `remove_edge`. Each one returns a **new** validated `WorkflowGraph`. An invalid
+edit raises `GraphEditError` instead of corrupting the state. The integration tests show a
+reviewer editing a graph, and the change surviving a save and reload.
 
 ### 7.5 Confidence scores
 
-`models/confidence.py` → `ConfidenceScores` holds a per-stage float in `[0,1]` (`metadata`, `facts`,
-`graph`, `cvpa`, `temporal`, `overall`) plus a `notes` dict. Each agent writes its own score via
-`model_copy(update=...)` so scores accumulate without clobbering each other.
+`models/confidence.py` → `ConfidenceScores` holds one float in `[0,1]` per stage (`metadata`,
+`facts`, `graph`, `cvpa`, `temporal`, `overall`) plus a `notes` dict. Each agent writes its own
+score through `model_copy(update=...)`, so the scores build up and do not overwrite each other.
 
 ### 7.6 Errors
 
 `exceptions.py` is a typed hierarchy under `WorkflowCompilerError`: parsing errors
 (`UnsupportedFormatError`, `EmptyDocumentError`, …), `CompilationError`, `ApprovalError`,
-`GraphEditError`, `StateNotFoundError`, and LLM errors (`ProviderTimeoutError`, `ProviderHTTPError`,
-`SchemaValidationError`, …). The API maps these to HTTP codes (below).
+`GraphEditError`, `StateNotFoundError`, and LLM errors (`ProviderTimeoutError`,
+`ProviderHTTPError`, `SchemaValidationError`, …). The API maps these to HTTP codes
+([§15.3](#153-http-api-apiapppy-fastapi)).
 
-### 7.7 Config & logging
+### 7.7 Configuration and logging
 
-`config.py` (pydantic-settings, `.env`) provides `Settings`; `logging.py` sets up Loguru + Rich.
-Logs never include the API key.
+`config.py` (pydantic-settings, `.env`) provides `Settings`. `logging.py` sets up Loguru and
+Rich. Logs never include the API key.
 
 ### 7.8 The Temporal code-generation layer (`codegen/temporal/`)
 
-This is the deterministic counterpart to the LLM Temporal-design agent, and it mirrors the graph
-builder's "no model, pure function" philosophy:
+This is the deterministic partner of the LLM Temporal-design agent. It follows the graph
+builder's rule: no model, pure function.
 
-- **`generator.py` → `TemporalPythonCodeGenerator`** — owns the Jinja `Environment` (over the bundled
-  `templates/`, with `StrictUndefined` so a missing template variable fails loudly) and the
-  `_RunBodyEmitter` that walks the plan IR to produce the `@workflow.run` body in Python. Helpers
-  `_snake`/`_pascal` make safe identifiers; `_retry_expr`/`_timeout_expr` render `RetryPolicy(...)`
-  and `timedelta(...)` expressions; `_synthesize_plan` builds a linear plan (topologically ordered
-  over the graph's forward "backbone" edges) when the design has no plan IR.
+- **`generator.py` → `TemporalPythonCodeGenerator`** owns the Jinja `Environment` over the
+  bundled `templates/`. It uses `StrictUndefined`, so a missing template variable fails loudly.
+  It also owns the `_RunBodyEmitter`, which walks the plan IR and produces the `@workflow.run`
+  body in Python. Helpers: `_snake` and `_pascal` make safe identifiers; `_retry_expr` and
+  `_timeout_expr` render `RetryPolicy(...)` and `timedelta(...)` expressions; `_synthesize_plan`
+  builds a linear plan (in topological order over the graph's forward "backbone" edges) when the
+  design has no plan IR.
 - **`templates/*.jinja`** — `shared.py.jinja`, `activities.py.jinja`, `workflow.py.jinja`,
-  `worker.py.jinja`, `starter.py.jinja`, `README.md.jinja`. The workflow template injects the
-  emitted `run_body` and conditionally imports `asyncio` only when a parallel step is used. Templates
-  emit *file skeletons and simple declarations*; the complex control/data-flow body is emitted in
-  Python (in `generator.py`) precisely because that is the part worth unit-testing.
-- **Why split Python-emitted body vs. Jinja skeletons?** The risky logic (data threading, saga
-  rollback, gather/branch) lives where tests can exercise it directly; the boilerplate lives in
-  templates where it's easy to read and tweak.
+  `worker.py.jinja`, `starter.py.jinja`, `README.md.jinja`. The workflow template inserts the
+  emitted `run_body`. It imports `asyncio` only when a parallel step is used. The templates emit
+  *file skeletons and simple declarations*. The complex control-flow and data-flow body is emitted
+  in Python (in `generator.py`), because that is the part worth unit-testing.
 
-The agent wrapper (`agents/temporal_code.py`) is what plugs this into the pipeline; the generator is
-also usable standalone via `to_temporal_python(design, graph=...)`.
+The agent wrapper (`agents/temporal_code.py`) plugs the generator into the pipeline. You can also
+use the generator on its own: `to_temporal_python(design, graph=...)`.
 
-### 7.9 Progress & observability
+**Why split the Python-emitted body from the Jinja skeletons?** The risky logic (data threading,
+saga rollback, gather and branch) lives where tests can run it directly. The boilerplate lives in
+templates, where it is easy to read and change.
 
-`compiler.py` defines a small observer protocol so any caller can watch the pipeline run live without
-reaching into internals:
+### 7.9 Progress and observability
 
-- **`ProgressEvent`** (frozen dataclass) — `phase` (`"agent"`/`"review"`/`"approve"`), `name`,
-  `status` (`"start"`/`"done"`), 1-based `index`/`total` within its sub-pipeline, and on `"done"` the
-  elapsed `seconds` and resulting `stage`.
-- **`ProgressCallback`** — `Callable[[ProgressEvent], None]`, passed to `compile_document` /
-  `approve_graph`. The compiler wraps every call in `_emit`, which **swallows observer exceptions** so
-  a misbehaving progress sink can never break a compilation.
-- `_run_agents` emits a timed `start`/`done` pair around each agent; the review and approve steps emit
-  their own. The CLI's `_make_progress()` renders these as timestamped lines
-  (`12:34:58 OK 2/3 temporal-generator  1.42s -> temporal_designed`), using ASCII markers (`>>`/`OK`)
-  so output is safe when piped on Windows (cp1252) consoles.
-- **Nested sub-steps:** before running each agent, `_run_agents` hands any agent exposing a
+`compiler.py` defines a small observer protocol. Any caller can watch the pipeline run live
+without reaching into its internals.
+
+- **`ProgressEvent`** (a frozen dataclass) carries: `phase` (`"agent"` / `"review"` /
+  `"approve"`), `name`, `status` (`"start"` / `"done"`), a 1-based `index` and `total` inside its
+  sub-pipeline, and, on `"done"`, the elapsed `seconds` and the resulting `stage`.
+- **`ProgressCallback`** is a `Callable[[ProgressEvent], None]`. You pass it to
+  `compile_document` or `approve_graph`. The compiler wraps every call in `_emit`, which
+  **swallows observer exceptions**. So a broken progress sink can never break a compilation.
+- `_run_agents` emits a timed `start` / `done` pair around each agent. The review and approve
+  steps emit their own events. The CLI's `_make_progress()` renders these as lines with
+  timestamps (`12:34:58 OK 2/3 temporal-generator  1.42s -> temporal_designed`). It uses ASCII
+  markers (`>>` / `OK`), so the output is safe when piped on Windows (cp1252) consoles.
+- **Nested sub-steps.** Before `_run_agents` runs an agent, it gives any agent that exposes a
   `set_progress(report)` hook a **nested sub-reporter**. `ReviewPipelineAgent` uses it to emit a
-  `phase="review-pass"` `start`/`done` pair around its canonical generation (`generate`) and each
-  review pass (`review:completeness`, `review:grounding`, `review:consistency`). The CLI renders these
-  **indented under the parent agent** with a quieter marker, so a live run shows the review pipeline's
-  internal stages — e.g. `> 2/4 review:grounding  0.71s` — not just one opaque line. The agent stays
-  decoupled from `ProgressEvent`: it calls `report(name, status, index, total, …)` and the compiler's
-  `_sub_reporter` builds the event.
+  `phase="review-pass"` `start` / `done` pair around its canonical generation (`generate`) and
+  each review pass (`review:completeness`, `review:grounding`, `review:consistency`). The CLI
+  renders these **indented under the parent agent** with a quieter marker. So a live run shows the
+  review pipeline's internal stages, for example `> 2/4 review:grounding  0.71s`, and not one
+  opaque line. The agent stays decoupled from `ProgressEvent`: it calls
+  `report(name, status, index, total, …)`, and the compiler's `_sub_reporter` builds the event.
 
-### 7.10 The sequential review pipeline (default-on)
+### 7.10 The sequential review pipeline
 
-The **default** way the LLM stages raise accuracy. The review pipeline follows a compiler
-discipline: **generate one canonical output, then improve it with three specialized review
-passes.** It never regenerates the artifact — each pass emits only **minimal patches or
+This is the **default** way the LLM stages raise their accuracy. The review pipeline follows a
+compiler discipline: **generate one canonical output, then improve it with three specialized
+review passes.** It never regenerates the artifact. Each pass emits only **minimal patches or
 `no_change`**.
 
-- **The three passes** (`agents/review_pipeline.py` → `ReviewPass`), run in order, each feeding the
-  next:
-  1. **completeness** — add workflow elements *explicitly in the document but missing* from the
-     output (allowed action: `add`). No renaming, no inference.
-  2. **grounding** — `remove`/`flag` any element *not explicitly supported* by the document. Only
-     textual evidence counts; implied business knowledge never does.
-  3. **consistency** — `merge` duplicates / semantically-equivalent labels, `modify` to a canonical
-     label or to fix a relation. No new elements are invented.
-- **Patches, not rewrites** (`models/patch.py`): a pass returns a `ReviewResult` of `Patch`es, each
-  an `add`/`remove`/`modify`/`merge`/`flag`/`no_change` carrying `Evidence` (quote / section /
-  offsets where practical). The model proposes; a **deterministic `PatchApplier`** disposes —
-  applying each patch as a pure function. `MetadataPatchApplier` edits the single `WorkflowMetadata`
-  (the "workflow discovery" artifact — this codebase extracts one workflow per document, so the
-  workflow-review passes operate on its lists: actors/systems/triggers/states); `FactsPatchApplier`
-  edits the `WorkflowFacts` + relational `WorkflowStructure`.
-- **Grounded + idempotent by construction:** the applier drops any `add` that duplicates an existing
-  element (case-insensitively) or fails a reference-free grounding check (quote substring or
-  majority token-overlap against `document_text`). After applying, `FactsPatchApplier` re-runs
-  `WorkflowStructure.validated()` so a patched relation can only point at a *declared* entity. The
-  net effect: running a pass again over an already-reviewed artifact yields `no_change` — the
-  defining property the passes are built to guarantee.
-- **Generic framework:** a stage is bound to the engine by a `ReviewSpec`
-  (extract / serialize / apply-to-state + the three prompt names + the applier).
-  `ReviewPipelineAgent` wraps the inner generator agent, runs it once,
-  then the three passes, and records per-pass provenance ("completeness: 1 applied, 2 dropped; …")
-  in `confidence_scores.notes[<stage>_review]`. Adding a review pipeline for a future stage
-  (Mermaid, Temporal) is a new spec + three prompts — no engine change.
-- **Prompts:** `prompts/templates/review_{workflow,facts}_{completeness,grounding,consistency}.md`,
-  each documenting its pass's responsibility and allowed actions.
-- **Precedence and default:** on by default (`--review` / `WORKFLOW_COMPILER_REVIEW_ENABLED`).
-  Per stage the compiler chooses **review → plain**: the review pipeline runs on any stage it is
-  enabled for, otherwise the plain agent.
-- **The honest boundary:** the passes raise grounding/consistency but
-  cannot certify semantic truth — a misreading the generator and all three reviewers share survives.
-  The human spec gate remains the oracle; flagged elements are what a reviewer should scrutinize.
+**The three passes** (`agents/review_pipeline.py` → `ReviewPass`) run in order. Each one feeds
+the next:
 
-Cost note: review adds three (sequential) LLM calls per reviewed stage. It is on by default because
-those calls are cheap relative to a wrong graph reaching the human gate; disable with `--no-review`.
+1. **completeness** — add workflow elements that are *explicitly in the document but missing*
+   from the output (allowed action: `add`). No renaming. No inference.
+2. **grounding** — `remove` or `flag` any element that the document does *not explicitly
+   support*. Only text evidence counts. Implied business knowledge never counts.
+3. **consistency** — `merge` duplicates and labels that mean the same thing; `modify` to a
+   canonical label or to fix a relation. This pass invents no new elements.
+
+**Patches, not rewrites** (`models/patch.py`). A pass returns a `ReviewResult` of `Patch`es. Each
+patch is an `add` / `remove` / `modify` / `merge` / `flag` / `no_change` and carries `Evidence`
+(a quote, a section, and offsets where practical). The model proposes. A **deterministic
+`PatchApplier`** decides, and applies each patch as a pure function. `MetadataPatchApplier` edits
+the single `WorkflowMetadata` (the "workflow discovery" artifact; this codebase extracts one
+workflow per document, so the workflow-review passes work on its lists: actors, systems,
+triggers, states). `FactsPatchApplier` edits the `WorkflowFacts` plus the relational
+`WorkflowStructure`.
+
+**Grounded and idempotent by construction.** The applier drops any `add` that duplicates an
+existing element (without regard to letter case) or that fails a reference-free grounding check
+(a quote substring, or majority token overlap against `document_text`). After it applies the
+patches, `FactsPatchApplier` runs `WorkflowStructure.validated()` again, so a patched relation can
+only point at a *declared* entity. The net effect: running a pass again over an artifact that was
+already reviewed yields `no_change`. That is the defining property the passes guarantee.
+
+**A generic framework.** A `ReviewSpec` binds a stage to the engine (extract / serialize /
+apply-to-state, plus the three prompt names and the applier). `ReviewPipelineAgent` wraps the
+inner generator agent, runs it once, then runs the three passes. It records per-pass provenance
+("completeness: 1 applied, 2 dropped; …") in `confidence_scores.notes[<stage>_review]`. To add a
+review pipeline for a future stage (Mermaid, Temporal), you add a new spec and three prompts. The
+engine does not change.
+
+**Prompts:** `prompts/templates/review_{workflow,facts}_{completeness,grounding,consistency}.md`.
+Each one documents its pass's responsibility and allowed actions.
+
+**Precedence and default.** The pipeline is on by default (`--review` /
+`WORKFLOW_COMPILER_REVIEW_ENABLED`). For each stage the compiler chooses **review → plain**: the
+review pipeline runs on any stage where it is enabled; otherwise the plain agent runs.
+
+**The honest boundary.** The passes raise grounding and consistency. They cannot certify that the
+meaning is true. A misreading that the generator and all three reviewers share survives. The
+human spec gate remains the oracle. Flagged elements are what a reviewer should examine.
+
+**Cost note.** Review adds three LLM calls in sequence per reviewed stage. It is on by default
+because those calls are cheap compared to a wrong graph reaching the human gate. Disable it with
+`--no-review`.
 
 ---
 
-## 8. The orchestrator: `WorkflowCompiler`
+## 8. The engine: `WorkflowCompiler`
 
-`compiler.py` ties it all together. Construction wires the collaborators, defaulting anything not
-injected:
+`compiler.py` ties everything together. The constructor wires the collaborators. Anything you do
+not inject gets a default.
+
+The constructor and the convenience builder:
 
 ```python
 WorkflowCompiler(
@@ -762,30 +929,33 @@ WorkflowCompiler.from_settings()   # provider + file store straight from .env
 
 Its methods:
 
-- **`compile_document(text, *, review_mode=True, persist=True, workflow_id=None, progress=None)`** —
-  runs the pre-review agents in order, reviews, sets `PENDING`/`REVIEWED`, saves, and **returns
-  (stops at the gate)**. If `review_mode=False`, it auto-approves and runs the whole pipeline
-  end-to-end in one call (handy for automation). `progress` receives live `ProgressEvent`s.
-- **`approve_graph(id, *, reviewer=None, persist=True, progress=None)`** — loads the saved state,
-  approves it, runs the post-approval agents (CVPA → Temporal design → Temporal code) via the shared
-  `_finalize_approval`, marks `COMPLETED`, saves.
-- **`reject_graph(id, *, reviewer, reason)`** — loads, marks `REJECTED` with the reason, saves. No
-  LLM needed.
-- **`review_graph(id)`** — refresh a stored workflow's review report.
-- **`save_state` / `load_state` / `list_states`** — thin pass-throughs to the store.
+- **`compile_document(text, *, review_mode=True, persist=True, workflow_id=None, progress=None)`**
+  runs the pre-review agents in order, reviews, sets `PENDING` / `REVIEWED`, saves, and
+  **returns (it stops at the gate)**. With `review_mode=False` it approves automatically and runs
+  the whole pipeline in one call (useful for automation). `progress` receives the live
+  `ProgressEvent`s.
+- **`approve_graph(id, *, reviewer=None, persist=True, progress=None)`** loads the saved state,
+  approves it, runs the post-approval agents (CVPA → Temporal design → Temporal code) through the
+  shared `_finalize_approval`, marks `COMPLETED`, and saves.
+- **`reject_graph(id, *, reviewer, reason)`** loads the state, marks it `REJECTED` with the
+  reason, and saves. No LLM is needed.
+- **`review_graph(id)`** refreshes the review report of a stored workflow.
+- **`save_state` / `load_state` / `list_states`** are thin pass-throughs to the store.
 
-A subtlety worth knowing: both the gated path (`approve_graph`) and the automated path
-(`compile_document(review_mode=False)`) call the same `_finalize_approval(state)` helper, so they
-produce identical downstream results; the automated path just doesn't reload from disk.
+One detail is worth knowing. The gated path (`approve_graph`) and the automated path
+(`compile_document(review_mode=False)`) both call the same `_finalize_approval(state)` helper.
+So they produce identical downstream results. The automated path only skips the reload from disk.
 
 ---
 
-## 8b. The spec-centric front-end: `ProjectCompiler`
+## 9. The front-end: `ProjectCompiler`
 
-Everything above describes the classic single-document pipeline, which remains unchanged. For
-**large documents describing several workflows** — where downstream quality degrades because every
-stage reasons about the whole document at once — a second orchestrator, `ProjectCompiler`
-(`project_compiler.py`), layers a *spec-centric* front-end on top:
+Everything above describes the classic single-document pipeline. That pipeline is unchanged. But
+**large documents that describe several workflows** cause a problem: every stage reasons about
+the whole document at once, and quality drops. A second orchestrator, `ProjectCompiler`
+(`project_compiler.py`), adds a *spec-centric* front-end on top of the engine.
+
+The flow, with the spec gate in the middle:
 
 ```
 Document ─▶ Segmentation ─▶ per-workflow Discovery+Facts ─▶ one WorkflowSpec per workflow
@@ -794,464 +964,587 @@ Document ─▶ Segmentation ─▶ per-workflow Discovery+Facts ─▶ one Work
                             ─▶ Temporal design ─▶ Temporal code
 ```
 
-The pieces, and where they live:
+### 9.1 The parts
 
-- **Segmentation** (`agents/segmentation.py` → `WorkflowSegmentationAgent`): one LLM call
-  enumerates *every* distinct workflow, the document sections belonging to each, and any
-  **output→input dependencies** between workflows (`prompts/templates/discover_workflows.md`),
-  improved by the same three-pass review discipline (completeness / grounding / consistency with
-  a deterministic `SegmentationPatchApplier`). Deterministic code then slices the document per
-  workflow — so fact extraction sees **only its own workflow's text**, which is the
-  scope-isolation win this front-end exists for. A single-workflow document yields one segment
-  holding the full text (the classic path's behavior, unchanged).
-- **The project aggregate** (`models/project.py` → `CompilationProject`): document text, segments,
-  one `WorkflowSpec` per workflow, typed `CrossReference`s, the spec approval status, and a
-  `ProjectStage` (`INGESTED → WORKFLOWS_DISCOVERED → SPEC_DRAFTED → SPEC_VALIDATED →
-  SPEC_APPROVED → COMPILING → COMPLETED | NEEDS_ATTENTION`). Persisted by
-  `storage/project_store.py` under `<state-root>/projects/`. `WorkflowState` stays the
-  per-workflow unit — it only gained an optional `project_id` back-link.
-- **The spec is the source of truth; Markdown is a projection.** `WorkflowSpec` (`models/spec.py`)
-  bundles the metadata + facts/structure with review-surface lists (assumptions, ambiguities,
-  **open questions** — the readiness checklist absorbed as fill-in questions — and suggested
-  edits), each element carrying **provenance**: `document_grounded`, `llm_inferred`, or
-  `human_provided`. `spec/renderer.py` renders it to a strict-grammar Markdown file;
-  `spec/ingest.py` parses edits back **deterministically** and merges them onto the existing model
-  (ids preserved, unrendered fields survive, `WorkflowStructure.validated()` re-run). A test
-  asserts the round trip is the identity — this is what keeps the compiled graph a pure function
-  of what the human approved, with no LLM between the gate and the graph.
-- **The edit ⇄ validate loop.** `validate_specs` ingests the edited files and runs three review
-  passes over each spec *against the original document* (`spec/validator.py`,
-  `prompts/templates/review_spec_*.md`). The applier is **provenance-aware**: unsupported
-  machine-extracted elements are removed, but a `remove` aimed at a *human-provided* element is
-  converted into a finding ("please confirm") — the validator challenges human additions, never
-  deletes them. Findings land in `project.validation_findings` and the re-rendered files.
-- **Approval → the unchanged back-end.** `approve_spec` requires the cross-references to be
-  user-confirmed (checkboxes), folds answered open questions in via the existing deterministic
-  `checklist/amend.py`, seeds one `WorkflowState` per spec (its `document_text` is the **rendered
-  spec**, so CVPA/Temporal prompts see the normalized artifact instead of the raw document), and
-  calls `WorkflowCompiler.compile_prepared`. The old human graph gate becomes a **threshold
-  gate**: review `health_score ≥ settings.graph_health_threshold` (default 0.9) auto-approves and
-  runs CVPA → Temporal design → code; below it the workflow stays `PENDING` (the classic
-  `approve <workflow-id>` is the manual override) and the project is marked `NEEDS_ATTENTION`.
+**Segmentation** (`agents/segmentation.py` → `WorkflowSegmentationAgent`). One LLM call lists
+*every* distinct workflow, the document sections that belong to each one, and any
+**output→input dependencies** between workflows (`prompts/templates/discover_workflows.md`). The
+same three-pass review discipline improves the result (completeness / grounding / consistency,
+with a deterministic `SegmentationPatchApplier`). Deterministic code then slices the document per
+workflow. So fact extraction sees **only the text of its own workflow**. This scope isolation is
+the reason the front-end exists. A single-workflow document yields one segment that holds the
+full text. This is the classic path's behavior, unchanged.
 
-- **Edit requests (changing compiled workflows later).** `edit_specs` applies a structured
-  **edit-request document** (`docs/EDIT_FORMAT_GUIDE.md`): `spec/edit_ingest.py` parses the
-  skeleton deterministically and fails fast (unknown slug, unknown block, reserved split/merge
-  syntax — all before any LLM call); `agents/edit_interpreter.py` translates each section's
-  natural-language bullets into an `EditPlan` (`models/edit.py` — `Patch`es plus typed
-  `TriggerOp`/`XrefOp` wiring ops); `spec/edit_applier.py` applies them with **human authority**
-  (`SpecPatchApplier(human_authority=True)`): no grounding requirement on adds (they become
-  `human_provided`), removals honored even for human-provided or referenced elements (dangling
-  references pruned). The edit is **atomic** — worked on a deep copy, aborted whole on any
-  unresolved entry or inapplicable patch (the error names the dropped operations; an add whose
-  value is already present is skipped as satisfied instead, with a summary line). Success bumps
-  each edited spec's version, appends an
-  `EditRecord` to `project.edit_log` (the audit trail), and resets the stage to `SPEC_DRAFTED`
-  so the normal validate → approve-spec gate re-runs over the changed specs. `## Add Workflow:`
-  bodies run through the standard discovery + facts pipeline (and are appended to
-  `document_text` so grounding passes can see them); `## Remove Workflow:` drops the spec and
-  every trigger/dependency touching it.
+**The project aggregate** (`models/project.py` → `CompilationProject`). It holds the document
+text, the segments, one `WorkflowSpec` per workflow, typed `CrossReference`s, the spec approval
+status, and a `ProjectStage` (`INGESTED → WORKFLOWS_DISCOVERED → SPEC_DRAFTED → SPEC_VALIDATED →
+SPEC_APPROVED → COMPILING → COMPLETED | NEEDS_ATTENTION`). `storage/project_store.py` saves it
+under `<state-root>/projects/`. `WorkflowState` stays the per-workflow unit. It only gained an
+optional `project_id` back-link.
 
-- **Preview → confirm.** `preview_edit` dry-runs the same pipeline (nothing persisted) and
-  returns the would-be summary/diff plus a `ResolvedEdit` blob — the interpreted plans, drafted
-  add-workflow specs, measured timings, and a fingerprint over the project state + document.
-  Confirming (`edit_specs(resolved=...)`, or `POST /projects/{id}/edit` with `resolved`)
-  replays those plans with **no LLM call**, so what applies is exactly what was previewed; any
-  project change in between makes the fingerprint stale (`EditPreviewStaleError` → HTTP 409 →
-  preview again). The CLI's `edit --dry-run` prints the same preview and simply re-interprets
-  on the real run.
+**The spec is the source of truth. Markdown is a projection.** `WorkflowSpec` (`models/spec.py`)
+bundles the metadata and the facts and structure with review lists: assumptions, ambiguities,
+**open questions** (the readiness checklist, shown as fill-in questions), and suggested edits.
+Each element carries **provenance**: `document_grounded`, `llm_inferred` or `human_provided`.
+`spec/renderer.py` renders the spec to a Markdown file with a strict grammar. `spec/ingest.py`
+parses edits back **deterministically** and merges them onto the existing model (ids are kept,
+fields that are not rendered survive, and `WorkflowStructure.validated()` runs again). A test
+asserts that the round trip is the identity. This is what keeps the compiled graph a pure function
+of what the human approved, with no LLM between the gate and the graph.
 
-- **Time saved.** Each pipeline step's wall-clock seconds accumulate in
-  `project.stage_timings`; `metrics.py` compares them against the configurable
-  `baseline_hours` human-team **estimates** (per step category: discovery / spec / validate /
-  compile / edit) to produce `time_saved` on project responses and the `GET /metrics/summary`
-  aggregate shown in the web UI. No timings recorded → no claimed savings.
+**The edit ⇄ validate loop.** `validate_specs` reads the edited files and runs three review passes
+over each spec *against the original document* (`spec/validator.py`,
+`prompts/templates/review_spec_*.md`). The applier is **provenance-aware**: it removes
+machine-extracted elements that have no support, but it converts a `remove` aimed at a
+*human-provided* element into a finding ("please confirm"). The validator challenges human
+additions. It never deletes them. Findings land in `project.validation_findings` and in the
+re-rendered files.
 
-CLI: `compile <doc> --spec-dir <dir>` → edit the files → `validate <project-id>` →
-`approve-spec <project-id>` (code lands under `./generated/<project-id>/<slug>/`); later
-changes via `edit <project-id> <edit-file.md>` (add `--dry-run` to preview) → `validate` →
-`approve-spec`. HTTP (all project/workflow routes behind local-account cookie auth —
-`/auth/register`, `/auth/login`, `/auth/me`; projects are shared across users by default,
-with `owner_id` kept for attribution — set `WORKFLOW_COMPILER_PROJECTS_SHARED=false` to scope
-listings/access to each project's `owner_id`):
-`POST /projects/compile`, `GET/PUT /projects/{id}/spec`, `POST /projects/{id}/edit` (+
+**Approval → the unchanged back-end.** `approve_spec` requires the user to confirm the
+cross-references (checkboxes). It folds the answered open questions in through the existing
+deterministic `checklist/amend.py`. It seeds one `WorkflowState` per spec. That state's
+`document_text` is the **rendered spec**, so the CVPA and Temporal prompts see the normalized
+artifact instead of the raw document. Then it calls `WorkflowCompiler.compile_prepared`. The old
+human graph gate becomes a **threshold gate**: when the review `health_score` is at least
+`settings.graph_health_threshold` (default 0.9), the workflow is approved automatically and runs
+CVPA → Temporal design → code. Below the threshold, the workflow stays `PENDING` (the classic
+`approve <workflow-id>` is the manual override), and the project is marked `NEEDS_ATTENTION`.
+
+### 9.2 Edit requests
+
+Edit requests change compiled workflows later. `edit_specs` applies a structured **edit-request
+document** (`docs/EDIT_FORMAT_GUIDE.md`):
+
+1. `spec/edit_ingest.py` parses the skeleton deterministically. It fails fast on an unknown slug,
+   an unknown block, or the reserved split/merge syntax. All of this happens before any LLM call.
+2. `agents/edit_interpreter.py` translates the natural-language bullets of each section into an
+   `EditPlan` (`models/edit.py`: `Patch`es plus typed `TriggerOp` / `XrefOp` wiring operations).
+3. `spec/edit_applier.py` applies the plan with **human authority**
+   (`SpecPatchApplier(human_authority=True)`). Adds need no grounding (they become
+   `human_provided`). Removals are honored, even for human-provided or referenced elements
+   (dangling references are pruned).
+
+The edit is **atomic**. It works on a deep copy. Any unresolved entry or patch that cannot be
+applied aborts the whole edit. The error names the dropped operations. One exception: an add whose
+value is already present is skipped as satisfied, with a summary line. On success the system bumps
+each edited spec's version, appends an `EditRecord` to `project.edit_log` (the audit trail), and
+resets the stage to `SPEC_DRAFTED`. So the normal validate → approve-spec gate runs again over the
+changed specs. `## Add Workflow:` bodies run through the standard discovery and facts pipeline,
+and are appended to `document_text` so the grounding passes can see them. `## Remove Workflow:`
+drops the spec and every trigger and dependency that touches it.
+
+**Preview → confirm.** `preview_edit` dry-runs the same pipeline. It saves nothing. It returns the
+would-be summary and diff, plus a `ResolvedEdit` blob: the interpreted plans, the drafted
+add-workflow specs, the measured timings, and a fingerprint over the project state and the
+document. Confirming (`edit_specs(resolved=...)`, or `POST /projects/{id}/edit` with `resolved`)
+replays those plans with **no LLM call**. So what applies is exactly what was previewed. Any
+project change in between makes the fingerprint stale (`EditPreviewStaleError` → HTTP 409 →
+preview again). The CLI's `edit --dry-run` prints the same preview, and simply interprets again on
+the real run.
+
+### 9.3 Time saved
+
+Each pipeline step's wall-clock seconds accumulate in `project.stage_timings`. `metrics.py`
+compares them against the configurable `baseline_hours` human-team **estimates** (one per step
+category: discovery / spec / validate / compile / edit). The result is `time_saved` on project
+responses and the `GET /metrics/summary` aggregate that the web UI shows. No recorded timings
+means no claimed savings.
+
+**The commands.** CLI: `compile <doc> --spec-dir <dir>` → edit the files →
+`validate <project-id>` → `approve-spec <project-id>` (code lands under
+`./generated/<project-id>/<slug>/`). Later changes: `edit <project-id> <edit-file.md>` (add
+`--dry-run` to preview) → `validate` → `approve-spec`.
+
+HTTP: `POST /projects/compile`, `GET/PUT /projects/{id}/spec`, `POST /projects/{id}/edit` (plus
 `/edit/preview`), `POST /projects/{id}/validate`, `POST /projects/{id}/approve`,
-`GET /metrics/summary`.
+`GET /metrics/summary`. All project and workflow routes sit behind local-account cookie auth
+(`/auth/register`, `/auth/login`, `/auth/me`). Projects are shared across users by default, with
+`owner_id` kept for attribution. Set `WORKFLOW_COMPILER_PROJECTS_SHARED=false` to scope listings
+and access to each project's `owner_id`.
 
-### Cross-workflow triggers (standalone workflows, explicit starts)
+### 9.4 Cross-workflow triggers
 
-When one workflow starts another ("if the application is approved, provisioning begins"), the
-relationship compiles to an **explicit trigger between independent workflows** — never a
-Temporal child workflow. The full path:
+Sometimes one workflow starts another ("if the application is approved, provisioning begins").
+This relationship compiles to an **explicit trigger between independent workflows**. It is never
+a Temporal child workflow. The full path:
 
-1. **Discovery.** Segmentation extracts explicit triggers (source, target, condition, mode)
-   alongside data dependencies; deterministic assembly turns both into `WorkflowTrigger`
-   scaffolds (a data dependency contributes a typed `input_map` row to its pair's trigger).
-2. **Review.** Triggers render in each source workflow's **Triggers** spec section (checkbox =
-   confirmed, ``when `…` `` = the predicate, indented `input` lines = the typed hand-off) and
-   round-trip through ingest like everything else.
-3. **Validation (deterministic, no LLM).** Unknown target or an `input_map` field the target
-   doesn't declare → `BLOCKING`; type mismatch / unconfirmed predicate / blocking trigger with
-   no result binding → `WARNING`. `validate` exits non-zero on blocking findings and
-   `approve-spec` refuses while they remain.
+1. **Discovery.** Segmentation extracts explicit triggers (source, target, condition, mode) next
+   to the data dependencies. Deterministic assembly turns both into `WorkflowTrigger` scaffolds.
+   A data dependency contributes a typed `input_map` row to the trigger of its pair.
+2. **Review.** Triggers render in the **Triggers** section of each source workflow's spec. A
+   checkbox means confirmed; ``when `…` `` is the predicate; indented `input` lines are the typed
+   hand-off. They round-trip through ingest like everything else.
+3. **Validation (deterministic, no LLM).** An unknown target, or an `input_map` field that the
+   target does not declare, is `BLOCKING`. A type mismatch, an unconfirmed predicate, or a blocking
+   trigger with no result binding is a `WARNING`. `validate` exits with a non-zero code on
+   blocking findings, and `approve-spec` refuses while they remain.
 4. **Design.** Approval copies the slug's triggers to `WorkflowState.outgoing_triggers` and
    injects `TriggerNode`s into the structure (graph: `NodeType.TRIGGER`). The design agent
-   deterministically appends `TemporalTriggerDesign` declarations + plan `TRIGGER` steps —
-   a conditional trigger becomes a `BRANCH` whose then-lane holds the trigger step.
-5. **Codegen.** The *source* bundle gains `triggers.py`: one activity per target that connects
-   a client (`TEMPORAL_ADDRESS`) and calls `client.start_workflow("<TargetType>", payload,
-   id=<deterministic business key>, task_queue=<target queue>,
-   id_conflict_policy=USE_EXISTING)`. Blocking mode also `await handle.result()` inside the
-   activity. The workflow body calls it via `workflow.execute_activity(...)`.
+   deterministically appends `TemporalTriggerDesign` declarations and plan `TRIGGER` steps. A
+   conditional trigger becomes a `BRANCH` whose then-lane holds the trigger step.
+5. **Codegen.** The *source* bundle gains `triggers.py`: one activity per target. The activity
+   connects a client (`TEMPORAL_ADDRESS`) and calls
+   `client.start_workflow("<TargetType>", payload, id=<deterministic business key>,
+   task_queue=<target queue>, id_conflict_policy=USE_EXISTING)`. In blocking mode the activity
+   also does `await handle.result()`. The workflow body calls it through
+   `workflow.execute_activity(...)`.
 
-**Temporal limitations this design answers:** workflow code may not start another workflow
-(non-deterministic) → the start lives in an activity; `get_external_workflow_handle` can only
-signal/cancel an already-running workflow → starting is always by client;
-activity retries could double-start → deterministic workflow id + `USE_EXISTING` dedupes;
-a blocking trigger's activity stays open for the target's whole run → it gets a generous
-`start_to_close_timeout` (1h) — for longer-running targets, prefer fire-and-forget plus a
-callback signal (documented future upgrade). Targets remain byte-identical whether or not
-anything triggers them — every workflow always starts standalone via its own `starter.py`.
+**The Temporal limits that this design answers:**
 
-### Debug surface (inspecting branches and triggers)
+- Workflow code may not start another workflow (it is non-deterministic). So the start lives in
+  an activity.
+- `get_external_workflow_handle` can only signal or cancel a workflow that already runs. So a
+  start is always done by a client.
+- Activity retries could start the target twice. A deterministic workflow id plus `USE_EXISTING`
+  removes the duplicate.
+- A blocking trigger's activity stays open for the whole run of the target. So it gets a generous
+  `start_to_close_timeout` (1 h). For targets that run longer, prefer fire-and-forget plus a
+  callback signal (a documented future upgrade).
+
+Targets stay byte-identical whether or not anything triggers them. Every workflow always starts
+on its own through its own `starter.py`.
+
+### 9.5 Debug surface
 
 Every generated workflow tracks `self._current_step`, `self._decisions_taken`
-(`{branch, predicate, taken}` per branch) and `self._triggers_fired`, exposed via read-only
-queries `current_step` / `decisions_taken` / `triggers_fired` — no I/O, no wall-clock, safe in
-production. The always-generated `test_stepthrough.py` runs the bundle under
-`WorkflowEnvironment.start_time_skipping()` with the stub activities (trigger activities
-mocked) and prints those queries — run it to see exactly which branch a conditional takes.
-Opt into interactive gating with `WORKFLOW_COMPILER_STEPWISE=1`: every top-level plan step then
-waits on an `advance` signal (`wait_condition` + signal, so determinism is preserved).
+(`{branch, predicate, taken}` per branch) and `self._triggers_fired`. Read-only queries expose
+them: `current_step` / `decisions_taken` / `triggers_fired`. They do no I/O and read no clock, so
+they are safe in production. The always-generated `test_stepthrough.py` runs the bundle under
+`WorkflowEnvironment.start_time_skipping()` with the stub activities (trigger activities are
+mocked) and prints those queries. Run it to see exactly which branch a conditional takes. To gate
+each step by hand, set `WORKFLOW_COMPILER_STEPWISE=1`: every top-level plan step then waits for an
+`advance` signal (`wait_condition` plus a signal, so determinism is kept).
 
-## 8c. Knowledge bases (`kg/`) — a corpus indexed into a graph
+---
 
-> **Change pipeline map:** [§8c knowledge bases](#8c-knowledge-bases-kg--a-corpus-indexed-into-a-graph) → [§8d change requests](#8d-change-requests-change--a-guided-wizard-from-a-bcr-to-impact--epic--stories--tdd) → [§8e document export](#8e-document-export-docs_export--word--excel-in-the-reference-template-style) → [§8f grounded projects + `changes.md`](#8f-knowledge-graph-grounded-projects--the-change-spec-kggroundingpy-specchange_py) → [§8g change outputs](#8g-post-approval-change-outputs-change_outputs--diagrams-modified-code--diff-test-docs); hardening (store guards, compare-and-swap) in [§7.3](#73-state-storage--how-the-gate-persists-across-calls); routes in [§9.3](#93-http-api-apiapppy-fastapi), CLI in [§9.2](#92-cli-climainpy-typer--rich); end-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
+## 10. Knowledge bases (`kg/`)
 
-A **knowledge base** is a zipped corpus (business docs, mermaid diagrams, source code, tests)
-turned into a Context Hub graph that later phases use to *ground* change requests and specs in
-the real modules, activities, stories and test cases of an existing system. Phase 0 of the
-KG change pipeline (`docs/kg-plan/`) ships the foundation: upload → index → query.
+> **Change pipeline map:** [§10 knowledge bases](#10-knowledge-bases-kg) →
+> [§11 change requests](#11-change-requests-change) →
+> [§12 document export](#12-document-export-docs_export) →
+> [§13 grounded projects + `changes.md`](#13-grounded-projects-and-the-change-spec) →
+> [§14 change outputs](#14-post-approval-change-outputs-change_outputs).
+> Hardening (store guards, compare-and-swap): [§7.3](#73-state-storage).
+> Routes: [§15.3](#153-http-api-apiapppy-fastapi). CLI: [§15.2](#152-cli-climainpy-typer--rich).
+> End-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
+
+A **knowledge base** is a zipped corpus (business documents, Mermaid diagrams, source code,
+tests) turned into a Context Hub graph. Later phases use the graph to *ground* change requests
+and specs in the real modules, activities, stories and test cases of an existing system. Phase 0
+of the KG change pipeline (`docs/kg-plan/`) ships this foundation: upload → index → query.
 
 **Engine.** `kg/contexthub/` is a vendored subset of the KG-Context / Context Hub project
-(`model/`, `bootstrap/`, `retrieval/`; pinned SHA and every local edit are listed in
-`kg/contexthub/VENDORED.md`). It is untyped upstream code excluded from `mypy --strict`; the app
-never imports it outside `workflow_compiler.kg`.
+(`model/`, `bootstrap/`, `retrieval/`). `kg/contexthub/VENDORED.md` lists the pinned SHA and
+every local edit. It is untyped upstream code, excluded from `mypy --strict`. The app never imports
+it outside `workflow_compiler.kg`.
 
-**Façade.** `kg/service.py::KgService(store, provider_factory)` is the only surface the rest of the
-app uses:
+**Façade.** `kg/service.py::KgService(store, provider_factory)` is the only surface the rest of
+the app uses:
 
 | Method | What it does |
 |---|---|
-| `create_from_zip(name, bytes)` / `create_from_path(name, dir)` | Safe extraction (`kg/ingest.py`: zip-slip / symlink rejection, size + count caps, one top-level folder stripped) into `<state-root>/knowledge_bases/<kb_id>/corpus/`; record saved with `status="ingesting"`. |
-| `index(kb_id, enrich, provider, model, progress)` | Runs `init_repo(corpus, out=…/.contexthub)` in a worker thread. Static ingest is instant; with `enrich` each Document/Module gets one LLM call (summary, topics, entities) plus a clustering pass — through the app's own `BaseLLMProvider` via `kg/llm_bridge.py::ProviderJsonClient` (results cached by content hash under `.contexthub/llm_cache/`). Records `stats` (nodes/edges by type), the business-id `catalog` (Epic/UserStory/TestCase/Requirement ids), `status="ready"` — or `failed` + `error`. |
-| `retrieve(kb_id, prompt, budget, max_hops)` | BM25 anchors → bounded traversal → dereferenced file spans, as a `KgPacket` (`rendered` text for prompts, `sections`, `files` with line spans, `coverage`, `low_confidence`). |
-| `impact(kb_id, seeds, max_hops)` | Deterministic BFS over dependency-shaped edges (`DEPENDS_ON`, `CALLS`, `IMPORTS`, `IMPLEMENTS`, `RELATES_TO`, `DOCUMENTED_BY`, …; `CONTAINS` only downwards from file nodes). Seeds may be node ids or search terms. Rows are ordered by hops then id. |
-| `search`, `catalog`, `graph_summary`, `list_files`, `read_file` | Debug/UI surfaces; `read_file` is path-traversal safe and text-extracts docx/xlsx/pdf. |
+| `create_from_zip(name, bytes)` / `create_from_path(name, dir)` | Safe extraction into `<state-root>/knowledge_bases/<kb_id>/corpus/` (`kg/ingest.py`: rejects zip-slip and symlinks, caps size and file count, strips one top-level folder). Saves the record with `status="ingesting"`. |
+| `index(kb_id, enrich, provider, model, progress)` | Runs `init_repo(corpus, out=…/.contexthub)` in a worker thread. The static ingest is instant. With `enrich`, each Document and Module gets one LLM call (summary, topics, entities) plus a clustering pass, through the app's own `BaseLLMProvider` via `kg/llm_bridge.py::ProviderJsonClient`. Results are cached by content hash under `.contexthub/llm_cache/`. Records `stats` (nodes and edges by type), the business-id `catalog` (Epic / UserStory / TestCase / Requirement ids), and `status="ready"` — or `failed` plus `error`. |
+| `retrieve(kb_id, prompt, budget, max_hops)` | BM25 anchors → bounded traversal → file spans, returned as a `KgPacket` (`rendered` text for prompts, `sections`, `files` with line spans, `coverage`, `low_confidence`). |
+| `impact(kb_id, seeds, max_hops)` | Deterministic BFS over dependency-shaped edges (`DEPENDS_ON`, `CALLS`, `IMPORTS`, `IMPLEMENTS`, `RELATES_TO`, `DOCUMENTED_BY`, …; `CONTAINS` only downwards from file nodes). Seeds may be node ids or search terms. Rows are ordered by hops, then by id. |
+| `search`, `catalog`, `graph_summary`, `list_files`, `read_file` | Debug and UI surfaces. `read_file` is safe against path traversal and extracts text from docx, xlsx and pdf. |
 
-Node ids are relative to `corpus/` and POSIX (`mod:existing_Codebase/workflows/order_workflow.py`,
-`doc:Business_Docs/epics/EPIC-001-….docx`, `US-003`, `TC-05`, `BR-02`), so a graph built on Windows
-dereferences anywhere. Ids crossing the store boundary are validated against `[A-Za-z0-9_-]+`.
+Node ids are relative to `corpus/` and use POSIX separators
+(`mod:existing_Codebase/workflows/order_workflow.py`, `doc:Business_Docs/epics/EPIC-001-….docx`,
+`US-003`, `TC-05`, `BR-02`). So a graph built on Windows resolves anywhere. Ids that cross the
+store boundary are validated against `[A-Za-z0-9_-]+`.
 
-**Jobs.** Indexing runs as a `kb_ingest` background job. `JobManager` is keyed by
-`scope_id` + `scope_kind` (`project` | `knowledge_base`); `project_id` stays as an alias so
-existing callers are unchanged, and jobs carry a `progress` (`message`, `done`, `total`) that the
-worker updates per file.
+**Jobs.** Indexing runs as a `kb_ingest` background job. `JobManager` is keyed by `scope_id` plus
+`scope_kind` (`project` | `knowledge_base`). `project_id` stays as an alias, so existing callers
+are unchanged. Jobs carry a `progress` (`message`, `done`, `total`) that the worker updates per
+file.
 
-**Config.** `kg_enrich_default` (True), `kg_retrieve_budget` (4000), `kg_max_upload_mb` (50).
-KB routes take `provider`/`model` per request like `/projects/compile`; the default is cloud
-Nemotron on purpose (enrichment is one call per file and must not land on the single-GPU
-gateway unasked).
+**Config.** `kg_enrich_default` (True), `kg_retrieve_budget` (4000), `kg_max_upload_mb` (50). KB
+routes take `provider` / `model` per request, like `/projects/compile`. The default is cloud
+Nemotron on purpose: enrichment is one call per file, and it must not land on the single-GPU
+gateway without being asked.
 
-**Example corpus.** `examples/knowledge_bases/order-lifecycle/` is a verbatim copy of the
-manager's `Existing_KG` (BRD, EPIC-001, US-001..005, TDD, test plan, TC matrix, three mermaid
-diagrams, the Temporal `OrderWorkflow` code + tests); `scripts/make_kb_zip.py` zips it, and
-`examples/change_requests/BCR-001-partial-shipment-support.docx` is the change request the later
-phases consume.
+**Example corpus.** `examples/knowledge_bases/order-lifecycle/` is an exact copy of the manager's
+`Existing_KG` (BRD, EPIC-001, US-001..005, TDD, test plan, TC matrix, three Mermaid diagrams, the
+Temporal `OrderWorkflow` code and tests). `scripts/make_kb_zip.py` zips it.
+`examples/change_requests/BCR-001-partial-shipment-support.docx` is the change request that the
+later phases consume.
 
-## 8d. Change requests (`change/`) — a guided wizard from a BCR to Impact / EPIC / Stories / TDD
+---
 
-> **Change pipeline map:** [§8c knowledge bases](#8c-knowledge-bases-kg--a-corpus-indexed-into-a-graph) → [§8d change requests](#8d-change-requests-change--a-guided-wizard-from-a-bcr-to-impact--epic--stories--tdd) → [§8e document export](#8e-document-export-docs_export--word--excel-in-the-reference-template-style) → [§8f grounded projects + `changes.md`](#8f-knowledge-graph-grounded-projects--the-change-spec-kggroundingpy-specchange_py) → [§8g change outputs](#8g-post-approval-change-outputs-change_outputs--diagrams-modified-code--diff-test-docs); hardening (store guards, compare-and-swap) in [§7.3](#73-state-storage--how-the-gate-persists-across-calls); routes in [§9.3](#93-http-api-apiapppy-fastapi), CLI in [§9.2](#92-cli-climainpy-typer--rich); end-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
+## 11. Change requests (`change/`)
 
-A **change request** pairs a business-change document (a BCR `.docx`, or markdown/text) with a
-knowledge base. A deterministic wizard walks it through four steps — **Impact → EPIC → Stories →
-TDD** — asking a few clarifying questions before each draft and producing one versioned markdown
-artifact per step, grounded in knowledge-graph retrievals and a deterministic impact traversal.
-Phase 1 of the KG change pipeline (`docs/kg-plan/`).
+> **Change pipeline map:** [§10](#10-knowledge-bases-kg) → **§11** →
+> [§12](#12-document-export-docs_export) → [§13](#13-grounded-projects-and-the-change-spec) →
+> [§14](#14-post-approval-change-outputs-change_outputs).
 
-**Reading the BCR (no LLM).** `change/bcr.py` parses the metadata block (`Document ID`, `Status`,
-`Requested By`, `Date Raised`, `Target Workflow`), the numbered requirements (`BCR-01-03 | text`
-rows or `ID — text` lines) and *seed terms* for the impact traversal (file names such as
-`types.py`, identifiers such as `complete_order`, `TDD §4.3`-style references, `PARTIALLY_*`
-states, `US-/TC-/EPIC-` ids). The document itself goes through the normal `DocumentParserFactory`.
+A **change request** pairs a business-change document (a BCR `.docx`, or Markdown or text) with
+a knowledge base. A deterministic wizard walks it through four steps: **Impact → EPIC → Stories →
+TDD**. Before each draft the wizard asks a few clarifying questions. Each step produces one
+versioned Markdown artifact, grounded in knowledge-graph retrievals and a deterministic impact
+traversal. This is Phase 1 of the KG change pipeline (`docs/kg-plan/`).
+
+**Reading the BCR (no LLM).** `change/bcr.py` parses three things:
+
+- the metadata block (`Document ID`, `Status`, `Requested By`, `Date Raised`, `Target Workflow`);
+- the numbered requirements (`BCR-01-03 | text` rows, or `ID — text` lines);
+- the *seed terms* for the impact traversal: file names such as `types.py`, identifiers such as
+  `complete_order`, `TDD §4.3`-style references, `PARTIALLY_*` states, and `US-` / `TC-` /
+  `EPIC-` ids.
+
+The document itself goes through the normal `DocumentParserFactory`.
 
 **Ids come from the catalog, never from the model.** `change/ids.py` reads
-`KgService.catalog(kb_id)` — the ids present in the corpus, now including document ids
-(`KbCatalog.documents`, regexed from the ingest extracts) — and mints the next free ones:
-`EPIC-002` after `EPIC-001`, `US-008…` after `US-001..007`, `TDD-ORD-002` after `TDD-ORD-001`,
-`TC-18` for Phase 4. The drafting prompts receive them in the brief and the engine overwrites
-whatever the model returns.
+`KgService.catalog(kb_id)`, which lists the ids present in the corpus. The catalog now includes
+document ids (`KbCatalog.documents`, found by regex in the ingest extracts). The module mints the
+next free ids: `EPIC-002` after `EPIC-001`, `US-008…` after `US-001..007`, `TDD-ORD-002` after
+`TDD-ORD-001`, and `TC-18` for Phase 4. The drafting prompts receive the ids in the brief, and
+the engine overwrites whatever the model returns.
 
-**The wizard (`change/engine.py::ChangeWizardEngine`).** Per step: `start_step` (the
-`ChangeAnalystAgent` drafts 2–5 clarifying questions with grounded suggested options) →
-`answer` (each prose answer becomes one brief line; at most **one** follow-up, like the Resolve
-dialogue; unmappable answers are recorded verbatim) / `skip` → `draft` (assemble the **brief** =
-BCR text + requirements + assigned ids + the requester's decisions + the deterministic
-`impact()` table + de-duplicated KG retrievals for every requirement, seed-term group and a few
-step-specific queries, capped by `change_kg_budget` tokens + every artifact already drafted →
-agent plan → engine post-processing → `change/render.py`) → `revise` (a chat instruction; the
-agent edits the markdown, the result must still parse) → `edit` (human markdown, a
-`human_edit` version) → `approve` (cursor advances; approving the last step completes the CR).
-"Draft now" is allowed at any time after start — pending questions are marked skipped. Later
-steps cannot be drafted before the previous one is approved; earlier steps can be re-drafted
-(new version, needs re-approval). Long TDD answers are drafted in four chunks of sections and
-stories in batches of three, because a single long Nemotron JSON answer is unreliable.
+**The wizard** (`change/engine.py::ChangeWizardEngine`). For each step:
 
-**Artifacts (`models/change.py`, `change/render.py`, `change/parse.py`).** Each artifact keeps a
-full history (`llm_draft` | `llm_revision` | `human_edit`) and renders to markdown whose heading
-structure mirrors the manager's reference documents: the impact analysis is numbered like a BCR
-(Change Summary, Requirements Assessment, Affected Components table, Impact on Existing Design,
-Risks & Assumptions, Open Decisions, a deterministic knowledge-graph appendix); the EPIC has the
-unnumbered `Epic Statement / Business Value / In-Scope Capabilities / Definition of Done / Story
-Map / Non-Functional Requirements / Dependencies / Risks` sections; user stories are one
-`## US-00N: Title` section each with `### Story` (As/I want/so that), `### Acceptance Criteria`
-(checkable Given… lines) and `### Notes`; the TDD keeps TDD-ORD-001's `## N. Title` /
-`### 4.x Title` sections with an **Existing** and a **Proposed** part each. Every artifact ends
-with a `## Sources` footer (KB files + line spans the brief was grounded on) and carries a
-retrieval-coverage note when coverage is low. `parse.py` reads all four back (round-trip tests);
-a human edit or revision that loses the title heading is rejected with 400.
+1. `start_step` — the `ChangeAnalystAgent` drafts 2–5 clarifying questions, each with grounded
+   suggested options.
+2. `answer` — each prose answer becomes one line in the brief. The wizard asks at most **one**
+   follow-up, like the Resolve dialogue. An answer that cannot be mapped is recorded as written.
+   `skip` skips the question.
+3. `draft` — the engine assembles the **brief**: the BCR text, the requirements, the assigned ids,
+   the requester's decisions, the deterministic `impact()` table, de-duplicated KG retrievals for
+   every requirement, seed-term group and a few step-specific queries (capped at
+   `change_kg_budget` tokens), and every artifact already drafted. Then: agent plan → engine
+   post-processing → `change/render.py`.
+4. `revise` — a chat instruction. The agent edits the Markdown. The result must still parse.
+5. `edit` — a human edit of the Markdown, saved as a `human_edit` version.
+6. `approve` — the cursor advances. Approving the last step completes the change request.
 
-**Façade + storage.** `change/service.py::ChangeRequestService(store, kg_service,
-provider_factory)` mirrors `ProjectCompiler` (load → engine → save on every call, so a cancelled
-job leaves the previous state); `storage/change_store.py` persists
+"Draft now" is allowed at any time after the start. Pending questions are marked skipped. A later
+step cannot be drafted before the previous step is approved. An earlier step can be drafted again
+(this makes a new version that needs approval again). Long TDD answers are drafted in four chunks
+of sections, and stories in batches of three, because one long Nemotron JSON answer is not
+reliable.
+
+**Artifacts** (`models/change.py`, `change/render.py`, `change/parse.py`). Each artifact keeps a
+full history (`llm_draft` | `llm_revision` | `human_edit`). It renders to Markdown whose headings
+mirror the manager's reference documents:
+
+| Artifact | Heading structure |
+|---|---|
+| Impact analysis | Numbered like a BCR: Change Summary, Requirements Assessment, Affected Components table, Impact on Existing Design, Risks & Assumptions, Open Decisions, and a deterministic knowledge-graph appendix. |
+| EPIC | Unnumbered sections: `Epic Statement / Business Value / In-Scope Capabilities / Definition of Done / Story Map / Non-Functional Requirements / Dependencies / Risks`. |
+| User stories | One `## US-00N: Title` section per story, each with `### Story` (As / I want / so that), `### Acceptance Criteria` (checkable Given… lines) and `### Notes`. |
+| TDD | Keeps TDD-ORD-001's `## N. Title` / `### 4.x Title` sections, each with an **Existing** and a **Proposed** part. |
+
+Every artifact ends with a `## Sources` footer (the KB files and line spans the brief was
+grounded on). It carries a retrieval-coverage note when coverage is low. `parse.py` reads all
+four artifact kinds back (round-trip tests). A human edit or revision that loses the title heading
+is rejected with a 400.
+
+**Façade and storage.** `change/service.py::ChangeRequestService(store, kg_service,
+provider_factory)` mirrors `ProjectCompiler`: load → engine → save on every call. So a cancelled
+job leaves the previous state in place. `storage/change_store.py` saves
 `<state-root>/change_requests/<cr_id>.json` with the same id validation as the KB store.
 Questions, drafts and revisions run as `cr_questions` / `cr_draft` / `cr_revise` jobs
-(`JobManager` scope kind `change_request`); `answer` is one short synchronous call. Approving a
-step kicks the next step's `cr_questions` job automatically. Provider/model are chosen per
-change request (cloud Nemotron by default) and stored on its wizard.
+(`JobManager` scope kind `change_request`). `answer` is one short synchronous call. Approving a
+step starts the next step's `cr_questions` job automatically. The provider and model are chosen
+per change request (cloud Nemotron by default) and stored on its wizard.
 
-**Config.** `change_kg_budget` (9000 tokens of KG excerpts per brief). CLI: `cr create|list|show|
-draft [--auto]|approve|export|delete`; UI: **Changes** page (list + new) and the wizard page
-(stepper + chat on the left, artifact editor with versions / approve / Sources / Export on the
-right). Word/Excel export: §8e.
+**Config and surfaces.** `change_kg_budget` (9000 tokens of KG excerpts per brief). CLI:
+`cr create|list|show|draft [--auto]|approve|export|delete`. UI: the **Changes** page (list plus
+new) and the wizard page (a stepper and chat on the left; the artifact editor with versions,
+approve, Sources and Export on the right). Word and Excel export: [§12](#12-document-export-docs_export).
 
-## 8e. Document export (`docs_export/`) — Word / Excel in the reference template style
+---
 
-> **Change pipeline map:** [§8c knowledge bases](#8c-knowledge-bases-kg--a-corpus-indexed-into-a-graph) → [§8d change requests](#8d-change-requests-change--a-guided-wizard-from-a-bcr-to-impact--epic--stories--tdd) → [§8e document export](#8e-document-export-docs_export--word--excel-in-the-reference-template-style) → [§8f grounded projects + `changes.md`](#8f-knowledge-graph-grounded-projects--the-change-spec-kggroundingpy-specchange_py) → [§8g change outputs](#8g-post-approval-change-outputs-change_outputs--diagrams-modified-code--diff-test-docs); hardening (store guards, compare-and-swap) in [§7.3](#73-state-storage--how-the-gate-persists-across-calls); routes in [§9.3](#93-http-api-apiapppy-fastapi), CLI in [§9.2](#92-cli-climainpy-typer--rich); end-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
+## 12. Document export (`docs_export/`)
 
-Markdown stays the source of truth; `docs_export/` projects the **parsed** artifacts
-(`change/parse.py` → `ImpactDoc` / `EpicDoc` / `StoriesDoc` / `TddDoc`) into files that look like
-the manager's reference documents. It is 100 % deterministic — no model call, and identical
-input yields identical bytes (`docs_export/package.py` pins the OOXML timestamps), so exports can
-be cached, diffed and asserted in tests.
+> **Change pipeline map:** [§10](#10-knowledge-bases-kg) → [§11](#11-change-requests-change) →
+> **§12** → [§13](#13-grounded-projects-and-the-change-spec) →
+> [§14](#14-post-approval-change-outputs-change_outputs).
+
+Markdown stays the source of truth. `docs_export/` projects the **parsed** artifacts
+(`change/parse.py` → `ImpactDoc` / `EpicDoc` / `StoriesDoc` / `TddDoc`) into files that look
+like the manager's reference documents. The export is fully deterministic: no model call, and
+identical input yields identical bytes (`docs_export/package.py` pins the OOXML timestamps). So
+exports can be cached, diffed and asserted in tests.
 
 | Module | Role |
 |---|---|
-| `docx_writer.py` | `DocxWriter` over python-docx: 22 pt bold `2F5496` title, 14 pt subtitle, thin rules around a bold `Label: value` block, Word *Heading 1/2/3*, *List Paragraph* `•` bullets and real `1.` numbering, tables with a `2F5496` header row (white bold, `tblHeader`) and `FFFFFF` body cells, `☑  `/`☐  ` checklists, Consolas `AA3377` inline code, boxed code blocks, a left-barred callout. Body font Times New Roman 10 pt (what Word renders for the reference files, whose styles carry no font defaults). |
-| `markdown_to_docx.py` | Converter for our artifact grammar (headings, paragraphs, bullets, `1.` lists, `- [ ]`/`- [x]`, pipe tables with `<br>`/`\|`, code fences, `> notes`, `**Label:** value`, inline `` `code` ``/`**bold**`/`*italic*`); used for free-text bodies and as a whole-document fallback. |
-| `xlsx_writer.py` | Test-case matrix: sheet **Test Cases** (`TC ID | Title | Preconditions | Steps | Expected Result | Type | Automated | Linked Story/Req | Notes`, Arial 10, `2F5496` header, frozen + autofilter) and **Summary** (title, Linked TDD/Epic/Automation, *Totals by Automation Status*, *Totals by Type* in the reference vocabulary order, Notes — totals are literal numbers). `read_test_case_rows` reads a matrix back. |
-| `artifacts.py` | Per-kind layouts: **Impact** (title "Impact Analysis", `BCR-001 — title` subtitle, numbered H1s, KG appendix + Sources annexes), **EPIC** (title `EPIC-002`, unnumbered H1s, callout statement, ☑/☐ DoD, tables), **User story** (one file per story: `US-00N: Title`, meta, Heading 2 only — Story with bold subject / Acceptance Criteria ☐ / Notes), **TDD** ("Technical Design Document (TDD)", `N. Title` H1s, `4.x` H2s, *Existing* / *Proposed* as Heading 3), **TC preview** (the impact analysis' affected test cases; when the knowledge base holds the original matrix its Title/Preconditions/Steps/Expected/Type/Automated are merged in and the change note appended — otherwise the Title carries the impact rationale). `export_artifact(cr, kind, "docx"|"md"|"xlsx")`. |
+| `docx_writer.py` | `DocxWriter` over python-docx. Title: 22 pt bold `2F5496`. Subtitle: 14 pt. A bold `Label: value` block between thin rules. Word *Heading 1/2/3*. *List Paragraph* `•` bullets and real `1.` numbering. Tables with a `2F5496` header row (white bold, `tblHeader`) and `FFFFFF` body cells. `☑  ` / `☐  ` checklists. Consolas `AA3377` inline code. Boxed code blocks. A callout with a left bar. Body font Times New Roman 10 pt (this is what Word renders for the reference files, whose styles carry no font defaults). |
+| `markdown_to_docx.py` | A converter for our artifact grammar: headings, paragraphs, bullets, `1.` lists, `- [ ]` / `- [x]`, pipe tables with `<br>` / `\|`, code fences, `> notes`, `**Label:** value`, inline `` `code` `` / `**bold**` / `*italic*`. Used for free-text bodies and as a whole-document fallback. |
+| `xlsx_writer.py` | The test-case matrix. Sheet **Test Cases**: `TC ID \| Title \| Preconditions \| Steps \| Expected Result \| Type \| Automated \| Linked Story/Req \| Notes`, Arial 10, `2F5496` header, frozen panes and autofilter. Sheet **Summary**: title, Linked TDD / Epic / Automation, *Totals by Automation Status*, *Totals by Type* in the reference vocabulary order, Notes. Totals are literal numbers. `read_test_case_rows` reads a matrix back. |
+| `artifacts.py` | The layout for each kind. **Impact**: title "Impact Analysis", `BCR-001 — title` subtitle, numbered H1s, KG appendix and Sources annexes. **EPIC**: title `EPIC-002`, unnumbered H1s, a callout statement, ☑/☐ DoD, tables. **User story**: one file per story (`US-00N: Title`, meta, Heading 2 only — Story with a bold subject / Acceptance Criteria ☐ / Notes). **TDD**: "Technical Design Document (TDD)", `N. Title` H1s, `4.x` H2s, *Existing* / *Proposed* as Heading 3. **TC preview**: the affected test cases from the impact analysis. When the knowledge base holds the original matrix, the Title / Preconditions / Steps / Expected / Type / Automated columns are merged in and the change note is appended; otherwise the Title carries the impact rationale. Entry point: `export_artifact(cr, kind, "docx"\|"md"\|"xlsx")`. |
 | `bundle.py` | `export_change_request(cr) -> zip`: `Impact-Analysis-BCR-001.docx`, `EPIC-002-<slug>.docx`, one `US-00N-<slug>.docx` per story, `TDD-ORD-002-<slug>.docx`, `TC-preview-BCR-001.xlsx`, `markdown/*.md` sources, `MANIFEST.txt`. |
 
-**Approval labelling.** Every export carries an `Export:` metadata line — `Approved vN (date)` or
-`DRAFT vN — not approved` (drafts also say so in the subtitle and get a `-DRAFT` filename suffix);
-the bundle skips undrafted artifacts and lists them in the manifest. The stories artifact's
-`docx` export is a zip with one document per story, mirroring the reference layout.
-`ChangeRequestService.export` / `export_bundle` add the KB lookup for the TC preview
-(`KgService.read_bytes`); the CLI is `cr export <cr-id> <step> --format md|docx|xlsx [--out]` and
-`cr export <cr-id> --format zip`; the UI shows `.docx` / `.md` (/ `.xlsx`) buttons on the artifact
-panel and **Export all (.zip)** in the wizard header.
+**Approval labels.** Every export carries an `Export:` metadata line: `Approved vN (date)` or
+`DRAFT vN — not approved`. Drafts also say so in the subtitle and get a `-DRAFT` filename
+suffix. The bundle skips artifacts that were not drafted and lists them in the manifest. The
+`docx` export of the stories artifact is a zip with one document per story, which mirrors the
+reference layout. `ChangeRequestService.export` / `export_bundle` add the KB lookup for the TC
+preview (`KgService.read_bytes`). The CLI is `cr export <cr-id> <step> --format md|docx|xlsx
+[--out]` and `cr export <cr-id> --format zip`. The UI shows `.docx` / `.md` (/ `.xlsx`) buttons on
+the artifact panel, and **Export all (.zip)** in the wizard header.
 
-## 8f. Knowledge-graph-grounded projects + the change spec (`kg/grounding.py`, `spec/change_*.py`)
+---
 
-> **Change pipeline map:** [§8c knowledge bases](#8c-knowledge-bases-kg--a-corpus-indexed-into-a-graph) → [§8d change requests](#8d-change-requests-change--a-guided-wizard-from-a-bcr-to-impact--epic--stories--tdd) → [§8e document export](#8e-document-export-docs_export--word--excel-in-the-reference-template-style) → [§8f grounded projects + `changes.md`](#8f-knowledge-graph-grounded-projects--the-change-spec-kggroundingpy-specchange_py) → [§8g change outputs](#8g-post-approval-change-outputs-change_outputs--diagrams-modified-code--diff-test-docs); hardening (store guards, compare-and-swap) in [§7.3](#73-state-storage--how-the-gate-persists-across-calls); routes in [§9.3](#93-http-api-apiapppy-fastapi), CLI in [§9.2](#92-cli-climainpy-typer--rich); end-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
+## 13. Grounded projects and the change spec
 
-The "upload the TDD to the workflow GUI" half of the change pipeline. A workflow project compiled
-**with a knowledge base** (`kb_id`, optionally the `change_request_id` whose approved TDD the
-document is) differs from a plain compile in exactly two ways — and in nothing else when the ids
-are absent (`grounder=None` renders every prompt byte-for-byte as before; the 664 pre-Phase-3
-tests are untouched):
+> **Change pipeline map:** [§10](#10-knowledge-bases-kg) → [§11](#11-change-requests-change) →
+> [§12](#12-document-export-docs_export) → **§13** →
+> [§14](#14-post-approval-change-outputs-change_outputs).
+> Code: `kg/grounding.py`, `spec/change_*.py`, `models/change_spec.py`.
 
-1. **Grounded prompts.** `kg/grounding.py::KgGrounder(kg_service, kb_id)` retrieves a
-   `KgPacket` for the text about to be analysed (`grounding_query` = the document's identifiers —
-   the same seed extractor the change request uses — then a slice of prose) and renders it as a
-   self-contained block, *"KNOWLEDGE-GRAPH CONTEXT — prefer these real names / paths"*, that the
-   `discover_workflows` (segmentation), `discover_workflow`, `extract_facts` and `design_temporal`
-   prompts carry as an **optional** `{{ kg_context }}` variable (`optional:` front-matter; the
-   renderer defaults it to `""`). `ProjectCompiler.compile_document(..., grounder=)` passes the
-   block for the whole document to segmentation and per segment to fact extraction
-   (`WorkflowCompiler.extract_facts(kg_context=)` → `WorkflowState.kg_context`); `approve_spec`
-   re-grounds each seeded state so the Temporal-design prompt sees the same names. Retrieval is
-   cached per text, never raises into the pipeline (a broken graph degrades to an ungrounded
-   compile), and the packets' files/spans accumulate into `project.grounding`
-   (`ProjectGrounding{kb_name, change_request_title, sources, coverage, low_confidence,
-   requirement_ids}`) — the visible provenance behind the UI's *Grounded by ‹KB› · from ‹CR›*.
-   The `discover_workflows` prompt also carries a hint that a TDD's state machine / activities
-   table define **one** workflow with per-group sub-steps rather than one workflow per design
-   section (plan Phase 3 design note).
-2. **A change spec.** `agents/change_spec.py::ChangeSpecAgent.extract(tdd_text, kg_context,
-   impact_table, seed_components, requirement_ids)` (prompt `extract_change_spec.md`) returns a
-   `models/change_spec.py::ChangeSpec{components: [ComponentChange{name, kind: module|activity|
-   workflow|type|signal|query|test|diagram|doc, path (KG node id / file), existing, proposed,
-   change_type: modify|add|remove|verify, requirement_ids, provenance}], assumptions,
-   open_questions, sources, version}`. When a change request is linked, `change/spec_seed.py`
-   seeds the components from its approved impact analysis (`AffectedItem` rows + the TDD's
-   Existing/Proposed section texts) and the request's requirement ids are the only ones the model
-   may cite; the deterministic `KgService.impact` table over the document's identifiers goes into
-   the prompt too. Cleaning is deterministic (kind/change-type coercion, de-duplication, provenance
-   = `document_grounded` when the name occurs in the document, seeds kept when the model returns
-   nothing). The spec is stored on `CompilationProject.change_spec` (+ `kb_id`,
-   `change_request_id`) and rendered to **`changes.md`** by `spec/change_renderer.py`
-   (`# Change Spec` → `## Grounding` (read-only) → `## Components` with one
-   `### name — kind, change [marker]` block, `- path:` / `- requirements:` bullets and
-   `#### Existing` / `#### Proposed` free text → `## Assumptions` → `## Open Questions` →
-   `## Sources` (read-only)); `spec/change_ingest.py` folds edits back (match by `kind:name`,
-   changed text → `human_provided`, new heading → new human component, missing heading → removed;
-   `render → ingest(None) → render` is identity and every field, provenance included, round-trips).
-   `spec/change_validator.py` runs no model: **empty Proposed → BLOCKING**, a `path` that
-   `KgService.resolve_ref` cannot find (node id, file path or suffix, `fn:` symbol) → WARNING with
-   `KgService.search` suggestions, a requirement id the change request does not declare → WARNING.
-   Findings land in `validation_findings["__changes__"]` (`CHANGES_SLUG`, never a workflow slug).
+This is the "upload the TDD to the workflow GUI" half of the change pipeline. A workflow project
+compiled **with a knowledge base** (`kb_id`, and optionally the `change_request_id` whose approved
+TDD the document is) differs from a plain compile in exactly two ways. When the ids are absent,
+nothing differs: `grounder=None` renders every prompt byte for byte as before, and the 664
+pre-Phase-3 tests are untouched.
 
-**Same gate.** `changes.md` travels through every existing door: `ProjectCompiler.spec_markdown`
-lists it with the workflow files (`ProjectResponse.spec_markdown`, the CLI's spec dir,
-`write_spec_files` / `read_spec_files`); `PUT /projects/{id}/spec` and `validate` fold it in
-(`markdown_by_slug["__changes__"]`); `approve_spec` re-validates it and **refuses on a BLOCKING
-change finding unless `accept_incomplete`** (WARNINGs never block); the Resolve dialogue drafts
-questions from its findings and open questions (`draft_change_questions.md`), and a prose answer
-becomes deterministic `ComponentUpdate`s (`interpret_change_answer.md` → `dialogue/change_ops.py`:
-modify carries only changed fields, add/remove, resolve open questions, one version bump; unmapped
-answers park as a human-provided open question, one follow-up at most). `agenda_fingerprint` /
-`has_anything_to_ask` include the change spec, so pre-drafting stays correct.
+**1. Grounded prompts.** `kg/grounding.py::KgGrounder(kg_service, kb_id)` retrieves a `KgPacket`
+for the text that is about to be analysed. The `grounding_query` is the document's identifiers
+(the same seed extractor the change request uses), followed by a slice of prose. The grounder
+renders the packet as a self-contained block: *"KNOWLEDGE-GRAPH CONTEXT — prefer these real
+names / paths"*. The `discover_workflows` (segmentation), `discover_workflow`, `extract_facts`
+and `design_temporal` prompts carry it as an **optional** `{{ kg_context }}` variable
+(`optional:` in the front matter; the renderer defaults it to `""`).
+`ProjectCompiler.compile_document(..., grounder=)` passes the block for the whole document to
+segmentation, and per segment to fact extraction (`WorkflowCompiler.extract_facts(kg_context=)` →
+`WorkflowState.kg_context`). `approve_spec` grounds each seeded state again, so the
+Temporal-design prompt sees the same names. Retrieval is cached per text. It never raises into the
+pipeline: a broken graph degrades to an ungrounded compile. The files and spans of the packets
+accumulate into `project.grounding` (`ProjectGrounding{kb_name, change_request_title, sources,
+coverage, low_confidence, requirement_ids}`). This is the visible provenance behind the UI's
+*Grounded by ‹KB› · from ‹CR›*. The `discover_workflows` prompt also carries a hint: a TDD's state
+machine and activities table define **one** workflow with sub-steps per group, not one workflow
+per design section (plan Phase 3 design note).
+
+**2. A change spec.** `agents/change_spec.py::ChangeSpecAgent.extract(tdd_text, kg_context,
+impact_table, seed_components, requirement_ids)` (prompt `extract_change_spec.md`) returns a
+`models/change_spec.py::ChangeSpec`:
+
+```
+ChangeSpec{
+  components: [ComponentChange{
+    name,
+    kind: module|activity|workflow|type|signal|query|test|diagram|doc,
+    path (KG node id / file),
+    existing, proposed,
+    change_type: modify|add|remove|verify,
+    requirement_ids, provenance
+  }],
+  assumptions, open_questions, sources, version
+}
+```
+
+When a change request is linked, `change/spec_seed.py` seeds the components from its approved
+impact analysis (the `AffectedItem` rows plus the TDD's Existing / Proposed section texts). The
+request's requirement ids are the only ids the model may cite. The deterministic
+`KgService.impact` table over the document's identifiers goes into the prompt too. Cleaning is
+deterministic: kind and change-type coercion, de-duplication, provenance = `document_grounded`
+when the name occurs in the document, and the seeds are kept when the model returns nothing.
+
+The spec is stored on `CompilationProject.change_spec` (plus `kb_id`, `change_request_id`).
+`spec/change_renderer.py` renders it to **`changes.md`**: `# Change Spec` → `## Grounding`
+(read-only) → `## Components` with one `### name — kind, change [marker]` block per component,
+`- path:` / `- requirements:` bullets and `#### Existing` / `#### Proposed` free text →
+`## Assumptions` → `## Open Questions` → `## Sources` (read-only). `spec/change_ingest.py` folds
+edits back: it matches by `kind:name`; changed text becomes `human_provided`; a new heading is a
+new human component; a missing heading means removed. `render → ingest(None) → render` is the
+identity, and every field, provenance included, round-trips.
+
+`spec/change_validator.py` runs no model. **An empty Proposed section is BLOCKING.** A `path`
+that `KgService.resolve_ref` cannot find (node id, file path or suffix, `fn:` symbol) is a
+WARNING with `KgService.search` suggestions. A requirement id that the change request does not
+declare is a WARNING. Findings land in `validation_findings["__changes__"]` (`CHANGES_SLUG`,
+never a workflow slug).
+
+**The same gate.** `changes.md` travels through every existing door:
+
+- `ProjectCompiler.spec_markdown` lists it with the workflow files
+  (`ProjectResponse.spec_markdown`, the CLI's spec dir, `write_spec_files` / `read_spec_files`).
+- `PUT /projects/{id}/spec` and `validate` fold it in (`markdown_by_slug["__changes__"]`).
+- `approve_spec` validates it again and **refuses on a BLOCKING change finding unless
+  `accept_incomplete`** (WARNINGs never block).
+- The Resolve dialogue drafts questions from its findings and open questions
+  (`draft_change_questions.md`). A prose answer becomes deterministic `ComponentUpdate`s
+  (`interpret_change_answer.md` → `dialogue/change_ops.py`: modify carries only the changed
+  fields; add / remove; resolve open questions; one version bump). An answer that cannot be mapped
+  parks as a human-provided open question, with at most one follow-up. `agenda_fingerprint` /
+  `has_anything_to_ask` include the change spec, so pre-drafting stays correct.
 
 **Ingress.** `POST /projects/compile` and `/projects/compile-upload` take `kb_id?` /
-`change_request_id?` (a request implies its KB; a mismatching explicit KB is 422; an unindexed KB
-409); `POST /change-requests/{id}/send-to-workflow {provider?, model?, nickname?}` compiles the
-**approved** TDD markdown (409 otherwise) with both ids, defaults the provider to the wizard's
+`change_request_id?`. A request implies its KB. A different explicit KB is a 422. An unindexed KB
+is a 409. `POST /change-requests/{id}/send-to-workflow {provider?, model?, nickname?}` compiles the
+**approved** TDD Markdown (409 otherwise) with both ids. It defaults the provider to the wizard's
 (else cloud Nemotron), links the new project into `cr.project_ids`, and runs synchronously like
 `/projects/compile`. CLI: `compile … --kb <id> [--change-request <id>]` writes `changes.md` into
-the spec dir. UI: the home page's *Ground with knowledge base* selector, the wizard's **Send to
-workflow GUI** button (approved TDD only), and in the Spec tab `changes.md` as a second file with
-its own grammar highlighting, a change-spec summary in the right rail, findings under its entry
-and the *Grounded by …* header (grammar: `frontend/SPEC_GUIDE.md`, guide page → *changes.md*).
+the spec dir. UI: the home page's *Ground with knowledge base* selector; the wizard's **Send to
+workflow GUI** button (approved TDD only); and, in the Spec tab, `changes.md` as a second file
+with its own grammar highlighting, a change-spec summary in the right rail, findings under its
+entry, and the *Grounded by …* header (grammar: `frontend/SPEC_GUIDE.md`, guide page →
+*changes.md*).
 
-## 8g. Post-approval change outputs (`change_outputs/`) — diagrams, modified code + diff, test docs
+---
 
-> **Change pipeline map:** [§8c knowledge bases](#8c-knowledge-bases-kg--a-corpus-indexed-into-a-graph) → [§8d change requests](#8d-change-requests-change--a-guided-wizard-from-a-bcr-to-impact--epic--stories--tdd) → [§8e document export](#8e-document-export-docs_export--word--excel-in-the-reference-template-style) → [§8f grounded projects + `changes.md`](#8f-knowledge-graph-grounded-projects--the-change-spec-kggroundingpy-specchange_py) → [§8g change outputs](#8g-post-approval-change-outputs-change_outputs--diagrams-modified-code--diff-test-docs); hardening (store guards, compare-and-swap) in [§7.3](#73-state-storage--how-the-gate-persists-across-calls); routes in [§9.3](#93-http-api-apiapppy-fastapi), CLI in [§9.2](#92-cli-climainpy-typer--rich); end-to-end demo script: `docs/kg-plan/RUNBOOK.md`.
+## 14. Post-approval change outputs (`change_outputs/`)
 
-The last leg of the change pipeline (plan Phase 4, decisions D3 / D10): once a
+> **Change pipeline map:** [§10](#10-knowledge-bases-kg) → [§11](#11-change-requests-change) →
+> [§12](#12-document-export-docs_export) → [§13](#13-grounded-projects-and-the-change-spec) →
+> **§14**.
+
+This is the last leg of the change pipeline (plan Phase 4, decisions D3 / D10). Once a
 knowledge-base-grounded project is **approved and compiled**, it produces the three deliverables
-the business change asked for, each built from the knowledge base's *actual* files rather than
-from scratch. The record is `change_outputs/models.py::ChangeOutputs{diagrams: [UpdatedDiagram{name,
-kind: state|sequence|architecture|state-partial|workflow, original, updated, notes, source_path,
-checks}], code: CodeChangeBundle{files: [ChangedFile{path, status: modified|added|removed|unchanged,
-original, updated, unified_diff, checks{ast_ok, ruff_ok?, repaired, truncated}, reason}], order,
-import_root, code_root}, tests_doc: TestDocUpdate{test_cases: [TestCaseRow], changed_ids, new_ids,
-test_plan_addendum_md, …}, system_flow_md, provenance, warnings, timings, stages}` stored on
-`CompilationProject.change_outputs`.
+the business change asked for: updated diagrams, modified code with a diff, and test documents.
+Each one is built from the knowledge base's *actual* files, not from scratch.
 
-**Engine.** `change_outputs/engine.py::ChangeOutputsEngine(agent, kg, load_state=, build_diagrams=,
-grounder=)` runs three stages in order — `diagrams → code → tests_doc` — and **persists after every
-stage** (and after every rewritten file), so a timeout keeps what finished; a failed stage is
-recorded as `failed` and the run continues, then raises `ChangeOutputsError`; cancellation persists
-nothing of the in-flight stage. Every stage is *LLM drafts, code decides*
-(`agents/change_outputs.py::ChangeOutputsAgent`, prompts `update_diagrams.md`,
-`rewrite_source_file.md` (+ `continue_source_file.md`, `repair_source_file.md`),
-`update_test_cases.md`); each prompt sees the rendered `changes.md`, the approved Temporal design
-(`design_summary`), the workflow spec, a KG grounding block and the TDD text — the change spec is
-**consumed, never re-extracted**.
+The record is `change_outputs/models.py::ChangeOutputs`, stored on
+`CompilationProject.change_outputs`:
 
-1. **Diagrams** (`change_outputs/diagrams.py`). Every `.mmd` in the corpus is regenerated (D10)
-   plus the companion diagrams the change spec adds (`order-state-machine-partial-shipment.mmd`).
-   The model returns a `DiagramUpdatePlan`; deterministic checks per diagram — Mermaid header
-   present, every **required state** named (`expected_states` = the original diagram's states +
-   the multi-segment `UPPER_SNAKE` tokens the change spec proposes, e.g. `PARTIALLY_PROVISIONED`),
-   balanced `subgraph`/`end`, braces and sequence blocks — with **one repair round** (the failures
-   are quoted back; the better version per diagram wins) and the remaining failures recorded on
-   `UpdatedDiagram.checks` / `warnings`. A diagram the model does not return keeps its original.
-   `assemble_system_flow` rebuilds `system-flow-diagram.md` with the original numbered H2 sections
-   (updated Mermaid inside), the per-workflow spec diagram(s) from `ProjectCompiler.build_diagrams`
-   as the next section (D10) and the new companion diagrams after it.
-2. **Code** (`change_outputs/code.py`). `plan_rewrites(change_spec, corpus .py texts)` decides the
-   **rewrite set deterministically**: files a component's `path` / `name` resolves to (`fn:`/`mod:`
-   node ids, corpus paths or suffixes, case-insensitively; a *new* activity / signal / query with
-   no path lands in the activities / workflow module) **plus every file that imports a rewritten
-   module** (worker, starter, tests follow the modules they register — imports are resolved with
-   the corpus's own package alias, `src.shared.types` ↔ `existing_Codebase/shared/types.py`); the
-   rest is copied `unchanged`. Order = topological over the import graph, ties broken by the plan
-   order types → activities → workflow → worker/starter → tests, so each prompt carries the
-   **signatures of the files already rewritten** (`signature_summary`, an `ast` outline). Each
-   file is asked for as **one fenced code block via `llm.complete(max_tokens=8192)`** (a whole
-   Python file inside JSON is what long-context models truncate); an unclosed fence is continued
-   (≤2×, overlap trimmed), then every deterministic check runs — `ast.parse`, dataclass sanity
-   (`dataclass_problems`), the change spec's symbol presence, imports against the rewritten
-   siblings (`missing_imports`, incl. imports nested in `with workflow.unsafe.imports_passed_through():`
-   / `try:` blocks), names used in `@workflow.query/signal/run` / `@activity.defn` annotations that
-   are only defined below the class or under `TYPE_CHECKING` (`late_annotation_names` — Temporal
-   evaluates those hints at import), ruff's pyflakes-class rules — and **up to N targeted repair
-   rounds** (`change_outputs_repair_rounds`, default 2; the CLI/API pass the setting through
-   `ProjectCompiler`) hand the model *all* the verdicts that still fail, re-checking after each
-   round (`FileChecks.repair_rounds` / `.problems` record what each round was asked to fix);
-   well-known undefined names are then auto-imported deterministically (`auto_import`, incl. the
-   corpus's own exports). A **keep-style** pass (`code.py::normalise_style`) restores the original
-   file's conventions when the model drifted — PEP 585/604 generics (`List[...]` → `list[...]`,
-   `Optional[X]` → `X | None`, `from typing import` trimmed) and two blank lines between top-level
-   blocks — only when the original followed those rules (`style_normalised` pill). After the last
-   file, a **bundle smoke test** (`change_outputs/smoke.py`, `change_outputs_smoke`, default on)
-   writes the export layout to a temp dir and runs one child interpreter
-   (`change_outputs_smoke_python`, default the server's) that `py_compile`s every file and imports
-   every module in bundle order; the verdict (`CodeChangeBundle.smoke`: passed / failed / skipped,
-   per-module errors) is persisted and shown — a verdict about the draft, never a gate. Diffs
-   are `difflib.unified_diff`; a `module` component with `change_type: remove` marks the file
-   `removed`; a model that returns no code leaves the file `unchanged` with a warning. The rewrite
-   prompt pins the Temporal Python SDK surface it may use (`@activity.defn` takes no
-   `retry_policy`; `RetryPolicy` goes on `execute_activity`; no new `str`-Enum result fields — the
-   default converter decodes them as lists of characters, which is also why the reference corpus's
-   own tests fail in a fresh env, see the RUNBOOK).
-3. **Test documents** (`change_outputs/tests_doc.py`). The corpus's TC matrix (first `.xlsx` that
-   `read_test_case_rows` understands) and test plan (`.docx` text) plus the rewritten test module's
-   outline go into `update_test_cases.md`; the model proposes **new rows without ids** and
-   field-level **updates** to existing rows; the engine numbers new rows from the KB catalog
-   (`TC-18…`), applies updates without dropping anything (notes are *appended*), and renders the
-   addendum markdown deterministically (`render_addendum`: §3.2 out-of-scope removals, §3.1/§4.2/§4.4
-   additions, new / updated TC tables, deliverables, exit criteria, risks). The Phase 2 writers
-   produce the `.xlsx` (`export_matrix_xlsx`, full matrix + Summary) and the addendum `.docx`
-   (`export_addendum_docx`, reference look).
+```
+ChangeOutputs{
+  diagrams: [UpdatedDiagram{name, kind: state|sequence|architecture|state-partial|workflow,
+                            original, updated, notes, source_path, checks}],
+  code: CodeChangeBundle{files: [ChangedFile{path, status: modified|added|removed|unchanged,
+                                             original, updated, unified_diff,
+                                             checks{ast_ok, ruff_ok?, repaired, truncated}, reason}],
+                         order, import_root, code_root},
+  tests_doc: TestDocUpdate{test_cases: [TestCaseRow], changed_ids, new_ids,
+                           test_plan_addendum_md, …},
+  system_flow_md, provenance, warnings, timings, stages
+}
+```
 
-**Export** (`change_outputs/export.py`). `export_zip` uses the corpus README layout so the bundle
-imports as the code expects and the generated tests run as-is: `src/…` (the code package),
-`tests/…`, `docs/diagrams/mermaid/*.mmd` + `docs/diagrams/system-flow-diagram.md`,
-`docs/test-cases/<TC matrix>.xlsx` + `<TP>-addendum-<BCR>.docx/.md`, `changes.patch` (combined
-diff) and a `CHANGES.md` index (stages, per-file checks, new/updated TC ids, sources, warnings);
-byte-stable for identical outputs.
+**Engine.** `change_outputs/engine.py::ChangeOutputsEngine(agent, kg, load_state=,
+build_diagrams=, grounder=)` runs three stages in order: `diagrams → code → tests_doc`. It
+**saves after every stage** (and after every rewritten file), so a timeout keeps what finished. A
+failed stage is recorded as `failed`, the run continues, and at the end the engine raises
+`ChangeOutputsError`. A cancellation saves nothing of the stage that was in flight. Every stage
+follows the rule *the LLM drafts, code decides* (`agents/change_outputs.py::ChangeOutputsAgent`,
+prompts `update_diagrams.md`, `rewrite_source_file.md` (plus `continue_source_file.md` and
+`repair_source_file.md`), `update_test_cases.md`). Each prompt sees the rendered `changes.md`,
+the approved Temporal design (`design_summary`), the workflow spec, a KG grounding block and the
+TDD text. The change spec is **consumed, never extracted again**.
 
-**Pipeline / API / CLI / UI.** `ProjectCompiler.generate_change_outputs(project_id, stages=)`
-(requires `kb_id` and a compiled workflow); `approve_spec(..., change_outputs=True)` chains it
-inline (CLI `approve-spec … --change-outputs`, bundle unpacked under
-`<out-dir>/<project-id>/change-outputs/`); `workflow-compiler change-outputs <project-id>
-[--stage all|diagrams|code|tests_doc]` re-runs stages. In the API the approve **job** starts a
-separate `change_outputs` job (`JobKind`) once approval left the project `completed`, so the
-approve reports done when compilation is done and an output failure never touches the approve
-result; `GET /projects/{id}/change-outputs` (stored outputs + running job + `available`),
-`POST …/change-outputs/regenerate {stage, provider?, model?}` (202, one run per project, cloud
-Nemotron default like every KB route), `GET …/change-outputs/export.zip`,
-`GET …/change-outputs/files/{test-cases.xlsx|test-plan-addendum.docx|test-plan-addendum.md|system-flow-diagram.md|changes.patch}`.
-**Config.** `change_outputs_repair_rounds` (2), `change_outputs_smoke` (True),
-`change_outputs_smoke_python` ("" = the server's interpreter); the run is timed under
-`stage_timings["change_outputs"]` and the time-saved metric buckets it against
-`baseline_hours["change_outputs"]` (16 h estimate). Reset recipe for demos:
-`python scripts/reset_demo_state.py` (dry run; `--yes` deletes after a backup zip, `--keep <id>`).
-UI: the Results tab of a grounded project gets a **Workflows | Change outputs** switch; the
-Change-outputs view has Diagrams (per-diagram chips, Original ⇄ Updated toggle, checks, source),
-Code (file list with status badges and ast/ruff/`repaired ×N`/`style kept` pills, the repair
-verdicts per file, the bundle smoke card, unified / side-by-side / updated-file viewer built on
-the `diff` package, `changes.patch`), Test cases (table with new / updated
-highlighting, `.xlsx` and addendum `.docx` downloads, the addendum rendered), a stage selector +
-**Regenerate**, **Download all (.zip)**, warnings and the Sources list.
+**Stage 1: Diagrams** (`change_outputs/diagrams.py`). Every `.mmd` in the corpus is regenerated
+(D10), plus the companion diagrams that the change spec adds
+(`order-state-machine-partial-shipment.mmd`). The model returns a `DiagramUpdatePlan`.
+Deterministic checks run per diagram: the Mermaid header is present; every **required state** is
+named (`expected_states` = the states of the original diagram plus the multi-segment
+`UPPER_SNAKE` tokens the change spec proposes, for example `PARTIALLY_PROVISIONED`); `subgraph`
+and `end` are balanced; braces and sequence blocks are balanced. There is **one repair round**:
+the failures are quoted back, and the better version per diagram wins. Remaining failures are
+recorded on `UpdatedDiagram.checks` and in `warnings`. A diagram the model does not return keeps
+its original. `assemble_system_flow` rebuilds `system-flow-diagram.md` with the original numbered
+H2 sections (updated Mermaid inside), the per-workflow spec diagram(s) from
+`ProjectCompiler.build_diagrams` as the next section (D10), and the new companion diagrams after
+it.
 
-## 9. The three entry points (same engine, three faces)
+**Stage 2: Code** (`change_outputs/code.py`). `plan_rewrites(change_spec, corpus .py texts)`
+decides the **rewrite set deterministically**:
 
-### 9.1 Library
+- Files that a component's `path` or `name` resolves to (`fn:` / `mod:` node ids, corpus paths or
+  suffixes, without regard to letter case). A *new* activity, signal or query with no path lands
+  in the activities or workflow module.
+- **Plus every file that imports a rewritten module.** The worker, the starter and the tests
+  follow the modules they register. Imports resolve with the corpus's own package alias
+  (`src.shared.types` ↔ `existing_Codebase/shared/types.py`).
+- The rest is copied `unchanged`.
+
+The order is topological over the import graph. Ties are broken by the plan order
+types → activities → workflow → worker/starter → tests. So each prompt carries the **signatures
+of the files already rewritten** (`signature_summary`, an `ast` outline).
+
+Each file is requested as **one fenced code block through `llm.complete(max_tokens=8192)`**. A
+whole Python file inside JSON is what long-context models truncate. An unclosed fence is continued
+(at most twice, with the overlap trimmed). Then every deterministic check runs:
+
+- `ast.parse`;
+- dataclass sanity (`dataclass_problems`);
+- the presence of the change spec's symbols;
+- imports against the rewritten siblings (`missing_imports`, including imports nested in
+  `with workflow.unsafe.imports_passed_through():` and `try:` blocks);
+- names used in `@workflow.query/signal/run` and `@activity.defn` annotations that are only
+  defined below the class or under `TYPE_CHECKING` (`late_annotation_names`; Temporal evaluates
+  those hints at import time);
+- ruff's pyflakes-class rules.
+
+Then **up to N targeted repair rounds** run (`change_outputs_repair_rounds`, default 2; the CLI
+and API pass the setting through `ProjectCompiler`). Each round gives the model *all* the
+verdicts that still fail, and checks again after the round (`FileChecks.repair_rounds` /
+`.problems` record what each round was asked to fix). After that, well-known undefined names are
+imported automatically and deterministically (`auto_import`, including the corpus's own exports).
+A **keep-style** pass (`code.py::normalise_style`) restores the original file's conventions when
+the model drifted: PEP 585/604 generics (`List[...]` → `list[...]`, `Optional[X]` → `X | None`,
+`from typing import` trimmed) and two blank lines between top-level blocks. It runs only when the
+original followed those rules (`style_normalised` pill).
+
+After the last file, a **bundle smoke test** (`change_outputs/smoke.py`, `change_outputs_smoke`,
+default on) writes the export layout to a temp directory and runs one child interpreter
+(`change_outputs_smoke_python`, default: the server's). The child `py_compile`s every file and
+imports every module in bundle order. The verdict (`CodeChangeBundle.smoke`: passed / failed /
+skipped, with errors per module) is saved and shown. It is a verdict about the draft, never a
+gate.
+
+Other rules: diffs are `difflib.unified_diff`. A `module` component with `change_type: remove`
+marks the file `removed`. A model that returns no code leaves the file `unchanged` with a
+warning. The rewrite prompt pins the Temporal Python SDK surface the model may use:
+`@activity.defn` takes no `retry_policy`; `RetryPolicy` goes on `execute_activity`; no new
+`str`-Enum result fields (the default converter decodes them as lists of characters, which is also
+why the reference corpus's own tests fail in a fresh environment; see the RUNBOOK).
+
+**Stage 3: Test documents** (`change_outputs/tests_doc.py`). The corpus's TC matrix (the first
+`.xlsx` that `read_test_case_rows` understands), the test plan (`.docx` text), and the outline of
+the rewritten test module go into `update_test_cases.md`. The model proposes **new rows without
+ids** and field-level **updates** to existing rows. The engine numbers the new rows from the KB
+catalog (`TC-18…`), applies the updates without dropping anything (notes are *appended*), and
+renders the addendum Markdown deterministically (`render_addendum`: §3.2 out-of-scope removals,
+§3.1 / §4.2 / §4.4 additions, new and updated TC tables, deliverables, exit criteria, risks). The
+Phase 2 writers produce the `.xlsx` (`export_matrix_xlsx`, the full matrix plus Summary) and the
+addendum `.docx` (`export_addendum_docx`, reference look).
+
+**Export** (`change_outputs/export.py`). `export_zip` uses the corpus README layout, so the bundle
+imports as the code expects and the generated tests run as they are: `src/…` (the code package),
+`tests/…`, `docs/diagrams/mermaid/*.mmd` plus `docs/diagrams/system-flow-diagram.md`,
+`docs/test-cases/<TC matrix>.xlsx` plus `<TP>-addendum-<BCR>.docx/.md`, `changes.patch` (the
+combined diff), and a `CHANGES.md` index (stages, checks per file, new and updated TC ids,
+sources, warnings). The zip is byte-stable for identical outputs.
+
+**Pipeline, API, CLI and UI.**
+
+- `ProjectCompiler.generate_change_outputs(project_id, stages=)` requires `kb_id` and a compiled
+  workflow. `approve_spec(..., change_outputs=True)` chains it inline (CLI:
+  `approve-spec … --change-outputs`; the bundle is unpacked under
+  `<out-dir>/<project-id>/change-outputs/`). `workflow-compiler change-outputs <project-id>
+  [--stage all|diagrams|code|tests_doc]` runs stages again.
+- In the API, the approve **job** starts a separate `change_outputs` job (`JobKind`) once approval
+  left the project `completed`. So the approve job reports done when compilation is done, and an
+  output failure never touches the approve result.
+- Routes: `GET /projects/{id}/change-outputs` (stored outputs, the running job, and `available`);
+  `POST …/change-outputs/regenerate {stage, provider?, model?}` (202; one run per project; cloud
+  Nemotron by default, like every KB route); `GET …/change-outputs/export.zip`;
+  `GET …/change-outputs/files/{test-cases.xlsx|test-plan-addendum.docx|test-plan-addendum.md|system-flow-diagram.md|changes.patch}`.
+- **Config:** `change_outputs_repair_rounds` (2), `change_outputs_smoke` (True),
+  `change_outputs_smoke_python` (`""` = the server's interpreter). The run is timed under
+  `stage_timings["change_outputs"]`. The time-saved metric compares it against
+  `baseline_hours["change_outputs"]` (a 16 h estimate).
+- **Reset recipe for demos:** `python scripts/reset_demo_state.py` (a dry run; `--yes` deletes
+  after a backup zip; `--keep <id>`).
+- **UI:** the Results tab of a grounded project gets a **Workflows | Change outputs** switch. The
+  Change-outputs view has: Diagrams (a chip per diagram, an Original ⇄ Updated toggle, checks,
+  source); Code (a file list with status badges and ast / ruff / `repaired ×N` / `style kept`
+  pills, the repair verdicts per file, the bundle smoke card, a unified / side-by-side /
+  updated-file viewer built on the `diff` package, `changes.patch`); Test cases (a table with new
+  and updated highlighting, `.xlsx` and addendum `.docx` downloads, the rendered addendum); a
+  stage selector plus **Regenerate**; **Download all (.zip)**; warnings; and the Sources list.
+
+---
+
+## 15. The three entry points
+
+One engine, three faces: a Python library, a command-line tool, and an HTTP API.
+
+### 15.1 Library
+
+A minimal program that compiles a document, waits for a human review, then approves:
 
 ```python
 import asyncio
@@ -1269,7 +1562,9 @@ async def main():
 asyncio.run(main())
 ```
 
-### 9.2 CLI (`cli/main.py`, Typer + Rich)
+### 15.2 CLI (`cli/main.py`, Typer + Rich)
+
+The commands, one per line, with what each one does:
 
 ```bash
 workflow-compiler init                                        # → write .env (one-time setup, no LLM)
@@ -1283,59 +1578,61 @@ workflow-compiler show    <id>                                # → display a st
 workflow-compiler compile doc.md --no-review                  # → skip the default review passes (faster/cheaper)
 ```
 
-Each command builds a provider (or `--provider mock`), constructs a compiler with the file store,
-runs the async work (passing a live progress sink), closes the provider, and prints Rich tables
-(metadata, facts-by-category, review issues, CVPA assignments, Temporal components, generated code
-files). `--out` writes the Mermaid diagram; `--out-dir` writes the `TemporalCodeBundle` as one file
-per `GeneratedFile` under `<out-dir>/<slug>/`. `reject`/`show` build a compiler with **no
-LLM** because they don't need one. The compiling commands stream a timestamped step log via the
-progress callback.
+Each command builds a provider (or uses `--provider mock`), constructs a compiler with the file
+store, runs the async work (with a live progress sink), closes the provider, and prints Rich
+tables (metadata, facts by category, review issues, CVPA assignments, Temporal components,
+generated code files). `--out` writes the Mermaid diagram. `--out-dir` writes the
+`TemporalCodeBundle` as one file per `GeneratedFile` under `<out-dir>/<slug>/`. `reject` and
+`show` build a compiler with **no LLM**, because they do not need one. The compiling commands
+stream a step log with timestamps through the progress callback.
 
-`compile`, `validate`, `approve-spec`, and `approve` use the LLM (set the local gateway or
-`NVIDIA_API_KEY`, or pass `--provider mock` — the mock answers every stage with a scripted demo
-workflow, so every command runs offline); `reject` and `show` need no LLM. `models` lists the
-models the local eGPU gateway exposes (`workflow-compiler models`). `--version` prints the
-version, and `workflow-compiler <command> --help` is always the authoritative reference.
+`compile`, `validate`, `approve-spec` and `approve` use the LLM. Set the local gateway or
+`NVIDIA_API_KEY`, or pass `--provider mock`. The mock answers every stage with a scripted demo
+workflow, so every command runs offline. `reject` and `show` need no LLM. `models` lists the
+models that the local eGPU gateway exposes (`workflow-compiler models`). `--version` prints the
+version. `workflow-compiler <command> --help` is always the authoritative reference.
 
-For the local gateway, `--model ID` selects the **local** model (discover ids with
-`workflow-compiler models`); `--provider nemotron` bypasses the eGPU and uses the hosted API.
+For the local gateway, `--model ID` selects the **local** model (find the ids with
+`workflow-compiler models`). `--provider nemotron` skips the eGPU and uses the hosted API.
 
-#### `init` — write the `.env` configuration (one-time, no LLM)
+#### `init` — write the `.env` configuration (one time, no LLM)
 
-The configuration half of the install (§5). Asks which provider to use and for the credentials
-that provider needs, then writes `.env`. Builds no provider and makes no network call — it never
-checks the credentials against a live endpoint, it writes the file and names anything still
-missing.
+This is the configuration half of the install ([§5](#5-installation-and-configuration)). It asks
+which provider to use and for the credentials that provider needs, then writes `.env`. It builds
+no provider and makes no network call. It never checks the credentials against a live endpoint.
+It writes the file and names anything that is still missing.
 
 | Flag | Default | Description |
 |---|---|---|
 | `--provider NAME` | asked for | `nemotron` \| `local` \| `local-fallback` \| `mock`. |
-| `--nvidia-api-key KEY` | asked for | Only read for `nemotron` / `local-fallback`. |
+| `--nvidia-api-key KEY` | asked for | Read only for `nemotron` / `local-fallback`. |
 | `--env-file PATH` | `.env` | Where to write. Parent directories are created. |
 | `--force` | off | Replace an existing file. Without it, an existing file is an error (exit 1). |
-| `--yes` / `-y` | off | Ask nothing; use the flags given plus defaults (provider `mock`). |
+| `--yes` / `-y` | off | Ask nothing. Use the given flags plus defaults (provider `mock`). |
 
-Credentials the chosen provider does not need are written as commented placeholders, so switching
-provider later is an uncomment rather than a trip back to `.env.example`. Rendering is
-`cli/init_env.py::render_env`, a pure function of its arguments — tested without a terminal in
-`tests/test_cli_init.py`.
+Credentials that the chosen provider does not need are written as commented placeholders. So a
+later switch of provider is an uncomment, not a trip back to `.env.example`. The rendering is
+`cli/init_env.py::render_env`, a pure function of its arguments. It is tested without a terminal
+in `tests/test_cli_init.py`.
 
 #### `compile <document>` — segment into editable specs, stop at the spec gate
 
-Discovers **every** workflow in the document, extracts facts per workflow (with the sequential
-review pipeline), and writes one editable spec file per workflow plus an `overview.md` to
-`--spec-dir`:
+This command discovers **every** workflow in the document, extracts facts per workflow (with the
+sequential review pipeline), and writes one editable spec file per workflow plus an `overview.md`
+to `--spec-dir`.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--provider NAME` | from `.env` | Override the LLM provider (e.g. `mock`). |
+| `--provider NAME` | from `.env` | Override the LLM provider (for example `mock`). |
 | `--model ID` | from `.env` | Override the model id. |
-| `--timeout SECONDS` | `120` | Per-request timeout. |
+| `--timeout SECONDS` | `120` | Timeout per request. |
 | `--persist` / `--no-persist` | persist | Whether to save the resulting project to the store. |
 | `--review` / `--no-review` | review | Sequential review passes (completeness → grounding → consistency) over the LLM stages. |
 | `--spec-dir DIR` | `./specs` | Where to write the spec files. |
-| `--kb ID` | — | Ground the compile with a knowledge base (KG context in every prompt) and write `changes.md` next to the spec files (§8f). |
-| `--change-request ID` | — | The change request whose approved TDD this document is: seeds `changes.md`, restricts its requirement ids, links the project into `cr.project_ids`; implies `--kb`. |
+| `--kb ID` | — | Ground the compile with a knowledge base (KG context in every prompt) and write `changes.md` next to the spec files ([§13](#13-grounded-projects-and-the-change-spec)). |
+| `--change-request ID` | — | The change request whose approved TDD this document is. Seeds `changes.md`, restricts its requirement ids, and links the project into `cr.project_ids`. Implies `--kb`. |
+
+Two example runs:
 
 ```bash
 workflow-compiler compile big_business_doc.docx --spec-dir ./specs
@@ -1343,14 +1640,15 @@ workflow-compiler compile big_business_doc.docx --spec-dir ./specs
 workflow-compiler compile examples/order_workflow.md --provider mock   # offline, no API key
 ```
 
-Each spec file contains the workflow's metadata, activities/decisions/exceptions/compensations
-(with stable `[ids]`), plus **Assumptions**, **Ambiguities**, **Open Questions** (the readiness
-checklist rendered as fill-in questions), **Cross-Workflow Dependencies** (output→input links
-you confirm by ticking their checkbox), and **Triggers** (executable cross-workflow starts).
-Edit the files in any editor — keep the `[id]` markers on lines you modify; new lines you add
-are recorded as *human-provided*.
+Each spec file contains the workflow's metadata and its activities, decisions, exceptions and
+compensations (with stable `[ids]`), plus **Assumptions**, **Ambiguities**, **Open Questions**
+(the readiness checklist as fill-in questions), **Cross-Workflow Dependencies** (output→input
+links that you confirm by ticking their checkbox), and **Triggers** (cross-workflow starts that
+can run). Edit the files in any editor. Keep the `[id]` markers on the lines you change. New lines
+that you add are recorded as *human-provided*.
 
-A **Triggers** entry says this workflow *starts* another (always standalone) workflow:
+A **Triggers** entry says that this workflow *starts* another workflow (which is always
+standalone). An example entry:
 
 ```markdown
 ## Triggers
@@ -1359,31 +1657,33 @@ A **Triggers** entry says this workflow *starts* another (always standalone) wor
   input customer_record_id: step output `a2` (str)
 ```
 
-The mode is `blocking` (the caller awaits the target's result, bound to the `result:` name) or
-`fire-and-forget`; the optional ``when `…` `` predicate makes the trigger conditional (LLM-drafted
-— review it and tick the checkbox to confirm); each indented `input` line maps one field of the
-target's typed input from your workflow's input, an earlier step's output, or a constant.
+The mode is `blocking` (the caller waits for the target's result, bound to the `result:` name)
+or `fire-and-forget`. The optional ``when `…` `` predicate makes the trigger conditional. The LLM
+drafts it; review it and tick the checkbox to confirm. Each indented `input` line maps one field
+of the target's typed input from your workflow's input, an earlier step's output, or a constant.
 
-#### `validate <project-id>` — fold edits back in and re-check the specs
+#### `validate <project-id>` — fold edits back in and check the specs again
 
 ```bash
 workflow-compiler validate <project-id> --spec-dir ./specs
 ```
 
-Deterministically parses your edits back onto the structured spec, then runs three LLM review
-passes against the original document (completeness / grounding / consistency) plus a
-**deterministic cross-workflow integrity pass** over every trigger and dependency. Machine-
-extracted statements without support are removed; **your** additions are only ever *flagged* for
-confirmation, never deleted. The files are re-written with the fixes and findings. Iterate
-edit ⇄ validate until you are satisfied.
+This command parses your edits back onto the structured spec deterministically. Then it runs
+three LLM review passes against the original document (completeness / grounding / consistency)
+plus a **deterministic cross-workflow integrity pass** over every trigger and dependency.
+Machine-extracted statements with no support are removed. **Your** additions are only ever
+*flagged* for confirmation, never deleted. The files are written again with the fixes and
+findings. Repeat edit ⇄ validate until you are satisfied.
 
-Findings are two-tier and printed with precise refs (`TAG slug Section > field: message`):
+Findings have two tiers. They print with precise references
+(`TAG slug Section > field: message`):
 
-- `BLOCK` (red) — structural breakage that prevents generation: a trigger targeting a workflow
-  not in the project, an input map naming a field the target does not declare, an unisolated
-  document segment, unmet required checklist items. **`validate` exits non-zero while any
-  blocking finding remains**, and `approve-spec` refuses (override with `--accept-incomplete`).
-- `WARN` (yellow) — should be confirmed but doesn't block: type mismatches on a hand-off,
+- `BLOCK` (red) — structural breakage that prevents generation: a trigger that targets a workflow
+  not in the project, an input map that names a field the target does not declare, a document
+  segment that is not isolated, unmet required checklist items. **`validate` exits with a
+  non-zero code while any blocking finding remains**, and `approve-spec` refuses (override with
+  `--accept-incomplete`).
+- `WARN` (yellow) — should be confirmed, but does not block: type mismatches on a hand-off,
   unconfirmed trigger predicates, a blocking trigger with no result binding.
 
 #### `edit <project-id> <edit-file>` — change compiled workflows with an edit request
@@ -1392,33 +1692,33 @@ Findings are two-tier and printed with precise refs (`TAG slug Section > field: 
 workflow-compiler edit <project-id> examples/order_edit_request.md --spec-dir ./specs --author alice
 ```
 
-Applies a **workflow edit-request document** (format: [`EDIT_FORMAT_GUIDE.md`](EDIT_FORMAT_GUIDE.md))
-to a compiled project: structured sections (`## Workflow: <slug>` with `### Add` / `### Modify` /
-`### Remove`, plus `### Triggers` / `### Dependencies`, `## Add Workflow:` and
-`## Remove Workflow:`) hold natural-language entries that an LLM translates into deterministic
-patches against the current specs. Your changes carry **human authority** — additions need no
-support in the original document (they are marked `[human]`) and removals are honored. The edit
-is **atomic**: an entry that cannot be translated or applied aborts the whole request with the
-offending entries listed, and nothing changes. (An addition whose value is already in the spec is
-treated as satisfied and skipped with a `skipped (already present)` summary line rather than
-aborting.)
+This command applies a **workflow edit-request document** (format:
+[`EDIT_FORMAT_GUIDE.md`](EDIT_FORMAT_GUIDE.md)) to a compiled project. Structured sections
+(`## Workflow: <slug>` with `### Add` / `### Modify` / `### Remove`, plus `### Triggers` /
+`### Dependencies`, `## Add Workflow:` and `## Remove Workflow:`) hold natural-language entries.
+An LLM translates them into deterministic patches against the current specs. Your changes carry
+**human authority**: additions need no support in the original document (they are marked
+`[human]`), and removals are honored. The edit is **atomic**: an entry that cannot be translated
+or applied aborts the whole request, lists the failing entries, and changes nothing. (An addition
+whose value is already in the spec is treated as satisfied and skipped with a
+`skipped (already present)` summary line, instead of an abort.)
 
-On success the edited workflows' versions are bumped, an `EditRecord` is appended to the
-project's audit log, the spec files are re-written, and the project returns to the spec gate —
-run `validate` then `approve-spec` to regenerate graphs, designs, and code.
+On success the versions of the edited workflows are bumped, an `EditRecord` is appended to the
+project's audit log, the spec files are written again, and the project returns to the spec gate.
+Run `validate` and then `approve-spec` to regenerate the graphs, designs and code.
 
-`--dry-run` previews the edit — full parse + interpretation + per-workflow summary — without
-applying or writing anything; re-run without the flag to apply. (The web UI goes further: its
-preview hands the interpreted operations back on confirm, so the apply replays exactly what was
-previewed with no second LLM call.)
+`--dry-run` previews the edit: a full parse, interpretation and summary per workflow, without
+applying or writing anything. Run the command again without the flag to apply. (The web UI goes
+further: its preview hands the interpreted operations back on confirm, so the apply replays
+exactly what was previewed, with no second LLM call.)
 
 | Flag | Default | Description |
 |---|---|---|
-| `--workflow SLUG` | all | Only allow edits touching these workflow slug(s) (repeatable). |
-| `--author NAME` | — | Author recorded in the edit log. |
-| `--spec-dir DIR` | `./specs` | Where the updated spec files are re-written. |
-| `--dry-run` | off | Preview the edit (nothing is applied or saved). |
-| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
+| `--workflow SLUG` | all | Only allow edits that touch these workflow slugs (repeatable). |
+| `--author NAME` | — | The author recorded in the edit log. |
+| `--spec-dir DIR` | `./specs` | Where the updated spec files are written again. |
+| `--dry-run` | off | Preview the edit. Nothing is applied or saved. |
+| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | The same LLM overrides as `compile`. |
 
 #### `approve-spec <project-id>` — compile every workflow through to code
 
@@ -1426,49 +1726,50 @@ previewed with no second LLM call.)
 workflow-compiler approve-spec <project-id> --spec-dir ./specs
 ```
 
-Approves the specs and runs each workflow **independently** through graph building, structural
-review, CVPA, Temporal design, and code generation. The graph gate is automatic: health ≥ the
-configured threshold continues; below it the workflow is left pending (`approve <workflow-id>`
-remains the manual override). Unanswered required questions block a workflow unless you pass
-`--accept-incomplete`; unconfirmed dependencies block approval unless you pass
-`--allow-unconfirmed`. Each completed workflow's runnable Temporal bundle is written under
-`<out-dir>/<project-id>/<slug>/` — `--out-dir` defaults to `./generated`, so repeated runs
-never litter the working directory with loose bundle folders.
+This command approves the specs and runs each workflow **independently** through graph building,
+structural review, CVPA, Temporal design and code generation. The graph gate is automatic: a
+health score at or above the configured threshold continues; below it, the workflow stays
+pending (`approve <workflow-id>` remains the manual override). Unanswered required questions
+block a workflow unless you pass `--accept-incomplete`. Unconfirmed dependencies block approval
+unless you pass `--allow-unconfirmed`. The runnable Temporal bundle of each completed workflow is
+written under `<out-dir>/<project-id>/<slug>/`. `--out-dir` defaults to `./generated`, so
+repeated runs never litter the working directory with loose bundle folders.
 
-For a knowledge-base-grounded project `--change-outputs` chains the post-approval change outputs
-(§8g) once every workflow compiled and unpacks the bundle under
-`<out-dir>/<project-id>/change-outputs/`; `workflow-compiler change-outputs <project-id> [--stage
-all|diagrams|code|tests_doc] [--out-dir] [--provider] [--timeout 400]` re-runs one stage or all
-of them later (exit code 1 when a stage failed; the other stages' outputs are still written).
+For a knowledge-base-grounded project, `--change-outputs` chains the post-approval change outputs
+([§14](#14-post-approval-change-outputs-change_outputs)) once every workflow compiled, and unpacks
+the bundle under `<out-dir>/<project-id>/change-outputs/`.
+`workflow-compiler change-outputs <project-id> [--stage all|diagrams|code|tests_doc] [--out-dir]
+[--provider] [--timeout 400]` runs one stage or all of them again later. The exit code is 1 when a
+stage failed; the outputs of the other stages are still written.
 
-**Every workflow generates as a standalone Temporal workflow** — its own `workflow.py`,
+**Every workflow generates as a standalone Temporal workflow.** It gets its own `workflow.py`,
 `activities.py`, `shared.py`, `worker.py`, `starter.py`, and a `test_stepthrough.py` local
-harness. Confirmed triggers additionally generate a `triggers.py` in the *source* workflow's
-bundle: activities that start the target by workflow-type name on the target's own task queue
-(`id_conflict_policy=USE_EXISTING` keeps retries idempotent; blocking triggers await
-`handle.result()`). The target's bundle is untouched — it always runs independently. Multi-
-workflow projects also get a top-level `contracts.py` (every workflow's typed input) and a
-project `README.md` documenting the trigger topology and task queues.
+harness. Confirmed triggers also generate a `triggers.py` in the *source* workflow's bundle:
+activities that start the target by workflow-type name on the target's own task queue
+(`id_conflict_policy=USE_EXISTING` keeps retries idempotent; blocking triggers wait for
+`handle.result()`). The target's bundle is untouched. It always runs independently.
+Multi-workflow projects also get a top-level `contracts.py` (the typed input of every workflow)
+and a project `README.md` that documents the trigger topology and the task queues.
 
 Every generated workflow exposes **read-only debug queries** (`current_step`,
-`decisions_taken`, `triggers_fired`) — safe in production. Opt into interactive step-through
-with `WORKFLOW_COMPILER_STEPWISE=1`: each top-level step then waits for an `advance` signal.
-The generated `test_stepthrough.py` runs the bundle under a time-skipping test environment
-with the stub activities (triggers mocked) and prints those queries — the quickest way to see
-which branch a conditional actually takes.
+`decisions_taken`, `triggers_fired`). They are safe in production. Set
+`WORKFLOW_COMPILER_STEPWISE=1` for interactive step-through: each top-level step then waits for an
+`advance` signal. The generated `test_stepthrough.py` runs the bundle under a time-skipping test
+environment with the stub activities (triggers mocked) and prints those queries. It is the
+quickest way to see which branch a conditional actually takes.
 
 #### `approve <workflow_id>` — manual override for a below-threshold graph
 
-When a workflow's graph health lands below the auto-approve threshold at `approve-spec`, it is
-left pending. Inspect it (`show`), then approve it manually to produce CVPA + Temporal design +
-code:
+When a workflow's graph health lands below the auto-approve threshold at `approve-spec`, the
+workflow is left pending. Inspect it (`show`), then approve it by hand to produce CVPA, the
+Temporal design and the code.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--reviewer NAME` | — | Reviewer identity recorded on the approval. |
-| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | Same LLM overrides as `compile`. |
+| `--reviewer NAME` | — | The reviewer identity recorded on the approval. |
+| `--provider NAME` / `--model ID` / `--timeout SECONDS` | from `.env` / `120` | The same LLM overrides as `compile`. |
 | `--out PATH` | — | Write the CVPA-colored Mermaid diagram to a file. |
-| `--out-dir DIR` | `./generated` | Root for generated output; the bundle lands in `<out-dir>/<workflow-id>/`. |
+| `--out-dir DIR` | `./generated` | The root for generated output. The bundle lands in `<out-dir>/<workflow-id>/`. |
 
 ```bash
 workflow-compiler approve <workflow_id> --reviewer alice --out workflow.mmd
@@ -1478,177 +1779,195 @@ workflow-compiler approve <workflow_id> --reviewer alice --out workflow.mmd
 
 | Flag | Default | Description |
 |---|---|---|
-| `--reviewer NAME` | — | Reviewer identity. |
+| `--reviewer NAME` | — | The reviewer identity. |
 | `--reason TEXT` | — | Why the graph was rejected (recorded in the report). |
 
 #### `show <workflow_id>` — display a stored workflow (no LLM, no flags)
 
 #### Windows console note
 
-The progress/table output contains Unicode (e.g. `→`). On a legacy `cp1252` console this raises
-`UnicodeEncodeError`. Run with UTF-8 mode: `set PYTHONUTF8=1` (PowerShell: `$env:PYTHONUTF8=1`).
-This is a console-rendering issue only — it does not affect the generated code. Nemotron's
-reasoning models can also be slow; bump `--timeout` (e.g. `300.0`) to avoid
-`ProviderTimeoutError` on a slow request.
+The progress and table output contains Unicode (for example `→`). On an old `cp1252` console
+this raises `UnicodeEncodeError`. Run with UTF-8 mode: `set PYTHONUTF8=1` (PowerShell:
+`$env:PYTHONUTF8=1`). This is a console-rendering problem only. It does not affect the generated
+code. Nemotron's reasoning models can also be slow. Raise `--timeout` (for example `300.0`) to
+avoid `ProviderTimeoutError` on a slow request.
 
-**`kb …` — knowledge bases** (`cli/kb.py`; same file store as the API, no login):
+#### `kb …` and `cr …` — knowledge bases and change requests
+
+These commands live in `cli/kb.py`. They use the same file store as the API, with no login.
 
 | Command | Purpose |
 |---|---|
-| `kb init <zip-or-folder> [--name] [--enrich/--no-enrich] [--provider] [--model] [--id]` | Create + index (progress printed per file). |
-| `cr create <kb-id> <bcr.docx|.md|.txt> [--title] [--provider] [--model]` | Register a change request against a knowledge base (metadata, requirements and impact seeds parsed deterministically). |
-| `cr list` / `cr show <cr-id>` | Change requests and their wizard/artifact state. |
-| `cr draft <cr-id> <impact|epic|stories|tdd> [--auto] [--out FILE]` | Draft one wizard step; `--auto` starts the wizard, drafts the questions, answers each with its first suggested option, then drafts. |
-| `cr approve <cr-id> <step>` / `cr delete <cr-id>` | Approve (advances the wizard), delete. |
-| `cr export <cr-id> <step> [--format md\|docx\|xlsx] [--version N] [--out PATH]` / `cr export <cr-id> --format zip [--out PATH]` | Print/save an artifact — markdown (any version), Word (stories → zip of per-story docs), the affected-test-cases workbook (impact only) — or the whole change request as a zip. Deterministic; unapproved artifacts are labelled DRAFT. |
-| `kb list` / `kb show <kb-id>` | List; stats by type, catalog ids, warnings. |
-| `kb ask <kb-id> "<prompt>" [--budget] [--hops] [--json]` | Print the retrieved packet + sources with line spans. |
-| `kb impact <kb-id> <seed>… [--hops]` | Deterministic impact table. |
-| `kb search <kb-id> "<query>"` / `kb delete <kb-id>` | Anchor candidates; remove. |
+| `kb init <zip-or-folder> [--name] [--enrich/--no-enrich] [--provider] [--model] [--id]` | Create and index a knowledge base. Progress prints per file. |
+| `kb list` / `kb show <kb-id>` | List knowledge bases; show stats by type, catalog ids and warnings. |
+| `kb ask <kb-id> "<prompt>" [--budget] [--hops] [--json]` | Print the retrieved packet and its sources with line spans. |
+| `kb impact <kb-id> <seed>… [--hops]` | Print the deterministic impact table. |
+| `kb search <kb-id> "<query>"` / `kb delete <kb-id>` | Show anchor candidates; remove a knowledge base. |
+| `cr create <kb-id> <bcr.docx\|.md\|.txt> [--title] [--provider] [--model]` | Register a change request against a knowledge base. Metadata, requirements and impact seeds are parsed deterministically. |
+| `cr list` / `cr show <cr-id>` | List change requests; show one with its wizard and artifact state. |
+| `cr draft <cr-id> <impact\|epic\|stories\|tdd> [--auto] [--out FILE]` | Draft one wizard step. `--auto` starts the wizard, drafts the questions, answers each one with its first suggested option, then drafts. |
+| `cr approve <cr-id> <step>` / `cr delete <cr-id>` | Approve a step (the wizard advances); delete a change request. |
+| `cr export <cr-id> <step> [--format md\|docx\|xlsx] [--version N] [--out PATH]` | Print or save one artifact: Markdown (any version), Word (stories → a zip of one document per story), or the affected-test-cases workbook (impact only). Deterministic. Unapproved artifacts are labelled DRAFT. |
+| `cr export <cr-id> --format zip [--out PATH]` | Save the whole change request as a zip. |
 
-### 9.3 HTTP API (`api/app.py`, FastAPI)
+### 15.3 HTTP API (`api/app.py`, FastAPI)
 
-Run it with `python -m uvicorn workflow_compiler.api.app:app --reload` from the virtual environment
-the package is installed in (a bare `uvicorn` resolves through `PATH` and may belong to a different
-environment, which surfaces as `ModuleNotFoundError: No module named 'workflow_compiler'`);
-interactive docs live at `/docs`.
+Run the API with `python -m uvicorn workflow_compiler.api.app:app --reload` from the virtual
+environment where the package is installed. A bare `uvicorn` resolves through `PATH` and may
+belong to a different environment. That shows up as
+`ModuleNotFoundError: No module named 'workflow_compiler'`. Interactive docs live at `/docs`.
 
-**Authentication.** The HTTP surface uses local accounts: register/sign in once and a signed
-HttpOnly session cookie rides every call. Projects created via the API carry an `owner_id`
-(recorded for attribution). By default every signed-in user can see and open every project;
-set `WORKFLOW_COMPILER_PROJECTS_SHARED=false` to restore per-owner isolation, where you see
-only your own projects (plus unowned legacy/CLI ones) and other accounts' projects answer 404.
-`author`/`reviewer` fields default to the signed-in user's display name. Accounts live as JSON
-under the state store (scrypt-hashed passwords, no external services); the CLI talks to the
-compiler directly and needs no login. This protects the HTTP surface only — anyone with
-filesystem access to the state store can read it.
+**Authentication.** The HTTP surface uses local accounts. You register or sign in once, and a
+signed HttpOnly session cookie travels with every call. Projects created through the API carry an
+`owner_id` (recorded for attribution). By default every signed-in user can see and open every
+project. Set `WORKFLOW_COMPILER_PROJECTS_SHARED=false` to restore isolation per owner: you then
+see only your own projects (plus legacy and CLI projects with no owner), and other accounts'
+projects answer 404. The `author` and `reviewer` fields default to the signed-in user's display
+name. Accounts live as JSON under the state store (scrypt-hashed passwords, no external
+services). The CLI talks to the compiler directly and needs no login. This protects the HTTP
+surface only. Anyone with filesystem access to the state store can read it.
 
-| Method | Path             | Body                                  | Purpose                                  |
-|--------|------------------|---------------------------------------|------------------------------------------|
-| POST   | `/auth/register` | `{email, password, display_name?}`    | Create a local account (signs you in).   |
-| POST   | `/auth/login`    | `{email, password}`                   | Sign in (sets the session cookie).       |
-| POST   | `/auth/logout`   | —                                     | Sign out.                                |
-| GET    | `/auth/me`       | —                                     | The signed-in user + preferences (401 when signed out).|
-| PUT    | `/auth/me`       | `{display_name?, preferences?}`       | Update display name and/or preferences (page size, per-user baseline overrides). Omitted fields unchanged. |
-| GET    | `/settings/defaults` | —                                 | Org-wide baseline-hour defaults (so the Settings UI can show defaults + reset). |
+**Auth and settings routes**
 
-Project endpoints (the compile → validate → approve pipeline; spec files travel as
-`spec_markdown: {slug: markdown}`):
+| Method | Path | Body | Purpose |
+|---|---|---|---|
+| POST | `/auth/register` | `{email, password, display_name?}` | Create a local account (signs you in). |
+| POST | `/auth/login` | `{email, password}` | Sign in (sets the session cookie). |
+| POST | `/auth/logout` | — | Sign out. |
+| GET | `/auth/me` | — | The signed-in user and preferences (401 when signed out). |
+| PUT | `/auth/me` | `{display_name?, preferences?}` | Update the display name and/or preferences (page size, per-user baseline overrides). Omitted fields stay unchanged. |
+| GET | `/settings/defaults` | — | The org-wide baseline-hour defaults (so the Settings UI can show defaults and a reset). |
 
-| Method | Path                        | Body                                        | Purpose                                        |
-|--------|-----------------------------|---------------------------------------------|------------------------------------------------|
-| POST   | `/projects/compile`         | `{document_text, persist?, provider?, model?, nickname?, kb_id?, change_request_id?}` | Segment into per-workflow specs (spec gate). `model` picks a local gateway model; `nickname` sets an optional label; `kb_id` grounds every prompt in a knowledge base and adds `changes.md`; `change_request_id` seeds it from the request (implies its KB). |
-| POST   | `/projects/compile-upload`  | multipart `file` + the same form fields          | Parse a `.docx/.pdf/.md/.html/.txt` upload to text, then as `/projects/compile`. |
-| GET    | `/projects`                 | —                                           | List visible projects as summaries (`{projects: [{project_id, nickname, stage, workflow_count, updated_at}]}`, newest first). |
-| GET    | `/projects/{id}`            | —                                           | Load a project + rendered spec files. `ETag: "<version>"`; `project.version` is the CAS token. |
-| PATCH  | `/projects/{id}`            | `{nickname, expected_version?}` (+ `If-Match`) | Set or clear the project nickname (metadata only — no recompile). Returns the summary. 409 when the token is stale. |
-| PUT    | `/projects/{id}/spec`       | `{spec_markdown, expected_version?}` (+ `If-Match`) | Fold edited spec Markdown back in (no LLM); `spec_markdown["__changes__"]` is `changes.md`. Optional compare-and-swap: a stale token → 409 (§7.3). |
-| POST   | `/projects/{id}/edit`       | `{edit_document, workflows?, author?, resolved?}` | Apply an edit-request document; re-arms the gate. Pass `resolved` from a preview to replay it with no LLM call (stale preview → 409). |
-| POST   | `/projects/{id}/edit/preview` | `{edit_document, workflows?}`             | Dry-run the edit: would-be summary, post-edit spec Markdown, and the `resolved` handoff blob. Persists nothing. |
-| POST   | `/projects/{id}/validate`   | `{spec_markdown?}`                          | Ingest edits + run the spec validator passes (synchronous). |
-| POST   | `/projects/{id}/approve`    | `{workflows?, reviewer?, spec_markdown?, accept_incomplete?, allow_unconfirmed_references?}` | Approve specs, compile every workflow (synchronous). |
+**Project routes** (the compile → validate → approve pipeline). Spec files travel as
+`spec_markdown: {slug: markdown}`.
 
-**Conversational spec resolution.** The alternative to hand-editing spec Markdown: the
-validator's **blocking and warning** findings (never INFO) plus each spec's unresolved open
-questions become plain-language questions, and answers are prose. Related findings may be
-**grouped** into one question; a vague answer earns exactly **one** clarifying follow-up. Each
-answer is applied **immediately** — one patch set and one patch-version bump per answered
-question — through the same human-authority applier the edit path uses, so additions need no
-document grounding and are marked `human_provided`. An answer that cannot be mapped to a spec
-change is **parked** as a new open question rather than discarded (the edit path aborts; this
-one never does). The agenda is a snapshot taken at start, so a session always terminates.
-Applied answers return the project to `spec_drafted`, and closing the session drops the
-findings for changed specs — validation must run again before approval.
+| Method | Path | Body | Purpose |
+|---|---|---|---|
+| POST | `/projects/compile` | `{document_text, persist?, provider?, model?, nickname?, kb_id?, change_request_id?}` | Segment into specs per workflow (the spec gate). `model` picks a local gateway model. `nickname` sets an optional label. `kb_id` grounds every prompt in a knowledge base and adds `changes.md`. `change_request_id` seeds it from the request (implies its KB). |
+| POST | `/projects/compile-upload` | multipart `file` plus the same form fields | Parse a `.docx/.pdf/.md/.html/.txt` upload to text, then the same as `/projects/compile`. |
+| GET | `/projects` | — | List visible projects as summaries (`{projects: [{project_id, nickname, stage, workflow_count, updated_at}]}`, newest first). |
+| GET | `/projects/{id}` | — | Load a project and its rendered spec files. `ETag: "<version>"`; `project.version` is the CAS token. |
+| PATCH | `/projects/{id}` | `{nickname, expected_version?}` (+ `If-Match`) | Set or clear the project nickname (metadata only, no recompile). Returns the summary. 409 when the token is stale. |
+| PUT | `/projects/{id}/spec` | `{spec_markdown, expected_version?}` (+ `If-Match`) | Fold edited spec Markdown back in (no LLM). `spec_markdown["__changes__"]` is `changes.md`. Optional compare-and-swap: a stale token gives 409 ([§7.3](#73-state-storage)). |
+| POST | `/projects/{id}/edit` | `{edit_document, workflows?, author?, resolved?}` | Apply an edit-request document and re-arm the gate. Pass `resolved` from a preview to replay it with no LLM call (a stale preview gives 409). |
+| POST | `/projects/{id}/edit/preview` | `{edit_document, workflows?}` | Dry-run the edit: the would-be summary, the post-edit spec Markdown, and the `resolved` handoff blob. Saves nothing. |
+| POST | `/projects/{id}/validate` | `{spec_markdown?}` | Ingest edits and run the spec validator passes (synchronous). |
+| POST | `/projects/{id}/approve` | `{workflows?, reviewer?, spec_markdown?, accept_incomplete?, allow_unconfirmed_references?}` | Approve the specs and compile every workflow (synchronous). |
+| GET | `/metrics/summary` | — | Total time saved across your projects (measured pipeline seconds against the configurable `baseline_hours` human-team estimates). |
 
-| Method | Path                          | Body        | Purpose                                    |
-|--------|-------------------------------|-------------|--------------------------------------------|
-| GET    | `/projects/{id}/dialogue`     | —           | The open session (or `session: null`).      |
-| POST   | `/projects/{id}/dialogue`     | —           | Open a session. 400 when there is nothing to resolve. Replaces any existing session. |
-| POST   | `/projects/{id}/dialogue/answer` | `{answer}` | Answer the current question in prose. Applies patches, or asks a follow-up, or parks. |
-| POST   | `/projects/{id}/dialogue/skip` | —          | Pass on the current question; the spec is untouched. |
-| DELETE | `/projects/{id}/dialogue`     | —           | Close the session. Answers already applied stay applied. |
+**Conversational spec resolution.** This is the alternative to hand-editing the spec Markdown.
+The validator's **blocking and warning** findings (never INFO), plus each spec's unresolved open
+questions, become plain-language questions. The answers are prose. Related findings may be
+**grouped** into one question. A vague answer gets exactly **one** clarifying follow-up. Each
+answer is applied **at once**: one patch set and one patch-version bump per answered question,
+through the same human-authority applier that the edit path uses. So additions need no document
+grounding, and are marked `human_provided`. An answer that cannot be mapped to a spec change is
+**parked** as a new open question, not discarded (the edit path aborts; this path never does). The
+agenda is a snapshot taken at the start, so a session always ends. Applied answers return the
+project to `spec_drafted`. Closing the session drops the findings for the changed specs, so
+validation must run again before approval.
 
-Every response carries `prompt` — the exact text to show the user, which is the pending
-clarifying follow-up when one is open and the question otherwise — plus `changes` /
-`parked_as` describing what the last answer did, and the refreshed `spec_markdown`.
-| GET    | `/metrics/summary`          | —                                           | Total time saved across your projects (measured pipeline seconds vs. the configurable `baseline_hours` human-team estimates). |
+| Method | Path | Body | Purpose |
+|---|---|---|---|
+| GET | `/projects/{id}/dialogue` | — | The open session (or `session: null`). |
+| POST | `/projects/{id}/dialogue` | — | Open a session. 400 when there is nothing to resolve. Replaces any existing session. |
+| POST | `/projects/{id}/dialogue/answer` | `{answer}` | Answer the current question in prose. Applies patches, or asks a follow-up, or parks. |
+| POST | `/projects/{id}/dialogue/skip` | — | Pass on the current question. The spec is untouched. |
+| DELETE | `/projects/{id}/dialogue` | — | Close the session. Answers already applied stay applied. |
 
-Validate and approve can also run as **cancelable background runs** that keep going after
-the user navigates away (the web UI uses these). A run is an in-process task; **cancelling
-never persists a partial result**, so the project is left exactly as it was. At most one run
-per project may be in flight (a second start answers `409`), but any number of *different*
-projects may run at once. Runs live in memory — a server restart drops them (nothing was
-persisted, so the project simply stays in its pre-run state).
+Every response carries `prompt`: the exact text to show the user. It is the pending clarifying
+follow-up when one is open, and the question otherwise. The response also carries `changes` /
+`parked_as`, which describe what the last answer did, and the refreshed `spec_markdown`.
 
-| Method | Path                        | Body / Params                               | Purpose                                          |
-|--------|-----------------------------|---------------------------------------------|--------------------------------------------------|
-| POST   | `/projects/{id}/jobs`       | `{kind: "validate"\|"approve", spec_markdown?, …approve knobs}` | Start a background run; returns `202` + the run descriptor immediately. |
-| GET    | `/jobs`                     | `?project_id=` (optional)                   | List the caller's runs, newest first (all users' when `projects_shared`). |
-| GET    | `/jobs/{job_id}`            | —                                           | One run's status; the finished project is embedded when `status == "succeeded"`. |
-| POST   | `/jobs/{job_id}/cancel`     | —                                           | Cancel a run, leaving the project untouched (no-op once terminal). |
+**Background runs.** Validate and approve can also run as **cancelable background runs** that
+continue after the user navigates away (the web UI uses these). A run is an in-process task.
+**Cancelling never saves a partial result**, so the project stays exactly as it was. At most one
+run per project may be in flight (a second start answers `409`), but any number of *different*
+projects may run at once. Runs live in memory. A server restart drops them. Nothing was saved, so
+the project simply stays in its pre-run state.
 
-`GET /jobs` also accepts `?scope_id=` (alias of `project_id`) and `?scope_kind=project|knowledge_base`;
-every job carries `scope_id`, `scope_kind` and, for long runs, `progress {message, done, total}`.
+| Method | Path | Body / Params | Purpose |
+|---|---|---|---|
+| POST | `/projects/{id}/jobs` | `{kind: "validate"\|"approve", spec_markdown?, …approve knobs}` | Start a background run. Returns `202` and the run descriptor at once. |
+| GET | `/jobs` | `?project_id=` (optional) | List the caller's runs, newest first (all users' runs when `projects_shared`). |
+| GET | `/jobs/{job_id}` | — | The status of one run. The finished project is embedded when `status == "succeeded"`. |
+| POST | `/jobs/{job_id}/cancel` | — | Cancel a run and leave the project untouched (a no-op once the run is terminal). |
 
-Knowledge bases (§8c). Uploading a corpus answers `202` with the knowledge base **and** its
-`kb_ingest` job; poll the job or the KB until `status == "ready"`. Same visibility rule as projects.
+`GET /jobs` also accepts `?scope_id=` (an alias of `project_id`) and
+`?scope_kind=project|knowledge_base`. Every job carries `scope_id`, `scope_kind` and, for long
+runs, `progress {message, done, total}`.
 
-| Method | Path                                   | Body / Params                                              | Purpose |
-|--------|----------------------------------------|------------------------------------------------------------|---------|
-| POST   | `/knowledge-bases`                     | multipart `file` (zip), `name?`, `enrich?`, `provider?`, `model?` | Extract the corpus (400 on a bad/unsafe zip) and start indexing. |
-| GET    | `/knowledge-bases`                     | —                                                          | List knowledge bases (stats, catalog, status). |
-| GET    | `/knowledge-bases/{id}`                | —                                                          | One knowledge base (+ the running job, if any); `ETag`/`version` (CAS token). |
-| DELETE | `/knowledge-bases/{id}`                | —                                                          | Remove record, corpus and graph (cancels a running ingest). |
-| POST   | `/knowledge-bases/{id}/reindex`        | `{enrich?, provider?, model?}`                             | Rebuild the graph as a job (enrichment cache reused). |
-| POST   | `/knowledge-bases/{id}/retrieve`       | `{prompt, budget?, max_hops?}`                             | Grounded context packet (`rendered`, `sections`, `files`, `coverage`). |
-| GET    | `/knowledge-bases/{id}/impact`         | `?seed=…` (repeatable) `&max_hops=`                        | Deterministic impact table. |
-| GET    | `/knowledge-bases/{id}/search`         | `?q=…&k=`                                                  | BM25 anchor candidates. |
-| GET    | `/knowledge-bases/{id}/files`          | `?path=` (optional)                                        | Corpus file list, or one file as text. |
-| GET    | `/knowledge-bases/{id}/graph/summary`  | `?top=`                                                    | Counts by node/edge type + best-connected nodes. |
-| POST   | `/change-requests`                     | multipart `kb_id`, `file` (docx/md/txt) or `text`, `title?`, `provider?`, `model?` | Register a change request (201; no LLM call). |
-| GET    | `/change-requests`                     | —                                                          | List change requests (summary rows). |
-| GET    | `/change-requests/{id}` (`/wizard`)    | —                                                          | The change request: wizard steps/questions/turns, artifacts, ids, running job; `ETag`/`version` (CAS token). |
-| DELETE | `/change-requests/{id}`                | —                                                          | Delete (cancels a running job). |
-| POST   | `/change-requests/{id}/wizard/start`   | `{provider?, model?}`                                      | Reserve ids + impact traversal (sync), then draft the current step's questions as a `cr_questions` job (202; idempotent). |
-| POST   | `/change-requests/{id}/wizard/answer`  | `{answer, option?}`                                        | Answer the current question (one short LLM call; may return one follow-up). |
-| POST   | `/change-requests/{id}/wizard/skip`    | —                                                          | Skip the current question. |
-| POST   | `/change-requests/{id}/wizard/draft`   | `{step?}`                                                  | Draft the step's artifact as a `cr_draft` job (202; pending questions are skipped). |
-| POST   | `/change-requests/{id}/wizard/revise`  | `{step, message}`                                          | Chat revision of a drafted artifact as a `cr_revise` job (202). |
-| GET    | `/change-requests/{id}/artifacts/{kind}` | `?version=`                                              | Artifact markdown (latest or a version) + history + sources + coverage. |
-| PUT    | `/change-requests/{id}/artifacts/{kind}` | `{markdown, note?, expected_version?}` (+ `If-Match`)    | Human edit → new `human_edit` version (400 if the structure is lost; 409 when the CAS token is stale). |
-| POST   | `/change-requests/{id}/artifacts/{kind}/approve` | —                                                | Approve; the cursor advances and the next step's questions job starts. |
-| GET    | `/change-requests/{id}/artifacts/{kind}/export` | `?format=docx\|md\|xlsx`                          | Download the artifact as Word (stories: zip of per-story docs) / markdown / TC preview workbook (impact only). Deterministic; `Content-Disposition` names the file; DRAFT-labelled until approved. |
-| GET    | `/change-requests/{id}/export.zip`     | —                                                          | Every artifact as Word/Excel + `markdown/*.md` + `MANIFEST.txt`. |
-| POST   | `/change-requests/{id}/send-to-workflow` | `{provider?, model?, nickname?}`                       | Compile the **approved** TDD into a KB-grounded workflow project (`kb_id` + `change_request_id` set, `changes.md` seeded), append it to `project_ids`, return the `ProjectResponse` (201; 409 while the TDD is unapproved). Synchronous; provider defaults to the wizard's, else cloud Nemotron. |
-| GET    | `/projects/{id}/change-outputs`        | —                                                          | The stored post-approval change outputs (§8g: diagrams / code diff / test docs), the running `change_outputs` job if any, and `available` (grounded + compiled). |
-| POST   | `/projects/{id}/change-outputs/regenerate` | `{stage: all\|diagrams\|code\|tests_doc, provider?, model?}` | (Re)run the stage(s) as a `change_outputs` job (202; 409 while a run is in flight or the project is not grounded/compiled; 422 unknown stage). Cloud Nemotron by default. The approve job starts this automatically for grounded projects. |
-| GET    | `/projects/{id}/change-outputs/export.zip` | —                                                      | `src/` + `tests/` (updated code), `docs/diagrams/`, `docs/test-cases/` (TC matrix `.xlsx`, test-plan addendum `.docx`/`.md`), `changes.patch`, `CHANGES.md` (404 until generated). |
-| GET    | `/projects/{id}/change-outputs/files/{name}` | —                                                    | One rendered document: `test-cases.xlsx`, `test-plan-addendum.docx`, `test-plan-addendum.md`, `system-flow-diagram.md`, `changes.patch`. |
+**Knowledge-base routes** ([§10](#10-knowledge-bases-kg)). Uploading a corpus answers `202` with
+the knowledge base **and** its `kb_ingest` job. Poll the job or the KB until `status == "ready"`.
+The same visibility rule as projects applies.
 
-Project responses include `time_saved`: each pipeline step's measured wall-clock seconds
-(persisted per project as `stage_timings`) compared against configurable human-team estimates
-(`WORKFLOW_COMPILER_BASELINE_HOURS`, a JSON object of hours per step category). The baselines
-are **estimates, not measurements** — tune them to your organization. Each signed-in user can
-also override the baselines for their own view from the **Settings** page (`PUT /auth/me`
-`preferences.baseline_hours`); their overrides take precedence over the org-wide config default,
-and `time_saved`/`/metrics/summary` recompute live with the caller's values.
+| Method | Path | Body / Params | Purpose |
+|---|---|---|---|
+| POST | `/knowledge-bases` | multipart `file` (zip), `name?`, `enrich?`, `provider?`, `model?` | Extract the corpus (400 on a bad or unsafe zip) and start indexing. |
+| GET | `/knowledge-bases` | — | List knowledge bases (stats, catalog, status). |
+| GET | `/knowledge-bases/{id}` | — | One knowledge base (plus the running job, if any). `ETag` / `version` (the CAS token). |
+| DELETE | `/knowledge-bases/{id}` | — | Remove the record, the corpus and the graph (cancels a running ingest). |
+| POST | `/knowledge-bases/{id}/reindex` | `{enrich?, provider?, model?}` | Rebuild the graph as a job (the enrichment cache is reused). |
+| POST | `/knowledge-bases/{id}/retrieve` | `{prompt, budget?, max_hops?}` | A grounded context packet (`rendered`, `sections`, `files`, `coverage`). |
+| GET | `/knowledge-bases/{id}/impact` | `?seed=…` (repeatable) `&max_hops=` | The deterministic impact table. |
+| GET | `/knowledge-bases/{id}/search` | `?q=…&k=` | BM25 anchor candidates. |
+| GET | `/knowledge-bases/{id}/files` | `?path=` (optional) | The corpus file list, or one file as text. |
+| GET | `/knowledge-bases/{id}/graph/summary` | `?top=` | Counts by node and edge type, plus the best-connected nodes. |
 
-Per-workflow endpoints (viewing plus the manual override for below-threshold graphs):
+**Change-request routes** ([§11](#11-change-requests-change)).
 
-| Method | Path                | Body / Params                              | Purpose                                   |
-|--------|---------------------|--------------------------------------------|-------------------------------------------|
-| POST   | `/approve`          | `{workflow_id, reviewer?}`                 | Approve → run CVPA + Temporal.            |
-| POST   | `/reject`           | `{workflow_id, reviewer?, reason?}`        | Reject a graph.                           |
-| GET    | `/workflow/{id}`    | —                                          | Load a stored workflow state.             |
-| GET    | `/workflows`        | —                                          | List stored workflow ids.                 |
-| GET    | `/providers/local/models` | —                                    | List models the local eGPU gateway exposes (for the picker). |
-| GET    | `/health`           | —                                          | Liveness probe.                           |
+| Method | Path | Body / Params | Purpose |
+|---|---|---|---|
+| POST | `/change-requests` | multipart `kb_id`, `file` (docx/md/txt) or `text`, `title?`, `provider?`, `model?` | Register a change request (201; no LLM call). |
+| GET | `/change-requests` | — | List change requests (summary rows). |
+| GET | `/change-requests/{id}` (`/wizard`) | — | The change request: wizard steps, questions and turns, artifacts, ids, the running job. `ETag` / `version` (the CAS token). |
+| DELETE | `/change-requests/{id}` | — | Delete (cancels a running job). |
+| POST | `/change-requests/{id}/wizard/start` | `{provider?, model?}` | Reserve ids and run the impact traversal (sync), then draft the current step's questions as a `cr_questions` job (202; idempotent). |
+| POST | `/change-requests/{id}/wizard/answer` | `{answer, option?}` | Answer the current question (one short LLM call; may return one follow-up). |
+| POST | `/change-requests/{id}/wizard/skip` | — | Skip the current question. |
+| POST | `/change-requests/{id}/wizard/draft` | `{step?}` | Draft the step's artifact as a `cr_draft` job (202; pending questions are skipped). |
+| POST | `/change-requests/{id}/wizard/revise` | `{step, message}` | A chat revision of a drafted artifact, as a `cr_revise` job (202). |
+| GET | `/change-requests/{id}/artifacts/{kind}` | `?version=` | The artifact Markdown (latest or one version), plus history, sources and coverage. |
+| PUT | `/change-requests/{id}/artifacts/{kind}` | `{markdown, note?, expected_version?}` (+ `If-Match`) | A human edit → a new `human_edit` version (400 when the structure is lost; 409 when the CAS token is stale). |
+| POST | `/change-requests/{id}/artifacts/{kind}/approve` | — | Approve. The cursor advances and the next step's questions job starts. |
+| GET | `/change-requests/{id}/artifacts/{kind}/export` | `?format=docx\|md\|xlsx` | Download the artifact as Word (stories: a zip of one document per story), Markdown, or the TC preview workbook (impact only). Deterministic. `Content-Disposition` names the file. Labelled DRAFT until approved. |
+| GET | `/change-requests/{id}/export.zip` | — | Every artifact as Word and Excel, plus `markdown/*.md` and `MANIFEST.txt`. |
+| POST | `/change-requests/{id}/send-to-workflow` | `{provider?, model?, nickname?}` | Compile the **approved** TDD into a KB-grounded workflow project (`kb_id` and `change_request_id` set, `changes.md` seeded), append it to `project_ids`, and return the `ProjectResponse` (201; 409 while the TDD is unapproved). Synchronous. The provider defaults to the wizard's, else cloud Nemotron. |
 
-The compiler is provided once via `get_compiler` (a cached `from_settings()`), and tests override it
-with a mock-backed compiler. A small `_guard` helper maps domain exceptions to HTTP codes:
+**Change-output routes** ([§14](#14-post-approval-change-outputs-change_outputs)).
+
+| Method | Path | Body / Params | Purpose |
+|---|---|---|---|
+| GET | `/projects/{id}/change-outputs` | — | The stored post-approval change outputs (diagrams, code diff, test docs), the running `change_outputs` job if any, and `available` (grounded and compiled). |
+| POST | `/projects/{id}/change-outputs/regenerate` | `{stage: all\|diagrams\|code\|tests_doc, provider?, model?}` | Run the stage(s) again as a `change_outputs` job (202; 409 while a run is in flight or the project is not grounded and compiled; 422 for an unknown stage). Cloud Nemotron by default. The approve job starts this automatically for grounded projects. |
+| GET | `/projects/{id}/change-outputs/export.zip` | — | `src/` and `tests/` (the updated code), `docs/diagrams/`, `docs/test-cases/` (the TC matrix `.xlsx`, the test-plan addendum `.docx` / `.md`), `changes.patch`, `CHANGES.md` (404 until generated). |
+| GET | `/projects/{id}/change-outputs/files/{name}` | — | One rendered document: `test-cases.xlsx`, `test-plan-addendum.docx`, `test-plan-addendum.md`, `system-flow-diagram.md`, `changes.patch`. |
+
+**Time saved in responses.** Project responses include `time_saved`: each pipeline step's
+measured wall-clock seconds (saved per project as `stage_timings`) compared against configurable
+human-team estimates (`WORKFLOW_COMPILER_BASELINE_HOURS`, a JSON object of hours per step
+category). The baselines are **estimates, not measurements**. Tune them to your organization.
+Each signed-in user can also override the baselines for their own view from the **Settings** page
+(`PUT /auth/me` with `preferences.baseline_hours`). Their overrides take precedence over the
+org-wide config default, and `time_saved` and `/metrics/summary` recompute live with the caller's
+values.
+
+**Per-workflow routes** (viewing, plus the manual override for graphs below the threshold).
+
+| Method | Path | Body / Params | Purpose |
+|---|---|---|---|
+| POST | `/approve` | `{workflow_id, reviewer?}` | Approve → run CVPA and Temporal. |
+| POST | `/reject` | `{workflow_id, reviewer?, reason?}` | Reject a graph. |
+| GET | `/workflow/{id}` | — | Load a stored workflow state. |
+| GET | `/workflows` | — | List the stored workflow ids. |
+| GET | `/providers/local/models` | — | List the models that the local eGPU gateway exposes (for the picker). |
+| GET | `/health` | — | Liveness probe. |
+
+`get_compiler` provides the compiler once (a cached `from_settings()`). Tests override it with a
+mock-backed compiler. A small `_guard` helper maps domain exceptions to HTTP codes:
 `StateNotFoundError → 404`, `ApprovalError → 409`, `CompilationError → 400`.
 
-Example:
+An example call that compiles one sentence of prose:
 
 ```bash
 curl -s localhost:8000/projects/compile \
@@ -1658,92 +1977,103 @@ curl -s localhost:8000/projects/compile \
 
 ---
 
-## 10. A fully worked example (follow the data)
+## 16. A worked example
 
-Input (`examples/order_workflow.md`, abridged): *"When a customer submits an order, validate the
-payment. If valid, process and ship it. If declined, cancel and notify. Retry shipment up to 3
-times; on final failure, release inventory."*
+Follow the data through one run.
 
-1. **Parse** → `text` (plus format=markdown, char count).
+**Input** (`examples/order_workflow.md`, shortened): *"When a customer submits an order, validate
+the payment. If valid, process and ship it. If declined, cancel and notify. Retry shipment up to
+3 times; on final failure, release inventory."*
+
+1. **Parse** → `text` (plus format = markdown and a character count).
 2. **Discovery** → metadata: name "Order Fulfillment", actors [Customer, Warehouse], systems
    [Payment Gateway, OMS], triggers [Order submitted], end states [shipped, cancelled].
-3. **Facts** → activities [Validate payment, Process order, Ship order, Notify customer], decisions
-   [Is payment valid?], exceptions [Payment declined], retries [Retry shipment], compensation
-   [Release inventory].
+3. **Facts** → activities [Validate payment, Process order, Ship order, Notify customer],
+   decisions [Is payment valid?], exceptions [Payment declined], retries [Retry shipment],
+   compensation [Release inventory].
 4. **Graph (deterministic)** → nodes `start, activity_1..4, decision_1, exception_1,
-   compensation_1, end`; spine `start→activity_1→…→end`; `decision_1` with `yes`/`no` edges;
-   dotted error edge to `exception_1`; retry back-edge; exception→compensation→end. Plus a Mermaid
-   diagram. (A real run produced a 7-node graph at **health 1.0**.)
-5. **Review** → no errors; `health_score = 1.0`; `approval_status = PENDING`. **Saved to disk;
-   pipeline stops.** You get a `workflow_id`.
+   compensation_1, end`; the spine `start→activity_1→…→end`; `decision_1` with `yes` / `no`
+   edges; a dotted error edge to `exception_1`; a retry back-edge; exception → compensation → end.
+   Plus a Mermaid diagram. (A real run produced a 7-node graph at **health 1.0**.)
+5. **Review** → no errors; `health_score = 1.0`; `approval_status = PENDING`. **Saved to disk.
+   The pipeline stops.** You get a `workflow_id`.
 6. **Approve** (`approve_graph(id)`):
-   - **CVPA** → every node labeled: `start`→Capture, `decision_1`→Validate, `activity_*`→Process,
-     `end`→Activate; nodes the model skipped are filled by the type-based fallback. The diagram is
-     **re-rendered with colors** (blue/amber/green/purple).
-   - **Temporal design** → workflow `OrderFulfillment`, activities (ValidatePayment, ProcessOrder,
-     ShipOrder…), a `cancel` signal, a `ReleaseInventory` compensation that `compensates`
-     ProcessOrder, a default retry policy, and a plan IR ordering the activity calls with
-     `ValidatePayment`'s result bound into `ProcessOrder`'s input.
+   - **CVPA** → every node gets a label: `start` → Capture, `decision_1` → Validate,
+     `activity_*` → Process, `end` → Activate. Nodes the model skipped are filled by the
+     type-based fallback. The diagram is **rendered again with colors** (blue / amber / green /
+     purple).
+   - **Temporal design** → workflow `OrderFulfillment`; activities (ValidatePayment, ProcessOrder,
+     ShipOrder, …); a `cancel` signal; a `ReleaseInventory` compensation that `compensates`
+     ProcessOrder; a default retry policy; and a plan IR that orders the activity calls, with the
+     result of `ValidatePayment` bound into the input of `ProcessOrder`.
    - **Temporal code (deterministic)** → a `temporal-order-fulfillment` package: `shared.py`,
-     `activities.py` (stubs), `workflow.py` (the run body awaits each activity in plan order,
-     registers `ReleaseInventory` for saga rollback, fires it in reverse on failure), `worker.py`,
-     `starter.py`, `README.md`. With `--out-dir gen` these are written under
+     `activities.py` (stubs), `workflow.py` (the run body waits for each activity in plan order,
+     registers `ReleaseInventory` for saga rollback, and fires it in reverse on failure),
+     `worker.py`, `starter.py`, `README.md`. With `--out-dir gen` these are written under
      `gen/temporal_order_fulfillment/`.
    - `stage = CODE_GENERATED → COMPLETED`, saved.
 
-If instead you **reject**, `approval_status = REJECTED`, the reason is recorded, and
-CVPA/Temporal/code generation never run.
+If you **reject** instead, `approval_status = REJECTED`, the reason is recorded, and CVPA,
+Temporal design and code generation never run.
 
 ---
 
-## 11. Testing strategy
+## 17. Testing strategy
 
-- **Unit tests** per component (models, ingestion, LLM layer with `httpx.MockTransport`, prompts,
-  each agent, graph builder/reviewer/mermaid, GraphEditor, state stores).
+- **Unit tests** for each component: models, ingestion, the LLM layer (with
+  `httpx.MockTransport`), prompts, each agent, the graph builder, reviewer and Mermaid renderer,
+  GraphEditor, and the state stores.
 - **Integration tests** (`tests/test_integration.py`) run the **whole pipeline** against a
-  `MockProvider` + `InMemoryStateStore`: gated path, auto-approve path, reject-halts, disk
-  persistence + reload across two compiler instances, GraphEditor round-trip, and CVPA exactly-once
-  coverage.
-- **API tests** drive every endpoint with a mock-backed compiler via `dependency_overrides`.
-- **Relational extraction tests** (`tests/test_relational_structure.py`) cover the referential-
-  integrity guard (dangling ids dropped, entity-id transition leaks dropped) and the semantic wiring
-  (relations attach to the right nodes, parallel groups become gateways, uncompensated exceptions
-  terminate).
-- **Temporal codegen tests** (`tests/test_temporal_codegen.py`) assert the generator renders the
-  expected six-file bundle, threads step outputs into later inputs, emits saga compensation, and only
-  imports `asyncio` when a parallel step exists.
-- **Temporal IR runtime test** (`tests/test_temporal_ir_runtime.py`) materializes a generated bundle
-  to disk and **runs it under a Temporal `WorkflowEnvironment`** (time-skipping, flat imports) to
-  prove the emitted code is actually executable — the ultimate guard against codegen hallucination.
+  `MockProvider` and an `InMemoryStateStore`: the gated path, the auto-approve path, reject halts,
+  disk persistence and reload across two compiler instances, a GraphEditor round trip, and CVPA
+  exactly-once coverage.
+- **API tests** drive every endpoint with a mock-backed compiler through `dependency_overrides`.
+- **Relational extraction tests** (`tests/test_relational_structure.py`) cover the
+  referential-integrity guard (dangling ids dropped, entity-id transition leaks dropped) and the
+  semantic wiring (relations attach to the correct nodes, parallel groups become gateways,
+  exceptions with no compensation terminate).
+- **Temporal codegen tests** (`tests/test_temporal_codegen.py`) assert that the generator renders
+  the expected six-file bundle, threads step outputs into later inputs, emits saga compensation,
+  and imports `asyncio` only when a parallel step exists.
+- **Temporal IR runtime test** (`tests/test_temporal_ir_runtime.py`) writes a generated bundle to
+  disk and **runs it under a Temporal `WorkflowEnvironment`** (time-skipping, flat imports). This
+  proves that the emitted code actually runs. It is the final guard against codegen
+  hallucination.
 - **Review-pipeline tests** (`tests/test_review_pipeline.py`) exercise the deterministic patch
-  appliers (grounded `add`, duplicate/ungrounded drops, `merge` repointing references, dangling
-  relations nulled by `validated()`), the end-to-end `ReviewPipelineAgent` (generate + three passes,
-  and idempotent settle to `no_change`), and the compiler's **review → plain** precedence.
-- No network is required for the suite. Run `pytest` and `ruff check src tests`.
+  appliers (grounded `add`, duplicate and ungrounded drops, `merge` that re-points references,
+  dangling relations made null by `validated()`), the end-to-end `ReviewPipelineAgent` (generate
+  plus three passes, and the idempotent settle to `no_change`), and the compiler's
+  **review → plain** precedence.
+- The suite needs no network. Run `pytest` and `ruff check src tests`.
 
-Because the LLM is hidden behind `BaseLLMProvider`, the `MockProvider` returns *queued* structured
-responses in order — e.g. `[discovery, facts, cvpa, temporal]` — letting tests drive the exact path
-deterministically. Note that with the **review pipeline on (the default)** each reviewed stage also
-consumes three `ReviewResult` responses, so the exact-queue end-to-end suites (integration, API,
-compiler) construct the compiler with `review=ReviewConfig(enabled=False)`; review behavior is
-covered separately in `tests/test_review_pipeline.py`.
+Because the LLM sits behind `BaseLLMProvider`, the `MockProvider` returns *queued* structured
+responses in order, for example `[discovery, facts, cvpa, temporal]`. So tests can drive the
+exact path deterministically. Note: with the **review pipeline on (the default)**, each reviewed
+stage also consumes three `ReviewResult` responses. So the end-to-end suites that use an exact
+queue (integration, API, compiler) construct the compiler with
+`review=ReviewConfig(enabled=False)`. `tests/test_review_pipeline.py` covers the review behavior
+on its own.
 
 ---
 
-## 12. How to extend it
+## 18. How to extend the system
 
-- **Add an LLM vendor:** subclass `OpenAICompatibleProvider` (or `HttpChatProvider` for a different
-  wire format), then `ProviderFactory().register("myvendor", MyProvider)`. Nothing else changes.
+- **Add an LLM vendor:** subclass `OpenAICompatibleProvider` (or `HttpChatProvider` for a
+  different wire format), then call `ProviderFactory().register("myvendor", MyProvider)`. Nothing
+  else changes.
 - **Add a document format:** implement `BaseDocumentParser` and register it with
   `DocumentParserFactory`.
-- **Swap persistence:** implement `StateStore` (e.g. SQLite/S3) and pass it to the compiler.
-- **Change a prompt:** edit the markdown in `prompts/templates/` — no code change.
+- **Swap the persistence:** implement `StateStore` (for example SQLite or S3) and pass it to the
+  compiler.
+- **Change a prompt:** edit the Markdown in `prompts/templates/`. No code change is needed.
 - **Add a pipeline stage:** write a `BaseAgent` subclass and add it to `agents` or
   `post_approval_agents`.
 
 ---
 
-## 13. File map (where everything lives)
+## 19. File map
+
+Where everything lives:
 
 ```
 src/workflow_compiler/
@@ -1826,48 +2156,71 @@ tests/                 Unit + integration + API tests (incl. test_temporal_codeg
                        test_temporal_ir_runtime.py, test_relational_structure.py)
 ```
 
+The change-pipeline modules (`kg/`, `change/`, `docs_export/`, `change_outputs/`,
+`storage/change_store.py`, `storage/ids.py`, `execution/bundles.py`, `cli/kb.py`) are described
+in [§10](#10-knowledge-bases-kg) to [§14](#14-post-approval-change-outputs-change_outputs) and in
+[§7.3](#73-state-storage).
+
 ---
 
-## 14. Gotchas & "why is it like that?"
+## 20. Gotchas and "why is it like that?"
 
-- **`end` in Mermaid** is reserved and silently breaks diagrams; node ids that collide are renamed
-  (`end` → `end_node`). Edge labels must be unquoted. Both are handled automatically.
-- **The graph builder never calls the LLM** — by design, for determinism and testability. If a graph
-  looks wrong, the fix is in the *facts* or the *builder rules*, not a prompt. Note the distinction:
-  *wrong nodes* (missing/extra entities) is an extraction problem; *wrong wiring* (edges to the wrong
-  place) means either the relational `structure` was absent (so the positional fallback guessed) or
-  the LLM linked the wrong ids — the referential-integrity validator only drops links to *undeclared*
-  ids, it can't catch a link to the wrong *declared* id.
-- **CVPA always covers every node** even if the LLM is incomplete, thanks to the type-based fallback
-  — so the "exactly one phase per node" rule can never be violated downstream.
-- **The LLM emits a design, never code; a deterministic generator emits the code.** The Temporal
-  *design* stage (Stage 6) is specification-only — a test asserts the design models have no
-  `code`/`body`/`implementation` field. The runnable Temporal Python is produced separately by the
-  no-LLM generator (Stage 7), so the generated code is a reproducible function of a reviewed design,
-  not a model hallucination.
-- **Generated code uses flat, absolute imports and is run directly** (`python worker.py` from inside
-  the package), matching the Temporal Python docs — *not* `from .x import` relative imports or
-  `python -m package.worker`, both of which were earlier hallucinations that did not run. See
-  `TEMPORAL_CODEGEN_FINDINGS.md`.
-- **The risky part of codegen is emitted in Python, not Jinja.** The `@workflow.run` body (data
-  threading, saga rollback, `asyncio.gather`, branches) lives in `generator.py` where it is
-  unit-tested and even run under a real `WorkflowEnvironment`; templates only carry boilerplate.
+- **`end` in Mermaid** is a reserved word. It silently breaks diagrams. Node ids that collide are
+  renamed (`end` → `end_node`). Edge labels must not be quoted. The system handles both
+  automatically.
+- **The graph builder never calls the LLM.** This is by design, for determinism and testability.
+  When a graph looks wrong, the fix is in the *facts* or in the *builder rules*, not in a prompt.
+  Note the distinction: *wrong nodes* (missing or extra entities) is an extraction problem.
+  *Wrong wiring* (edges to the wrong place) means one of two things: either the relational
+  `structure` was absent (so the positional fallback guessed), or the LLM linked the wrong ids.
+  The referential-integrity validator only drops links to ids that were *not declared*. It cannot
+  catch a link to the wrong *declared* id.
+- **CVPA always covers every node**, even when the LLM is incomplete, because of the type-based
+  fallback. So the rule "exactly one phase per node" can never be broken downstream.
+- **The LLM emits a design, never code. A deterministic generator emits the code.** The Temporal
+  *design* stage (Stage 6) is specification-only. A test asserts that the design models have no
+  `code`, `body` or `implementation` field. The no-LLM generator (Stage 7) produces the runnable
+  Temporal Python on its own. So the generated code is a reproducible function of a reviewed
+  design, not a model hallucination.
+- **Generated code uses flat, absolute imports, and you run it directly** (`python worker.py`
+  from inside the package). This matches the Temporal Python docs. It does *not* use
+  `from .x import` relative imports or `python -m package.worker`. Both of those were earlier
+  hallucinations that did not run. See `TEMPORAL_CODEGEN_FINDINGS.md`.
+- **The risky part of codegen is emitted in Python, not in Jinja.** The `@workflow.run` body
+  (data threading, saga rollback, `asyncio.gather`, branches) lives in `generator.py`, where it is
+  unit-tested and even run under a real `WorkflowEnvironment`. The templates carry only
+  boilerplate.
 - **The API key** is held as a `SecretStr`, sent only as a bearer header, and never logged or
   printed.
 - **Reasoning-model latency:** Nemotron's "detailed thinking off" preamble and generous timeouts
   keep structured calls fast and parseable.
-- **The gate is durable:** because state is persisted, `compile`, `validate`, and `approve-spec`
-  can be separate commands, requests, or processes — minutes or days apart.
+- **The gate is durable.** Because the state is saved, `compile`, `validate` and `approve-spec`
+  can be separate commands, requests or processes, minutes or days apart.
 - **The review passes never certify truth.** They filter with *reference-free* signals (evidence
-  quotes, referential integrity, grounding) — raising grounding/consistency but unable to detect a
-  misreading the generator and all three reviewers share, which is why the human spec gate stays
-  the oracle and flagged elements are surfaced, not trusted. See §7.10.
+  quotes, referential integrity, grounding). They raise grounding and consistency, but they cannot
+  detect a misreading that the generator and all three reviewers share. That is why the human spec
+  gate stays the oracle, and why flagged elements are shown, not trusted. See
+  [§7.10](#710-the-sequential-review-pipeline).
+- **The store checks ids before it builds a path.** A path-shaped id is refused as "not found",
+  and the answer never reveals whether the path would have resolved. See
+  [§7.3](#73-state-storage).
+- **Saves are last-write-wins unless you send a version.** The CLI and background jobs send
+  none. The API and the frontend send `expected_version` or `If-Match`, and get a 409 when the
+  record moved. See [§7.3](#73-state-storage).
+- **Enrichment and file rewrites default to the cloud provider on purpose.** The local gateway is
+  one GPU with no queue. A knowledge-base enrichment is one call per file, and a code rewrite is
+  one long call per file. Neither must land there unless the user asks. See
+  [§10](#10-knowledge-bases-kg) and [§14](#14-post-approval-change-outputs-change_outputs).
+- **The bundle smoke test is a verdict, not a gate.** It tells you whether the rewritten code
+  compiles and imports. It never blocks the run. See
+  [§14](#14-post-approval-change-outputs-change_outputs).
 
 ---
 
-> Want the 30-second version? **A document goes in; agents (LLM for understanding, pure functions
-> for structure) progressively fill one `WorkflowState`; a human approves the reviewed graph; then
-> CVPA labels every node, a Temporal design (with a typed plan IR) is produced, and that design is
-> deterministically rendered into runnable Temporal Python code — all swappable behind clean
-> interfaces, all persisted, all observable via progress events, all tested (the generated code is
-> even executed under a Temporal test environment) without a network.**
+> **The 30-second version.** A document goes in. Agents fill one `WorkflowState` step by step:
+> the LLM for understanding, pure functions for structure. A person approves the reviewed graph.
+> Then CVPA labels every node, the LLM produces a Temporal design (with a typed plan IR), and a
+> deterministic renderer turns that design into runnable Temporal Python code. Every part is
+> swappable behind a clean interface. Every state is saved. Every step is observable through
+> progress events. Everything is tested without a network, and the generated code even runs under
+> a Temporal test environment.

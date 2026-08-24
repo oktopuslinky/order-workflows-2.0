@@ -275,7 +275,7 @@ frontend /knowledge"] --> svc
 
 Retrieval (`retrieve`) is BM25 anchor → bounded traversal → dereferenced file spans, returned as a
 `KgPacket` whose `rendered` text is what later prompts get; `impact` is a deterministic BFS over
-dependency edges. See `docs/HOW_IT_WORKS.md` §8c and `docs/kg-plan/`.
+dependency edges. See `docs/HOW_IT_WORKS.md` §10 and `docs/kg-plan/`.
 
 ## Change requests (`change/`, phase 1 of the change pipeline)
 
@@ -305,7 +305,7 @@ llm_draft · llm_revision · human_edit"]
 frontend /changes"] --> svc
 ```
 
-See `docs/HOW_IT_WORKS.md` §8d.
+See `docs/HOW_IT_WORKS.md` §11.
 
 ## Document export (`docs_export/`, phase 2 of the change pipeline)
 
@@ -334,7 +334,7 @@ docx · xlsx · markdown/ · MANIFEST"]
 GET …/export.zip · CLI cr export · UI Export buttons"] --> svc["ChangeRequestService.export / export_bundle"] --> art
 ```
 
-See `docs/HOW_IT_WORKS.md` §8e.
+See `docs/HOW_IT_WORKS.md` §12.
 
 ## KG-grounded projects + change spec (phase 3 of the change pipeline)
 
@@ -373,7 +373,7 @@ draft_change_questions → interpret_change_answer → change_ops (ComponentUpda
     appr --> outs["Phase 4: updated diagrams · modified code + diff · test docs"]
 ```
 
-See `docs/HOW_IT_WORKS.md` §8f.
+See `docs/HOW_IT_WORKS.md` §13.
 
 ## Post-approval change outputs (phase 4 of the change pipeline)
 
@@ -407,7 +407,7 @@ UpdatedDiagram[] · CodeChangeBundle · TestDocUpdate · stages · provenance"]
 Diagrams (original ⇄ updated) · Code (diff viewer) · Test cases (table + xlsx/docx) · Regenerate"]
 ```
 
-See `docs/HOW_IT_WORKS.md` §8g.
+See `docs/HOW_IT_WORKS.md` §14.
 
 ## The business-change pipeline end to end (phases 0–5)
 

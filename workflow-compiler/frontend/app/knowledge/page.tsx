@@ -161,8 +161,12 @@ export default function KnowledgePage() {
               <span className="font-medium">LLM enrichment</span>
               <span className="block text-xs text-[var(--muted)]">
                 Per-file summaries, topics, entities and process clusters — one
-                model call per document/module (minutes on cloud). Static
-                indexing alone is instant.
+                model call per document/module, run one after another. On cloud
+                Nemotron the sample corpus (22 files) takes roughly 10–30 min
+                the first time, and a single call can stall for several minutes
+                before it is retried; re-indexing reuses cached answers. Static
+                indexing alone takes seconds. Keep this page open — progress
+                shows below as n/total.
               </span>
             </span>
           </label>

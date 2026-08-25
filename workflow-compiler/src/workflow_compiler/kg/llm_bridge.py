@@ -17,6 +17,7 @@ and finally reported as :class:`LlmError`, which enrichment treats as
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 from typing import Any
 
@@ -40,6 +41,7 @@ class ProviderJsonClient:
         # prose and the clustering answer lists every file, so 1024 truncates the
         # object and the call is wasted; 2048 leaves headroom at negligible cost.
         max_tokens: int | None = 2048,
+        # Wall-clock seconds per attempt (None = unbounded). See ``_complete``.
         call_timeout: float | None = None,
     ) -> None:
         self._provider = provider
@@ -47,6 +49,7 @@ class ProviderJsonClient:
         self._temperature = temperature
         self._max_tokens = max_tokens
         self._call_timeout = call_timeout
+        self._loop_stopped = False
         #: Number of completions actually requested (for tests / runbook timings).
         self.calls = 0
         self.failures = 0
@@ -62,10 +65,41 @@ class ProviderJsonClient:
             temperature=self._temperature,
             max_tokens=self._max_tokens,
         )
-        if self._loop is not None and self._loop.is_running():
+        if self._call_timeout is not None:
+            # A wall-clock bound per attempt. The provider's own timeout is
+            # per socket read, so a hosted endpoint that keeps a connection
+            # alive while it stalls (observed: one call held for ~25 min on
+            # integrate.api.nvidia.com) would otherwise freeze the whole index
+            # on a single file. ``wait_for`` cancels the request on expiry.
+            coro = asyncio.wait_for(coro, timeout=self._call_timeout)
+        if self._loop is not None:
+            if self._loop_stopped or not self._loop.is_running():
+                # The loop was handed over but has since stopped (server
+                # shutdown or reload): nothing will ever run the coroutine, and
+                # once seen it stays that way, so every later call fails at
+                # once and the orphaned index thread finishes promptly.
+                self._loop_stopped = True
+                coro.close()
+                raise LlmError("event loop stopped; enrichment call not attempted")
             future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-            return future.result(timeout=self._call_timeout)
-        # No live loop (CLI helper / plain script): run to completion here.
+            # Poll instead of blocking: if the loop stops underneath this
+            # worker thread the future is never resolved, and a thread parked
+            # on it keeps the interpreter alive at exit — under
+            # ``uvicorn --reload`` that meant the old process never exited and
+            # no new server was started.
+            while True:
+                concurrent.futures.wait([future], timeout=1.0)
+                if future.done():
+                    if future.cancelled():
+                        # Only interpreter/loop shutdown cancels tasks here.
+                        self._loop_stopped = True
+                        raise LlmError("event loop shutting down; enrichment call cancelled")
+                    return future.result()
+                if self._loop.is_closed() or not self._loop.is_running():
+                    self._loop_stopped = True
+                    future.cancel()
+                    raise LlmError("event loop stopped while waiting for the LLM")
+        # No loop (CLI helper / plain script): run to completion here.
         return asyncio.run(coro)
 
     def chat_json(

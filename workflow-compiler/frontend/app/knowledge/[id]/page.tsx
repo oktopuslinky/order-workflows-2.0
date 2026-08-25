@@ -139,7 +139,8 @@ export default function KnowledgeBasePage() {
       )}
       {kb.status === "failed" && (
         <div className="tone-block mb-4 rounded-lg border px-3 py-2 text-sm">
-          Indexing failed: {kb.error ?? "unknown error"} — fix the corpus or reindex.
+          Indexing failed: {kb.error ?? "unknown error"}
+          {kb.error?.includes("Reindex") ? "" : " — fix the corpus or reindex."}
         </div>
       )}
       {kb.warnings.length > 0 && (

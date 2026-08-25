@@ -198,8 +198,12 @@ The five subsections below are one flow; this is the short version (the full dem
 ids, timings and screenshots is `docs/kg-plan/RUNBOOK.md`):
 
 1. **Knowledge base** — *Knowledge → Upload and index* the zipped `Existing_KG`
-   (`examples/knowledge_bases/order-lifecycle.zip`; enrichment on cloud Nemotron ≈ 6 min cached /
-   27 min cold, static ingest ≈ 5 s). CLI: `workflow-compiler kb init … --enrich`.
+   (`examples/knowledge_bases/order-lifecycle.zip`). With LLM enrichment on (the default) this is
+   **one cloud call per file, 22 files, run one after another — expect 25–65 min the first time
+   on cloud Nemotron** (measured: 27 min on 2026-08-19, 64 min on 2026-08-25 when one call stalled
+   for 28 min before the retry); the page shows `n/22` progress, and a re-index reuses cached
+   answers (≈ 5 min). Untick enrichment for a static index in ≈ 5 s. Run the API **without**
+   `--reload` (see *Use — HTTP API*). CLI: `workflow-compiler kb init … --enrich`.
 2. **Change request** — *Changes → New change request*: pick the KB, upload
    `examples/change_requests/BCR-001-partial-shipment-support.docx`, **Start wizard**, then per
    step (Impact → EPIC → Stories → TDD) answer the questions, **Draft now**, revise/edit, **Approve**
@@ -331,10 +335,17 @@ python starter.py              # terminal 3
 Activate the virtual environment you installed into first, then:
 
 ```bash
-python -m uvicorn workflow_compiler.api.app:app --reload
+python -m uvicorn workflow_compiler.api.app:app
 ```
 
 Interactive docs at http://localhost:8000/docs.
+
+> Leave `--reload` **off** unless you are editing the source. The reloader watches every `*.py`
+> under the current directory, and that includes the corpus a knowledge base extracts under
+> `.workflow_state/` — uploading `examples/knowledge_bases/order-lifecycle.zip` (11 `.py` files)
+> restarts the server about a second into indexing, which kills the background job and leaves the
+> knowledge base at "Indexing…" indefinitely. Contributors with an editable install can use
+> `--reload --reload-dir src` so only the package source is watched.
 
 > `python -m uvicorn` (not bare `uvicorn`) on purpose: it runs the server with *this* interpreter,
 > so it always sees the `workflow_compiler` you installed. A bare `uvicorn` resolves through `PATH`
@@ -358,8 +369,8 @@ A Next.js frontend lives in [`frontend/`](frontend/). Run the backend API and th
 server side by side (two terminals, both starting from the `workflow-compiler/` directory):
 
 ```bash
-# Terminal 1 — backend API (http://localhost:8000), venv activated
-python -m uvicorn workflow_compiler.api.app:app --reload
+# Terminal 1 — backend API (http://localhost:8000), venv activated (no --reload: see "Use — HTTP API")
+python -m uvicorn workflow_compiler.api.app:app
 
 # Terminal 2 — frontend dev server (http://localhost:3000)
 cd frontend

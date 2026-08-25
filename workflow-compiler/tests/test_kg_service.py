@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 from pathlib import Path
@@ -17,8 +18,10 @@ from workflow_compiler.kg import (
     KnowledgeBase,
     validate_kb_id,
 )
+from workflow_compiler.kg.contexthub.bootstrap.llm import LlmError
 from workflow_compiler.kg.ingest import zip_folder
 from workflow_compiler.kg.llm_bridge import ProviderJsonClient
+from workflow_compiler.kg.service import INTERRUPTED_ERROR
 from workflow_compiler.llm.providers.mock import MockProvider
 
 FIXTURE = Path(__file__).parent / "fixtures" / "kb_mini"
@@ -218,6 +221,53 @@ class EnrichmentMock(MockProvider):
         return "```json\n" + json.dumps(payload) + "\n```"
 
 
+class BlockingEnrichmentMock(EnrichmentMock):
+    """Enrichment answers only once ``release`` is set (lets a test cancel mid-index)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+        self.started = asyncio.Event()
+
+    async def complete(self, prompt: str, **kwargs: object) -> str:  # type: ignore[override]
+        self.started.set()
+        await self.release.wait()
+        return await super().complete(prompt, **kwargs)
+
+
+async def test_mark_interrupted_fails_only_an_ingesting_kb(
+    service: KgService, corpus: Path
+) -> None:
+    kb = await service.create_from_zip("mini", zip_folder(corpus))
+    assert kb.status == "ingesting"
+    kb = await service.mark_interrupted(kb.kb_id)
+    assert kb.status == "failed"
+    assert kb.error == INTERRUPTED_ERROR
+    assert "Reindex" in kb.error
+    # A reindex heals it, and a ready knowledge base is left alone afterwards.
+    kb = await service.index(kb.kb_id)
+    assert kb.status == "ready" and kb.error is None
+    assert (await service.mark_interrupted(kb.kb_id)).status == "ready"
+
+
+async def test_cancelled_index_is_recorded_not_left_ingesting(
+    tmp_path: Path, corpus: Path
+) -> None:
+    provider = BlockingEnrichmentMock()
+    service = KgService(InMemoryKnowledgeBaseStore(tmp_path / "state"), lambda n, m: provider)
+    kb = await service.create_from_zip("mini", zip_folder(corpus))
+    task = asyncio.create_task(service.index(kb.kb_id, enrich=True))
+    await asyncio.wait_for(provider.started.wait(), timeout=30)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    stored = await service.get(kb.kb_id)
+    assert stored.status == "failed"
+    assert stored.error == INTERRUPTED_ERROR
+    # Let the orphaned worker thread finish so the loop can shut down cleanly.
+    provider.release.set()
+
+
 async def test_index_with_enrichment_uses_the_provider_factory(
     tmp_path: Path, corpus: Path
 ) -> None:
@@ -267,8 +317,6 @@ def test_provider_json_client_parses_fences_and_retries() -> None:
 
 
 def test_provider_json_client_gives_up_after_retries() -> None:
-    from workflow_compiler.kg.contexthub.bootstrap.llm import LlmError
-
     provider = MockProvider(default_completion="not json at all")
     client = ProviderJsonClient(provider)
     with pytest.raises(LlmError):
@@ -277,6 +325,23 @@ def test_provider_json_client_gives_up_after_retries() -> None:
 
 
 # ------------------------------------------------------------------ the store
+
+
+class StallingProvider(MockProvider):
+    """Never answers: models a hosted endpoint that holds the connection open."""
+
+    async def complete(self, prompt: str, **kwargs: object) -> str:  # type: ignore[override]
+        await asyncio.sleep(60)
+        return "{}"
+
+
+async def test_provider_json_client_call_timeout_bounds_a_stalled_call() -> None:
+    client = ProviderJsonClient(
+        StallingProvider(), loop=asyncio.get_running_loop(), call_timeout=0.2
+    )
+    with pytest.raises(LlmError):
+        await asyncio.to_thread(client.chat_json, [{"role": "user", "content": "x"}], retries=2)
+    assert client.calls == 2 and client.failures == 1
 
 
 async def test_file_store_round_trip_and_id_validation(tmp_path: Path) -> None:

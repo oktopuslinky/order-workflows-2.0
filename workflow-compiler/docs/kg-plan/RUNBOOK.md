@@ -19,8 +19,11 @@ cd frontend; $env:NEXT_PUBLIC_API_BASE = "http://127.0.0.1:8010"; npx next dev -
 Why 8010/3010 and `127.0.0.1`: on 2026-08-17 the `order-workflows-demo` worktree's servers held
 8000/3000; a different host string also keeps the two apps' session cookies apart. If the default
 ports are free, `python -m uvicorn workflow_compiler.api.app:app --reload` + `npm run dev` work as
-before (but do not use `--reload` while a long ingest job is running — a reload drops in-flight
-jobs). Demo account: `kgdemo@example.com` / `kgdemo-pass-2026` (local account on this machine).
+before — but never bare `--reload` with knowledge bases: the reloader watches every `*.py` under the
+cwd, and the corpus zip's own `.py` files extracted under `.workflow_state/` trigger a restart a
+second into indexing, dropping the in-flight job (reproduced 2026-08-25 on a fresh install; the
+routes now report such a record as failed/"interrupted" instead of "ingesting" forever). Use
+`--reload --reload-dir src` if you need reload. Demo account: `kgdemo@example.com` / `kgdemo-pass-2026` (local account on this machine).
 
 Demo zip: `python scripts/make_kb_zip.py` → `examples/knowledge_bases/order-lifecycle.zip`
 (the corpus folder is a verbatim copy of the manager's `Existing_KG`).
@@ -195,6 +198,7 @@ Recorded results: see the table below (filled from the run).
 | Upload → job start | immediate (zip 108 KB, 27 files, top-level folder `order-lifecycle` stripped) |
 | Static ingest (CLI, `kb init --no-enrich`) | **~5 s** incl. Python startup; 170 nodes / 392 edges |
 | First enrich run (Nemotron `nvidia/llama-3.3-nemotron-super-49b-v1`, 22 file nodes + clustering) | 13:52 → 14:19 = **27 min** (~35 s per file at `max_tokens=1024`, some 60–70 s); result 382 nodes / 927 edges, `Enrichment: 4 file(s) skipped after repeated LLM failures` (BRD + EPIC docx: model answers truncated/malformed JSON; both clustering batches) |
+| Fresh install (`pip install .`, `init --provider nemotron`), UI upload with enrichment, no `--reload` — 2026-08-25 | 12:18 → 13:22 = **64 min**; files 1–8 ≈ 13 s each, then `tests/test_order_workflow.py` held for **28 min** by a stalled cloud request (one 400 s ReadTimeout, retry succeeded), median 60 s/file afterwards, clustering 10 min; 393 nodes / 957 edges; EPIC docx + both `process_cluster_2*` skipped on JSON parse errors. Same upload **with** `--reload`: WatchFiles restarted the server 0.2 s after the corpus `.py` files were extracted, the job vanished and the KB stayed `ingesting` forever — fixed (routes report it as interrupted; bridge bounds each call by `llm_timeout` and no longer pins the old process at exit) |
 | Reindex + enrich after the bridge fix (`max_tokens=2048`, warning-level logging) | 14:22 → 14:28 = **5.5 min**; 20/22 files served from `llm_cache`, BRD ok first try, EPIC ok on attempt 3/3 (parse errors on attempts 1–2), clustering ok → **401 nodes / 979 edges**, no warnings |
 | Node counts (final) | Document 16, Module 6, Class 10, Function 27, Chunk 60, Epic 3, UserStory 13, TestCase 18, Requirement 14, Service 3 (`svc:.` + 2 `svc:proc:*` clusters), DataArtifact 229 (topics + entities), Config 1, Repository 1 |
 | Edges (final) | CONTAINS 420, RELATES_TO 472, NEXT 39, DOCUMENTED_BY 38, IMPORTS 9, READS_CONFIG 1 |

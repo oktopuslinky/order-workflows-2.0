@@ -1159,6 +1159,18 @@ store boundary are validated against `[A-Za-z0-9_-]+`.
 are unchanged. Jobs carry a `progress` (`message`, `done`, `total`) that the worker updates per
 file.
 
+Two guards keep a knowledge base from reporting *indexing* forever. Jobs live in the process, so
+a server stop or restart mid-index takes the job with it; the KB routes therefore treat a record
+at `ingesting` with **no live job** as interrupted and mark it `failed` with an error that says to
+reindex (`KgService.mark_interrupted`; a cancelled `index()` records the same). Reindexing
+re-asks only what the enrichment cache lacks. And every enrichment call is bounded by a
+**wall-clock** cap (`ProviderJsonClient(call_timeout=…)`, wired from `llm_timeout`, 400 s): the
+provider's own timeout is per socket read, and a hosted endpoint that keeps the connection alive
+while it stalls was observed to hold a single call for ~25 min, freezing the progress counter.
+On expiry the attempt is cancelled and retried; after three failures the file is skipped and
+listed in the KB's warnings. The bridge also polls its future instead of blocking on it, so an
+index thread orphaned by a shutdown fails fast rather than pinning the interpreter at exit.
+
 **Config.** `kg_enrich_default` (True), `kg_retrieve_budget` (4000), `kg_max_upload_mb` (50). KB
 routes take `provider` / `model` per request, like `/projects/compile`. The default is cloud
 Nemotron on purpose: enrichment is one call per file, and it must not land on the single-GPU
@@ -1812,10 +1824,18 @@ These commands live in `cli/kb.py`. They use the same file store as the API, wit
 
 ### 15.3 HTTP API (`api/app.py`, FastAPI)
 
-Run the API with `python -m uvicorn workflow_compiler.api.app:app --reload` from the virtual
+Run the API with `python -m uvicorn workflow_compiler.api.app:app` from the virtual
 environment where the package is installed. A bare `uvicorn` resolves through `PATH` and may
 belong to a different environment. That shows up as
 `ModuleNotFoundError: No module named 'workflow_compiler'`. Interactive docs live at `/docs`.
+
+Do not add `--reload` for normal use: uvicorn's reloader watches every `*.py` under the current
+directory, which includes the corpus a knowledge base extracts under `.workflow_state/`, so an
+upload with `.py` files in it restarts the server mid-index and kills the in-memory `kb_ingest`
+job. (The knowledge-base routes now detect a record left at `ingesting` with no live job and
+report it as failed with a reindex hint, so the UI no longer shows "Indexing…" forever — but the
+index still has to be re-run.) Contributors editing the source should use
+`--reload --reload-dir src` so only the package is watched.
 
 **Authentication.** The HTTP surface uses local accounts. You register or sign in once, and a
 signed HttpOnly session cookie travels with every call. Projects created through the API carry an

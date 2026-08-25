@@ -116,6 +116,13 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+#: Recorded on a knowledge base whose index job died before finishing.
+INTERRUPTED_ERROR = (
+    "Indexing was interrupted before it finished (the server stopped or restarted, or the "
+    "job was cancelled). Press Reindex to resume; cached enrichment results are reused."
+)
+
+
 class KgService:
     """Create, index and query knowledge bases (see module docstring)."""
 
@@ -126,11 +133,16 @@ class KgService:
         *,
         max_upload_bytes: int = 50 * 1024 * 1024,
         default_budget: int = 4000,
+        enrich_call_timeout: float | None = None,
     ) -> None:
         self._store = store
         self._provider_factory = provider_factory
         self._max_upload_bytes = max_upload_bytes
         self._default_budget = default_budget
+        #: Wall-clock cap per enrichment call attempt (None = unbounded); the
+        #: API wires ``settings.llm_timeout`` so one stalled hosted request
+        #: cannot freeze an index for longer than a normal timeout would.
+        self._enrich_call_timeout = enrich_call_timeout
         self._graphs: dict[str, tuple[float, Any]] = {}
         self._graph_lock = threading.Lock()
 
@@ -241,7 +253,11 @@ class KgService:
             if self._provider_factory is None:
                 raise CompilationError("LLM enrichment requested but no provider factory is set.")
             llm_provider = self._provider_factory(provider, model)
-            client = ProviderJsonClient(llm_provider, loop=asyncio.get_running_loop())
+            client = ProviderJsonClient(
+                llm_provider,
+                loop=asyncio.get_running_loop(),
+                call_timeout=self._enrich_call_timeout,
+            )
 
         def _report(label: str, done: int, total: int) -> None:
             if progress is not None:
@@ -260,6 +276,16 @@ class KgService:
 
         try:
             result = await asyncio.to_thread(_run)
+        except asyncio.CancelledError:
+            # A cancelled job (user cancel, server shutdown) must not leave the
+            # record at "ingesting": nothing would ever move it on. The worker
+            # thread cannot be stopped, but this coroutine never resumes, so the
+            # record can only change again through a reindex.
+            kb.status = "failed"
+            kb.error = INTERRUPTED_ERROR
+            kb.touch()
+            await self._store.save(kb)
+            raise
         except Exception as exc:
             kb.status = "failed"
             kb.error = str(exc) or exc.__class__.__name__
@@ -309,6 +335,25 @@ class KgService:
         return await self.index(
             kb_id, enrich=enrich, provider=provider, model=model, progress=progress
         )
+
+    async def mark_interrupted(self, kb_id: str) -> KnowledgeBase:
+        """Record that the index job for ``kb_id`` died without finishing.
+
+        Indexing runs as an in-memory job, so a server stop or restart takes
+        the job with it and the record would stay at ``ingesting`` forever
+        (``uvicorn --reload`` triggers exactly that: the corpus's own ``*.py``
+        files are extracted under the watched directory). The API calls this
+        when a knowledge base reports ``ingesting`` but the process has no job
+        for it. A knowledge base that is not ``ingesting`` is returned unchanged.
+        """
+        kb = await self._store.load(kb_id)
+        if kb.status != "ingesting":
+            return kb
+        kb.status = "failed"
+        kb.error = INTERRUPTED_ERROR
+        kb.touch()
+        await self._store.save(kb)
+        return kb
 
     async def get(self, kb_id: str) -> KnowledgeBase:
         return await self._store.load(kb_id)

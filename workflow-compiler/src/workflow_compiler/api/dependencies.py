@@ -191,6 +191,7 @@ def get_kg_service() -> KgService:
         kb_provider_factory,
         max_upload_bytes=settings.kg_max_upload_mb * 1024 * 1024,
         default_budget=settings.kg_retrieve_budget,
+        enrich_call_timeout=settings.llm_timeout,
     )
 
 

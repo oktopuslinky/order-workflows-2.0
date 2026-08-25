@@ -1394,6 +1394,20 @@ def create_app() -> FastAPI:
             job=_job_response(job) if job is not None else None,
         )
 
+    async def _reconcile_kb(kg: KgService, kb: KnowledgeBase) -> tuple[KnowledgeBase, Job | None]:
+        """Pair ``kb`` with its live ``kb_ingest`` job, or record that it has none.
+
+        Jobs live in this process only. A knowledge base that reports
+        ``ingesting`` while no job exists for it (the server was restarted mid-
+        index, or the job was cancelled) can never finish on its own, so it is
+        marked failed with a message that tells the user to reindex, instead of
+        showing "Indexing…" forever.
+        """
+        active = jobs.active_for_scope(kb.kb_id, scope_kind="knowledge_base")
+        if kb.status == "ingesting" and active is None:
+            kb = await _guard(kg.mark_interrupted(kb.kb_id))
+        return kb, active
+
     def _validate_provider(provider: str | None) -> None:
         if provider and provider not in SELECTABLE_PROVIDERS:
             raise HTTPException(
@@ -1483,7 +1497,7 @@ def create_app() -> FastAPI:
         """Knowledge bases visible to the caller, newest first."""
         shared = get_settings().projects_shared
         items = [
-            _kb_response(kb)
+            _kb_response(*await _reconcile_kb(kg, kb))
             for kb in await _guard(kg.list_all())
             if shared or kb.owner_id in (None, user.user_id)
         ]
@@ -1500,7 +1514,7 @@ def create_app() -> FastAPI:
     ) -> KnowledgeBaseResponse:
         kb = await _guard(kg.get(kb_id))
         _check_kb_owner(kb, user)
-        active = jobs.active_for_scope(kb_id, scope_kind="knowledge_base")
+        kb, active = await _reconcile_kb(kg, kb)
         response.headers["ETag"] = _etag(kb.version)
         return _kb_response(kb, active)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -14,6 +15,7 @@ from workflow_compiler.api.auth import get_user_store
 from workflow_compiler.api.dependencies import get_kg_service
 from workflow_compiler.kg import InMemoryKnowledgeBaseStore, KgService
 from workflow_compiler.kg.ingest import zip_folder
+from workflow_compiler.kg.service import INTERRUPTED_ERROR
 from workflow_compiler.llm.providers.mock import MockProvider
 from workflow_compiler.storage.user_store import InMemoryUserStore
 
@@ -105,6 +107,32 @@ def test_upload_creates_kb_and_runs_ingest_job(client: TestClient, corpus_zip: b
     assert all(j["scope_kind"] == "knowledge_base" for j in kb_jobs)
     project_jobs = client.get("/jobs", params={"scope_kind": "project"}).json()
     assert job["job_id"] not in [j["job_id"] for j in project_jobs]
+
+
+def test_ingesting_kb_without_a_job_is_reported_as_interrupted(
+    client: TestClient, corpus_zip: bytes
+) -> None:
+    """A record stuck at ``ingesting`` with no live job (server restarted mid-index,
+    e.g. a ``uvicorn --reload`` triggered by the corpus's own ``*.py`` files) must not
+    show "indexing" forever: the routes mark it failed with a reindex hint."""
+    service = app.dependency_overrides[get_kg_service]()
+    kb = asyncio.run(service.create_from_zip("Orphan", corpus_zip, filename="kb_mini.zip"))
+    assert kb.status == "ingesting"
+
+    listed = {k["kb_id"]: k for k in client.get("/knowledge-bases").json()["knowledge_bases"]}
+    assert listed[kb.kb_id]["status"] == "failed"
+    assert listed[kb.kb_id]["error"] == INTERRUPTED_ERROR
+    assert listed[kb.kb_id]["job"] is None
+
+    body = client.get(f"/knowledge-bases/{kb.kb_id}").json()
+    assert body["status"] == "failed" and body["error"] == INTERRUPTED_ERROR
+
+    # Reindex is the advertised way out, and the live job keeps "ingesting" honest.
+    body = client.post(f"/knowledge-bases/{kb.kb_id}/reindex", json={"enrich": False}).json()
+    assert body["job"]["kind"] == "kb_ingest"
+    assert _poll_job(client, body["job"]["job_id"])["status"] == "succeeded"
+    body = client.get(f"/knowledge-bases/{kb.kb_id}").json()
+    assert body["status"] == "ready" and body["error"] is None
 
 
 def test_upload_with_enrichment_uses_selected_provider(

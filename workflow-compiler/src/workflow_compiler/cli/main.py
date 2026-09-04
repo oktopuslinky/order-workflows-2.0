@@ -162,7 +162,7 @@ def compile(
         None, "--provider", help="Override the LLM provider (e.g. 'mock'). Defaults to .env."
     ),
     model: str = typer.Option(None, "--model", help="Override the model id."),
-    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+    timeout: float = typer.Option(400.0, "--timeout", help="Per-request timeout in seconds."),
     persist: bool = typer.Option(True, help="Persist the resulting project state."),
     review: bool = typer.Option(
         True,
@@ -209,7 +209,7 @@ def validate_cmd(
     ),
     provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
     model: str = typer.Option(None, "--model", help="Override the model id."),
-    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+    timeout: float = typer.Option(400.0, "--timeout", help="Per-request timeout in seconds."),
 ) -> None:
     """Fold edited spec files back in and run the spec validator passes."""
     import asyncio
@@ -238,7 +238,7 @@ def edit_cmd(
     ),
     provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
     model: str = typer.Option(None, "--model", help="Override the model id."),
-    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+    timeout: float = typer.Option(400.0, "--timeout", help="Per-request timeout in seconds."),
 ) -> None:
     """Apply a workflow edit-request document, then re-enter the spec gate."""
     import asyncio
@@ -276,7 +276,7 @@ def approve_spec_cmd(
     ),
     provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
     model: str = typer.Option(None, "--model", help="Override the model id."),
-    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+    timeout: float = typer.Option(400.0, "--timeout", help="Per-request timeout in seconds."),
     change_outputs: bool = typer.Option(
         False, "--change-outputs",
         help=(
@@ -324,7 +324,7 @@ def approve(
     reviewer: str = typer.Option(None, help="Reviewer identity."),
     provider: str = typer.Option(None, "--provider", help="Override the LLM provider."),
     model: str = typer.Option(None, "--model", help="Override the model id."),
-    timeout: float = typer.Option(120.0, "--timeout", help="Per-request timeout in seconds."),
+    timeout: float = typer.Option(400.0, "--timeout", help="Per-request timeout in seconds."),
     out: Path = typer.Option(
         None, "--out", help="Write the CVPA-colored Mermaid diagram to this file."
     ),

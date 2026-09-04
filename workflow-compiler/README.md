@@ -443,7 +443,10 @@ The test suite runs fully offline against a deterministic mock provider — no A
 - **`UnicodeEncodeError` on Windows** — the progress output contains Unicode (e.g. `→`); on a
   legacy `cp1252` console run with UTF-8 mode: `set PYTHONUTF8=1` (PowerShell: `$env:PYTHONUTF8=1`).
   Console-rendering only; generated code is unaffected.
-- **`ProviderTimeoutError`** — Nemotron's reasoning models can be slow; bump `--timeout` (e.g. `300`).
+- **`ProviderTimeoutError`** — Nemotron's reasoning models are slow (~2–2.5 min per call on the
+  cloud endpoint, which also throws the occasional transient 504 that the client retries). The CLI
+  and API already default to a 400 s per-request timeout; raise `--timeout` further only if you see
+  this on a large document.
 - **`.venv\Scripts\Activate.ps1 cannot be loaded because running scripts is disabled`** — allow
   scripts for this shell only: `Set-ExecutionPolicy -Scope Process RemoteSigned`. Alternatives:
   `.venv\Scripts\activate.bat` from `cmd`, or skip activation entirely and call

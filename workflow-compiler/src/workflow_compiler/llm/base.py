@@ -199,6 +199,8 @@ class HttpChatProvider(BaseLLMProvider):
         payload = self._build_payload(messages, temperature, max_tokens, json_mode=json_mode)
 
         async def operation() -> dict[str, Any]:
+            if self._config.stream:
+                return await self._post_stream(self._chat_endpoint(), payload)
             return await self._post(self._chat_endpoint(), payload)
 
         data = await retry_async(
@@ -236,6 +238,61 @@ class HttpChatProvider(BaseLLMProvider):
             raise ProviderConnectionError(f"{self.name} transport error: {exc}") from exc
 
         return self._decode(response)
+
+    async def _post_stream(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Stream a chat completion (SSE) and assemble the non-streamed response shape.
+
+        Returns exactly what :meth:`_parse_response` expects, so nothing upstream
+        knows the body arrived incrementally. Only the answer ``content`` deltas
+        are accumulated; a reasoning model's separate ``reasoning_content`` channel
+        is intentionally dropped. Transport and HTTP errors map to the same
+        exceptions as :meth:`_post`, so retries (including on a 504) still apply.
+        """
+        client = self._ensure_client()
+        parts: list[str] = []
+        finish_reason: str | None = None
+        usage: dict[str, Any] | None = None
+        model = self._config.model
+        try:
+            async with client.stream(
+                "POST", endpoint, json=payload, headers=self._auth_headers()
+            ) as response:
+                if response.status_code >= 400:
+                    body = (await response.aread()).decode("utf-8", "replace")
+                    raise ProviderHTTPError(response.status_code, body[:500])
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[len("data:") :].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(chunk.get("usage"), dict):
+                        usage = chunk["usage"]
+                    if chunk.get("model"):
+                        model = chunk["model"]
+                    for choice in chunk.get("choices") or []:
+                        delta = choice.get("delta") or {}
+                        piece = delta.get("content")
+                        if piece:
+                            parts.append(piece)
+                        if choice.get("finish_reason"):
+                            finish_reason = choice["finish_reason"]
+        except httpx.TimeoutException as exc:
+            raise ProviderTimeoutError(self._timeout_message("POST", endpoint, exc)) from exc
+        except httpx.TransportError as exc:
+            raise ProviderConnectionError(f"{self.name} transport error: {exc}") from exc
+
+        result: dict[str, Any] = {
+            "choices": [{"message": {"content": "".join(parts)}, "finish_reason": finish_reason}],
+            "model": model,
+        }
+        if usage is not None:
+            result["usage"] = usage
+        return result
 
     async def _get(self, endpoint: str) -> dict[str, Any]:
         """GET ``endpoint`` and return the decoded body (same error mapping as ``_post``)."""

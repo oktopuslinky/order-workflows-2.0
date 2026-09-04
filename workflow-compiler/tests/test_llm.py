@@ -63,6 +63,7 @@ def _make_nemotron(handler) -> NemotronProvider:
         api_key="test-key",
         client=client,
         retry=RetryConfig(max_attempts=3, initial_backoff=0.0, jitter=False),
+        stream=False,  # these tests mock plain-JSON bodies; streaming is covered separately
     )
 
 
@@ -132,6 +133,35 @@ async def test_nemotron_complete_hits_v1_endpoint() -> None:
     assert seen["auth"] == "Bearer test-key"
     assert seen["payload"]["model"] == "nvidia/nemotron-3.5-lightning-30b-a3b"
     assert seen["payload"]["messages"][0]["role"] == "system"
+
+
+async def test_nemotron_streams_and_assembles_content() -> None:
+    """Default Nemotron streams: SSE deltas are assembled into one LLMResponse."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        body = (
+            'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'
+            'data: {"choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}]}\n\n'
+            'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,'
+            '"total_tokens":5}}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, content=body.encode())
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.AsyncClient(transport=transport, base_url="https://nvidia.test/v1/")
+    provider = NemotronProvider(api_key="test-key", client=client)  # STREAM defaults to True
+    response = await provider.chat([ChatMessage.user("hi")])
+    await provider.aclose()
+
+    assert seen["payload"]["stream"] is True
+    assert seen["payload"]["stream_options"] == {"include_usage": True}
+    assert response.text == "Hello"
+    assert response.finish_reason == "stop"
+    assert response.usage is not None
+    assert response.usage.completion_tokens == 2
 
 
 async def test_nemotron_structured_validates_schema() -> None:

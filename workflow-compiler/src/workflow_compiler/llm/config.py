@@ -27,6 +27,16 @@ class ProviderConfig(WorkflowBaseModel):
         description="System message prepended to every request (e.g. reasoning toggles).",
     )
     max_tokens: int | None = Field(default=None, gt=0, description="Default max output tokens.")
+    stream: bool = Field(
+        default=False,
+        description=(
+            "Stream the chat response (Server-Sent Events) instead of waiting for the whole "
+            "body. Reasoning models can generate for minutes; a non-streamed request returns "
+            "nothing until done and the NVIDIA cloud gateway kills it at ~300s with a 504. "
+            "Streaming keeps the connection alive from the first token, so the response "
+            "completes. The accumulated text is identical to the non-streamed body."
+        ),
+    )
     embed_model: str | None = Field(
         default=None, description="Optional separate model id for embeddings."
     )

@@ -23,6 +23,12 @@ class NemotronProvider(OpenAICompatibleProvider):
     # default, llama-3.3-nemotron-super-49b-v1, reached end of life 2026-08-26.)
     DEFAULT_MODEL: ClassVar[str] = "nvidia/nemotron-3.5-lightning-30b-a3b"
     API_KEY_ENV: ClassVar[str] = "NVIDIA_API_KEY"
+    # Stream by default: Nemotron reasoning models can generate for minutes, and
+    # the NVIDIA cloud gateway returns HTTP 504 on a non-streamed request that
+    # produces nothing for ~300s. Streaming keeps the connection alive from the
+    # first token so long extractions complete. (Measured: a fact-extraction that
+    # 504s non-streamed returns valid JSON in ~200s streamed.)
+    STREAM: ClassVar[bool] = True
     # Nemotron models are reasoning models; disable reasoning by default so
     # structured extraction returns clean JSON quickly. Override if you want
     # chain-of-thought ("detailed thinking on").

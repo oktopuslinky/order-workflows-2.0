@@ -32,6 +32,9 @@ class OpenAICompatibleProvider(HttpChatProvider):
     DEFAULT_MODEL: ClassVar[str | None] = None
     API_KEY_ENV: ClassVar[str | None] = None
     DEFAULT_SYSTEM_PREAMBLE: ClassVar[str | None] = None
+    #: Stream the response by default. Subclasses aimed at a gateway that kills
+    #: long non-streamed requests (e.g. NVIDIA cloud's ~300s cap) set this True.
+    STREAM: ClassVar[bool] = False
     #: Extra top-level fields merged into every chat payload. Vendor-specific
     #: knobs live here so subclasses can opt in without a new transport.
     EXTRA_BODY: ClassVar[dict[str, Any]] = {}
@@ -55,6 +58,7 @@ class OpenAICompatibleProvider(HttpChatProvider):
         retry: RetryConfig | None = None,
         extra_headers: dict[str, str] | None = None,
         system_preamble: str | None = None,
+        stream: bool | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         """Build a provider from an explicit config or keyword overrides."""
@@ -69,6 +73,7 @@ class OpenAICompatibleProvider(HttpChatProvider):
                 retry=retry,
                 extra_headers=extra_headers,
                 system_preamble=system_preamble,
+                stream=stream,
             )
         super().__init__(config, client=client)
 
@@ -85,6 +90,7 @@ class OpenAICompatibleProvider(HttpChatProvider):
         retry: RetryConfig | None,
         extra_headers: dict[str, str] | None,
         system_preamble: str | None,
+        stream: bool | None = None,
     ) -> ProviderConfig:
         resolved_model = model or cls.DEFAULT_MODEL
         if not resolved_model:
@@ -116,6 +122,7 @@ class OpenAICompatibleProvider(HttpChatProvider):
             fields["retry"] = retry
         if extra_headers is not None:
             fields["extra_headers"] = extra_headers
+        fields["stream"] = cls.STREAM if stream is None else stream
         resolved_preamble = system_preamble or cls.DEFAULT_SYSTEM_PREAMBLE
         if resolved_preamble is not None:
             fields["system_preamble"] = resolved_preamble
@@ -142,8 +149,12 @@ class OpenAICompatibleProvider(HttpChatProvider):
             "model": self._config.model,
             "messages": wire_messages,
             "temperature": self._config.temperature if temperature is None else temperature,
-            "stream": False,
+            "stream": self._config.stream,
         }
+        if self._config.stream:
+            # Ask the server to emit a final usage chunk so streamed responses
+            # still report token counts.
+            payload["stream_options"] = {"include_usage": True}
         resolved_max = max_tokens if max_tokens is not None else self._config.max_tokens
         if resolved_max is not None:
             payload["max_tokens"] = resolved_max

@@ -130,7 +130,7 @@ async def test_nemotron_complete_hits_v1_endpoint() -> None:
     assert text == "Hello from Nemotron"
     assert seen["path"] == "/v1/chat/completions"
     assert seen["auth"] == "Bearer test-key"
-    assert seen["payload"]["model"] == "nvidia/llama-3.3-nemotron-super-49b-v1"
+    assert seen["payload"]["model"] == "nvidia/nemotron-3.5-lightning-30b-a3b"
     assert seen["payload"]["messages"][0]["role"] == "system"
 
 
@@ -528,7 +528,7 @@ async def test_fallback_reraises_schema_validation_error() -> None:
 def _local_settings(**overrides: Any) -> SimpleNamespace:
     base = {
         "llm_provider": "local-fallback",
-        "llm_model": "nvidia/llama-3.3-nemotron-super-49b-v1",
+        "llm_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
         "llm_local_base_url": "http://gw.test/v1",
         "llm_local_model": None,
         "llm_temperature": 0.0,

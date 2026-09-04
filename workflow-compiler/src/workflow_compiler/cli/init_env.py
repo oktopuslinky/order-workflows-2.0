@@ -31,7 +31,7 @@ KEY_PROVIDERS: Final[frozenset[str]] = frozenset({"nemotron", "local-fallback"})
 #: Providers that reach the local eGPU gateway and therefore need session credentials.
 GATEWAY_PROVIDERS: Final[frozenset[str]] = frozenset({"local", "local-fallback"})
 
-DEFAULT_NEMOTRON_MODEL: Final = "nvidia/llama-3.3-nemotron-super-49b-v1"
+DEFAULT_NEMOTRON_MODEL: Final = "nvidia/nemotron-3.5-lightning-30b-a3b"
 DEFAULT_GATEWAY_BASE: Final = "http://192.168.1.184:8080/v1"
 DEFAULT_STATE_STORE_PATH: Final = ".workflow_state"
 

@@ -228,7 +228,7 @@ Compiler injected via cached `get_compiler` (`from_settings()`); tests override 
 ```
 NVIDIA_API_KEY=nvapi-xxxx                 # only for real LLM stages
 WORKFLOW_COMPILER_LLM_PROVIDER=nemotron   # or openai-compatible / mock
-WORKFLOW_COMPILER_LLM_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
+WORKFLOW_COMPILER_LLM_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
 WORKFLOW_COMPILER_STATE_STORE_PATH=.workflow_state   # FileStateStore root
 ```
 

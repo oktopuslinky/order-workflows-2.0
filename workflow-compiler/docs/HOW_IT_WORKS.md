@@ -290,7 +290,7 @@ The result is a `.env` file. `config.py` reads it through `python-dotenv`:
 ```dotenv
 NVIDIA_API_KEY=nvapi-xxxx                 # only needed for the LLM stages
 WORKFLOW_COMPILER_LLM_PROVIDER=nemotron   # which provider to use
-WORKFLOW_COMPILER_LLM_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
+WORKFLOW_COMPILER_LLM_MODEL=nvidia/nemotron-3.5-lightning-30b-a3b
 WORKFLOW_COMPILER_STATE_STORE_PATH=.workflow_state   # where states are saved as JSON
 ```
 
